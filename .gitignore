@@ -1,1 +1,11 @@
 /target
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+*.iml
+
+# 系统
+.DS_Store
+Thumbs.db
