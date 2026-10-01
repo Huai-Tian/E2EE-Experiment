@@ -24,6 +24,11 @@ maturity: mvp
 ui_language: zh                            # user-facing strings are chinese; keep style
 comment_language: zh-with-person-metaphors # see glossary at bottom
 
+doc_index:                                  # entry alignment across the 3 docs
+zh: README_ZH.md
+en: README.md
+agent: README_AGENT.md                    # this file
+
 architecture:
 binary_count: 1                            # INVARIANT: deliverable is exactly one executable
 deps:
@@ -51,7 +56,7 @@ wire_protocol:
 transport: tcp
 frame: "{u16_be length}{payload}"
 frame_cap: 65535
-handshake_msgs: 2                          # ->e | <-e,ee ; each snow message = one frame
+handshake_msgs: 2                          # →e | ←e,ee ; each snow message = one frame
 first_app_frame: utf8_name                 # both directions, immediately after handshake
 chat_frame: "one utf8 line per frame"
 hangup: "empty plaintext frame (wire = bare 16B AEAD tag) | tcp close"
@@ -69,18 +74,41 @@ invariants:                                  # ANY change violating these MUST b
 - no-identity-layer: never add authentication, TOFU, key continuity, accounts, fingerprint checking
 - symmetry: never introduce server/client asymmetry or a node with more power than a peer
 - ephemeral-keys: every connection = fresh keypair; zero key reuse across anything
+- attribution-by-topology: displayed name MUST come from the receiving link, never from a self-claim inside plaintext
 
 permitted_extensions:                       # extend only along the metaphor
 nat_traversal:    { metaphor: introducer, rule: "udp hole-punch coordination; must never see plaintext" }
 ciphertext_relay: { metaphor: courier,   rule: "forward opaque frames only; store nothing, log nothing" }
 ipv6:             { metaphor: same-room }
-multiparty:       { metaphor: small-gathering, rule: "pairwise e2ee channels only" }
+multiparty:       { metaphor: small-gathering, rule: "design settled — see group_chat section" }
 
 forbidden_extensions:                       # belong to a different project, not this one
 - offline message queue                   # breaks ephemerality
 - history / sync / multi-device           # breaks zero-persistence
 - identity verification of any kind       # breaks no-identity-layer
 - accounts / registration                 # breaks symmetry + no-identity-layer
+
+group_chat:                                 # STATUS: designed, NOT implemented
+status: designed-not-implemented
+prerequisite: "harden and test the 1:1 crypto core first — owner's explicit sequencing"
+topology: full-mesh                       # every member holds a direct link to every other; N² links; practical cap ~8
+joining:
+- newcomer dials any current member     # pairwise Noise NN per link, unchanged
+- introducer sends address list ONLY    # never relays conversation frames
+- newcomer dials each remaining member  # independent NN handshake per link
+membership: presence-based                # member == live connection; no roster stored anywhere
+group_key_schedule:                       # the room language
+contribute: "each member generates fresh 32-byte random r_i; broadcasts to all over its noise links"
+derive: "K = HKDF(byte-sorted concatenation of all r_i)"  # order-independent; no member list needed
+per_sender_subkey: "s_i = HKDF(K, r_i)" # r_i doubles as sender label; prevents nonce collision under shared key
+send: "encrypt ONCE with s_i; identical ciphertext fanned out on every link"
+noise_role_after_join: escort-only        # pairwise channels wire the mesh and escort the negotiation
+rekey_policy:
+trigger: membership-join-only           # never on leave
+rationale: "leaver has no live link to listen; zero persistence leaves nothing to decrypt later; next join re-keys anyway"
+eviction: "remaining members re-run contribution = fresh gathering; same mechanism as join, nothing new"
+race_handling: "simultaneous joiners may yield inconsistent member sets; wait ~500ms of membership silence before contributing; AEAD decrypt failure ⇒ re-contribute"
+honest_limitation: "any member can derive others' subkeys (r_i is broadcast) but cannot impersonate — injection requires a link only its owner has; crypto gives secrecy, topology gives attribution"
 
 verify:
 build: "cargo build --release"
@@ -89,6 +117,17 @@ static_build: "rustup target add x86_64-unknown-linux-musl && cargo build --rele
 smoke_test: |
 two local instances: `listen 127.0.0.1:17777 -n A`, then `dial 127.0.0.1:17777 -n B`
 expect: each side prefixes received lines with the peer name; "/quit" → peer prints its 挂断了 goodbye and exits
+
+licensing:
+license: AGPL-3.0
+non_commercial: true                      # full statement lives in the human READMEs
+sponsorship_channels: none
+resale_prohibited: true
+disclaimer_keys:                          # machine summary of the human disclaimer
+- research-and-education-use-only
+- telephone-model-no-identity-auth      # active-MITM risk is accepted by design
+- unaudited-experimental-code           # not for sensitive communications
+- no-warranty-liability-capped-by-law
 
 glossary:                                   # chinese metaphor → mechanism (used in code comments)
 耳朵:      inbound tcp accept loop (listen)
