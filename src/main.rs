@@ -15,11 +15,26 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   E2EE-Experiment [监听地址] [-n 名字]
       出生。默认在 0.0.0.0:7777 上听，等人来，也随时可以主动去找人。
       同一台机器开两个人时，记得用不同端口。
+  E2EE-Experiment --courier [监听地址]
+      开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
+      （房号由客人带外自选，茶馆只认号接线）。
+      部署在任意有公网 IP 的机器上；无身份、无存储、无明文。
 
 在场指令：
-  /dial <ADDR:PORT>    主动去找人（找上门即成为当前对话）
+  /dial <ADDR:PORT> [暗号]
+      主动去找人；带暗号则对方必须也对上才谈得成
+  /meet <茶馆地址> <房号> [暗号]
+      经茶馆找事先约好的人（双方报同一房号；带暗号则双方须一致）
+  /punch <介绍人地址> <标签> [暗号]
+      经介绍人打洞直连（双方报同一标签；打不通就换 /meet 走茶馆，不自动回退）
+  /await <暗号>
+      备好切口：下一位来客对得上才谈得成（一位一验，验完即焚）
   /talk <编号|名字>     把注意力切到另一场对话
   /list                看看在场的人
+  /card                打印自己的名片（名字 + 各网卡地址）
+  /shout               同屋喊一圈，看看谁在（局域网发现）
+  /circle              围坐一圈：与当前在场的人凑话铸群钥匙（须先互连）
+  /gsay <话>           在圈内说一句（加密一次，人人同时收到）
   /bye                 和当前对话的人道别
   /quit 或 Ctrl-D      和所有人道别，离场
   Ctrl-C               直接离场
@@ -31,6 +46,7 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
 async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut name = String::from("无名氏");
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
+    let mut as_courier = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut args = std::env::args().skip(1);
@@ -40,6 +56,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 println!("{HELP}");
                 return Ok(ExitCode::SUCCESS);
             }
+            "--courier" => as_courier = true,
             "-n" | "--name" => match args.next() {
                 Some(n) => name = n,
                 None => {
@@ -58,6 +75,12 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
     if let Some(addr) = positional.into_iter().next() {
         listen_addr = addr;
+    }
+
+    // 另一份工：开茶馆，永不下班
+    if as_courier {
+        e2ee::courier::serve(&listen_addr).await?;
+        return Ok(ExitCode::SUCCESS);
     }
 
     // 出生；此后一半心思听事件，一半心思读输入。
@@ -99,13 +122,65 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
     match parts.next().unwrap_or("") {
         "dial" => {
             let Some(addr) = parts.next() else {
-                eprintln!("/dial 需要对方地址，例如：/dial 127.0.0.1:7777");
+                eprintln!("/dial 需要对方地址，例如：/dial 127.0.0.1:7777 暗号");
                 return Ok(false);
             };
             eprintln!("去找 {addr} …");
-            if let Err(e) = person.dial(addr).await {
+            // 显式带暗号走 dial_secret；不带则走 dial——链上的下一把自动生效
+            let r = match parts.next() {
+                Some(s) => person.dial_secret(addr, Some(s.as_bytes())).await,
+                None => person.dial(addr).await,
+            };
+            if let Err(e) = r {
                 eprintln!("{e}");
             }
+        }
+        "meet" => {
+            let (Some(courier), Some(room)) = (parts.next(), parts.next()) else {
+                eprintln!("/meet 需要茶馆地址和房号，例如：/meet 203.0.113.9:8888 1001 暗号");
+                return Ok(false);
+            };
+            let Ok(room) = room.parse::<u32>() else {
+                eprintln!("房号应是数字。");
+                return Ok(false);
+            };
+            let secret = parts.next();
+            eprintln!("进茶馆 {courier} 房间 {room}，等另一位…");
+            let r = match secret {
+                Some(s) => {
+                    person
+                        .meet_at_teahouse_secret(courier, room, Some(s.as_bytes()))
+                        .await
+                }
+                None => person.meet_at_teahouse(courier, room).await,
+            };
+            match r {
+                Ok(_) => {}
+                Err(e) => eprintln!("{e}"),
+            }
+        }
+        "punch" => {
+            let (Some(addr), Some(tag)) = (parts.next(), parts.next()) else {
+                eprintln!("/punch 需要介绍人地址和标签，例如：/punch 203.0.113.9:8888 huo-guo 暗号");
+                return Ok(false);
+            };
+            let secret = parts.next();
+            eprintln!("向 {addr} 报名「{tag}」，等另一头的人…");
+            let r = match secret {
+                Some(s) => person.punch_secret(addr, tag, Some(s.as_bytes())).await,
+                None => person.punch(addr, tag).await,
+            };
+            if let Err(e) = r {
+                eprintln!("{e}");
+            }
+        }
+        "await" => {
+            let Some(secret) = parts.next() else {
+                eprintln!("/await 需要一句暗号，例如：/await 蓝铜七号");
+                return Ok(false);
+            };
+            person.expect_secret(secret.as_bytes()).await;
+            eprintln!("切口备好了：下一位来客要对上「{secret}」才谈得成。");
         }
         "talk" => {
             let Some(key) = parts.next() else {
@@ -160,6 +235,41 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
                 eprintln!("#{} {}{}", r.id, r.name, mark);
             }
         }
+        "card" => {
+            let lines = person.card().await;
+            if lines.is_empty() {
+                eprintln!("（一张白板：没找到可用的地址）");
+            }
+            for l in lines {
+                eprintln!("{l}");
+            }
+        }
+        "shout" => {
+            eprintln!("喊一嗓子…");
+            let found = person.shout().await;
+            if found.is_empty() {
+                eprintln!("屋里没人应。");
+            } else {
+                for d in found {
+                    // 应答里的名字是局域网里任何人都能伪造的，照例先消毒
+                    eprintln!("{}  {}", safe(&d.name), d.dial_addr);
+                }
+            }
+        }
+        "circle" => match person.form_circle().await {
+            Ok(n) => eprintln!("凑话发出去了，{n} 人一圈（收齐自动开讲）。"),
+            Err(e) => eprintln!("{e}"),
+        },
+        "gsay" => {
+            let text = cmd.strip_prefix("gsay").unwrap_or("").trim().to_string();
+            if text.is_empty() {
+                eprintln!("/gsay 需要一句话，例如：/gsay 今晚吃火锅");
+                return Ok(false);
+            }
+            if let Err(e) = person.circle_speak(&text).await {
+                eprintln!("{e}");
+            }
+        }
         "bye" => match person.bye().await {
             Ok(n) => eprintln!("跟 [{n}] 道别了。"),
             Err(e) => eprintln!("{e}"),
@@ -172,30 +282,55 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
     Ok(false)
 }
 
+/// 把一句话说成终端里的人话。
+/// 远程可控的名字与文本先过这里：控制字符（含 ESC 转义序列）一律中和，
+/// 免得对端一句话擦掉你半个屏幕、改你终端标题。
+fn safe(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.chars().any(|c| c.is_control()) {
+        s.chars()
+            .map(|c| if c.is_control() { '·' } else { c })
+            .collect::<String>()
+            .into()
+    } else {
+        s.into()
+    }
+}
+
 /// 把一个人的经历说成终端里的人话。
 fn render(ev: Event) {
     match ev {
-        Event::Knocked { peer } => eprintln!("{peer} 来了。"),
+        Event::Knocked { peer } => eprintln!("{}", safe(&peer)),
         Event::Met { id, name, focused } => {
             if focused {
-                eprintln!("与 [{name}] 的对话 #{id} 开始。");
+                eprintln!("与 [{}] 的对话 #{id} 开始。", safe(&name));
             } else {
-                eprintln!("[{name}] 找上门来，对话 #{id} 开始（/talk {id} 切换过去）。");
+                eprintln!("[{}] 找上门来，对话 #{id} 开始（/talk {id} 切换过去）。", safe(&name));
             }
         }
-        Event::MeetFailed { error } => eprintln!("{error}"),
-        Event::Heard { name, text, .. } => println!("[{name}] {text}"),
+        Event::MeetFailed { error } => eprintln!("{}", safe(&error)),
+        Event::Heard { name, text, .. } => println!("[{}] {}", safe(&name), safe(&text)),
         Event::Left { name, reason, .. } => match reason {
-            LeaveReason::Farewell => eprintln!("[{name}] 挂断了。"),
-            LeaveReason::Disconnected => eprintln!("[{name}] 断开了。"),
-            LeaveReason::Undecipherable => eprintln!("[{name}] 的话解不开，这条信道有问题。"),
-            LeaveReason::Wire(e) => eprintln!("信道出错：{e}"),
+            LeaveReason::Farewell => eprintln!("[{}] 挂断了。", safe(&name)),
+            LeaveReason::Disconnected => eprintln!("[{}] 断开了。", safe(&name)),
+            LeaveReason::Undecipherable => {
+                eprintln!("[{}] 的话解不开，这条信道有问题。", safe(&name))
+            }
+            LeaveReason::Wire(e) => eprintln!("信道出错：{}", safe(&e)),
             _ => {} // 库将来新增的结局，终端暂时不渲染
         },
         Event::FocusReturned { to } => {
             if let Some(id) = to {
                 eprintln!("注意力回到 #{id}。");
             }
+        }
+        Event::SecretChained { with } => {
+            eprintln!("和 [{}] 的暗号链续上了：下一场免念。", safe(&with));
+        }
+        Event::CircleFormed { members } => {
+            eprintln!("圈子铸成了：{members} 人，屋里的话开讲（/gsay）。");
+        }
+        Event::CircleMumble { from } => {
+            eprintln!("[{}] 说了句圈里解不开的话（密钥不合？密文被动过？）——通常该重新 /circle。", safe(&from));
         }
         _ => {} // 库将来新增的经历，终端暂时不渲染
     }

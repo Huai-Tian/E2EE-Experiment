@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 description = "一个像人一样的端到端加密对话实验：能听，能说，转身即忘"
 
-# 一个包，两个产物：库 e2ee（供其他程序接入）+ 同名二进制（第一号使用者）
+# 工作区：根 = Rust 库 + CLI；ffi/ = C ABI 薄门面（cdylib 铸 .so/.dll）
+[workspace]
+members = ["ffi"]
+
+# Rust 库（供 Rust 程序直接依赖；C ABI 在 ffi/ 成员里）
 [lib]
 name = "e2ee"
 path = "src/lib.rs"
@@ -15,8 +19,14 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "sync"] }
-snow = "0.10"
+snow = { version = "0.10", features = ["hfs", "pqclean_kyber1024"] }
 thiserror = "2"
+if-addrs = "0.15.0"
+spake2 = "0.4"
+getrandom = { version = "0.4.3", features = ["std"] }
+sha2 = "0.11.0"
+hkdf = "0.13.0"
+chacha20poly1305 = "0.11.0"
 
 # 产物只有一个可执行文件：LTO + 剥符号 + abort on panic，尽量小
 [profile.release]

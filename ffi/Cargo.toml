@@ -1,0 +1,15 @@
+[package]
+name = "e2ee-ffi"
+version = "0.1.0"
+edition = "2024"
+description = "E2EE-Experiment 的 C ABI 门面：把「人」的动词说给任何能调 C 的语言"
+
+# cdylib：产出 libe2ee.so / e2ee.dll（符号在根 crate 的 ffi 语义上）
+[lib]
+name = "e2ee"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+e2ee = { package = "E2EE-Experiment", path = ".." }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
