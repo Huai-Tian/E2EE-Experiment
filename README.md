@@ -45,6 +45,9 @@ The soul of the project. No change may violate these.
 5. **Ephemerality.** Every connection performs a fresh Noise NN handshake with
    brand-new ephemeral keys. Forward secrecy comes for free: when the conversation
    ends, the keys die with it.
+6. **Attribution by topology.** The name on your screen is what the receiving
+   link says it is — never a self-claim inside the plaintext. Crypto provides
+   secrecy; topology provides attribution.
 
 ## Honest threat model
 
@@ -80,7 +83,8 @@ cargo build --release
 
 Type a line, press enter, and it appears on the other side (encrypted in transit).
 In-session: `/dial` to start a conversation, `/talk` to switch attention among
-several, `/list` to see who's around, `/bye` to say goodbye to the focused one,
+several, `/list` to see who's around, `/card` to print your dial addresses,
+`/shout` to scan the LAN, `/bye` to say goodbye to the focused one,
 `/quit` or Ctrl-D to bid everyone farewell and leave; Ctrl-C walks away
 immediately.
 
@@ -111,6 +115,9 @@ Windows and Linux, callable from any language that speaks C.
 - **Chat frames**: one UTF-8 line each, encrypted as Noise transport messages
 - **Hang-up**: an empty plaintext frame (a bare AEAD tag on the wire), or simply
   closing the connection
+- **Side channel — LAN discovery (UDP)**: `/shout` broadcasts a probe to port
+  37777; every person listening answers with `name + dial address`. Carries
+  presence only — never conversation, never secrets.
 
 ## The gathering — group chat (designed, not yet built)
 
@@ -149,12 +156,78 @@ waits until the 1:1 crypto core is hardened and tested.
   others' subkeys — but that grants no impersonation ability, because injection
   needs a link only its owner has.
 
+## Finding each other — discovery & pairing (partly built)
+
+You already know everyone is *in* — listening from birth. The question is where
+to find them. Zero persistence forces a clean split of labor: **the system
+forgets, humans remember.** The address book lives outside the system — on your
+paper, in your memory. Same shape as "recognizing the person is your job":
+*remembering where they live is your job too.*
+
+- **Same-room shout — `/shout` (built).** A UDP "anyone there?" broadcast on
+  the LAN; everyone listening answers with a name and a dial address. An active
+  query, not a standing beacon — no answer, no one home.
+- **A card — `/card` (built).** Prints your name and `ip:port` for every
+  interface. Copy it down, read it over a phone, hand it over. Works anywhere
+  the address is reachable.
+- **The teahouse — `--courier` (designed).** For two people behind two NAT
+  walls. The same binary in its other job, deployed on any machine with a
+  public IP: it assigns room numbers and splices two outbound lines together.
+  Not a privileged server — no identity, no storage, no plaintext; anyone can
+  open one, and no teahouse is nobler than another. Both sides dial out, and a
+  NAT never blocks leaving, so this route always works. The teahouse sees who,
+  when, and how many bytes — never a word.
+
+**Room number + secret (designed).** The room number is public — teahouse
+assigned, unique, prevents cross-talk. The secret is private — user-chosen,
+carried out-of-band. The system never generates, stores, or mandates secrets;
+their strength is a human responsibility, exactly like recognizing a voice. The
+two are always separate things.
+
+**PAKE — proving the secret without showing it (designed).** SPAKE2 lets two
+holders of the same secret authenticate mathematically while the secret never
+crosses the wire in any derivable form. A wrong secret fails cleanly; guessing
+can only happen online, where the teahouse can rate-limit it; offline
+brute-force does not exist.
+
+**The secret only ignites (designed).** A successful PAKE yields a key with
+exactly one duty: escort the Noise handshake (PSK mode). Every conversation
+key is a fresh per-session ephemeral — the secret never talks. A weak secret
+only hurts that one handshake instant, and everything burns at session end.
+
+**Hybrid post-quantum handshakes (designed).** A passive recorder can store
+today's traffic and wait for a quantum computer to break X25519 — "harvest
+now, decrypt later". In this design the single handshake IS the whole crypto
+moment (no ratchets), and worse: the secret chain passes each next secret
+through the previous session, so a broken handshake eventually leaks *the next
+secret* — the recorder turns from an ear into a mouth, able to impersonate.
+Therefore the handshake goes hybrid: X25519 **and** ML-KEM-768 together, and
+the attacker must break **both** to win. Never pure-PQ replacement — new math
+is young (SIKE fell to a laptop in 2022), the hybrid keeps the 40-year-old
+lock as a floor. Costs ~2 KB per handshake. PAKE itself stays classical: its
+recording only ever leaks an already-consumed secret.
+
+**The secret chain (designed).** At farewell, the next secret may be reserved
+inside the already-authenticated channel — offer plus acknowledgment, and an
+unacknowledged reservation is dropped: failure loses convenience, never
+security. The chain lives only in RAM; its lifespan is the intersection of both
+process lifetimes, and a restart returns you to the one out-of-band reading.
+Rolling secrets are never written to disk — a persisted secret is a long-term
+credential, which is the "face" this project deleted on purpose.
+
+**A room seats two (designed).** The teahouse never hosts a group. A gathering
+weaves its own mesh — one two-person room per link, with the introducer
+brokering room number and secret to both sides over existing encrypted links.
+Pairwise Noise per link makes relayed frames unforgeable and uncorrelatable
+across rooms, and the group-key schedule above lives one floor above the
+wiring — unchanged.
+
 ## Where this could go
 
 | Idea                            | Metaphor                           | Constraint it must respect                |
 |---------------------------------|------------------------------------|-------------------------------------------|
 | UDP hole punching               | An introduction by a mutual friend | Must never touch plaintext                |
-| Ciphertext-only relay           | A courier                          | Forwards opaque bytes, keeps nothing      |
+| The teahouse (`--courier`)      | A courier who only introduces      | Design in "Finding each other"            |
 | IPv6-first direct dials         | Two people in the same room        | Already how it works                      |
 | C-ABI bindings (`.dll` / `.so`) | The same verbs in any language     | No hidden state, no widened trust surface |
 
