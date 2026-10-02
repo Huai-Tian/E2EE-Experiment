@@ -18,7 +18,7 @@ private conversation, then remember nothing.
 |--------------------------------------|----------------------------------------------------------------|
 | Ears                                 | open from birth — listening from the moment the process starts |
 | A mouth                              | `/dial` — reach out to anyone, anytime, no restart needed      |
-| A language only the two of you speak | Noise NN end-to-end encryption                                 |
+| A language only the two of you speak | Noise hybrid E2EE (X25519 + Kyber1024)                         |
 | Turning away and forgetting          | Zero persistence — nothing is ever written to disk             |
 | Recognizing who you're talking to    | **Your job**, after decryption                                 |
 
@@ -54,12 +54,14 @@ The soul of the project. No change may violate these.
 **Protects against**: anyone on the wire (ISP, Wi-Fi snooper, backbone tap) —
 they see Noise-encrypted frames and nothing else.
 
-**Does not protect against**:
+**Does not protect against (by default)**:
 
 - **An active man-in-the-middle** can silently relay the handshake and read
-  everything. This is the accepted cost of the telephone model: encryption is not
-  authentication. Your mitigation is human — talk about something only the real
-  person would know.
+  everything. This is the accepted cost of the telephone model. **Optional
+  mitigation now built in**: agree on a secret out-of-band and use
+  `/dial ADDR secret` (or `/await secret` before someone arrives) — a PAKE
+  (SPAKE2) proves both sides hold the same secret without ever transmitting
+  it; a wrong secret fails loudly.
 - **The other end.** They can copy, paste, screenshot, and remember. E2EE binds
   the channel, not the person.
 
@@ -99,30 +101,64 @@ metaphor-verb methods — `born` / `dial` / `speak` / `talk_to` / `bye` /
 `leave` — and everything the person experiences flows out as an event stream
 (`Met`, `Heard`, `Left`, ...). The same person can live inside any program.
 
-Embedding path: Rust programs depend on this crate directly; once the verbs
-stabilize, the same API will be exposed as a C ABI (`.dll` / `.so`) for
-Windows and Linux, callable from any language that speaks C.
+Embedding paths, both live: Rust programs depend on this crate directly; any
+language that speaks C links `libe2ee.so` / `e2ee.dll` — workspace member
+`ffi/`, header `include/e2ee.h`. The ABI is deliberately tiny (11 functions:
+create/destroy, dial, await-secret, speak, bye, poll, ...), per-handle runtime,
+add-only frozen. `ffi/ffi_test.c` is the executable contract; Python speaks it
+too via `ffi/ctypes_test.py`.
+
+## Testing & platforms
+
+`cargo test` runs 17 tests: real persons on ephemeral localhost
+ports, asserting only on the public event stream — bidirectional talk, clean
+farewell, focus never stolen by arrivals, teahouse pairing and room isolation,
+PAKE success/failure, secret-chain renewal, three-person circle chat, a
+punched (UDP hole-punched) direct conversation, an armed secret surviving
+port scans, the teahouse shrugging off silent connections, and teahouse lines
+not chaining — plus unit tests of the group key schedule and the hybrid PQ
+suites. The C ABI has
+its own contract test (`ffi/ffi_test.c` — full lifecycle including PAKE,
+secret chain, and error paths) and a Python ctypes round-trip. Linux is fully
+tested here, including a fully static musl build (no runtime deps,
+Kyber1024 inside); the FFI gate cross-compiles to `e2ee.dll` (all 11
+symbols exported).
 
 ## Wire protocol
 
-- **Transport**: TCP
+- **Transport**: TCP (or a UDP hole-punched line — same framing, one frame per
+  datagram)
 - **Framing**: every message (handshake or data) is `u16 big-endian length + payload`
-- **Handshake**: Noise `NN` (`Noise_NN_25519_ChaChaPoly_BLAKE2s`), the side that
-  `/dial`s is the initiator
-  - `-> e` · `<- e, ee`
-- **First data frame, both directions**: the self-reported name (UTF-8, unsigned,
-  purely cosmetic)
-- **Chat frames**: one UTF-8 line each, encrypted as Noise transport messages
+- **PAKE, when a secret is in play (first)**: both sides exchange one SPAKE2
+  mask each (~65 B frames); the secret itself never crosses the wire in any
+  derivable form
+- **Handshake**: Noise hybrid — `Noise_NNhfs_25519+Kyber1024_ChaChaPoly_BLAKE2s`
+  without a secret, `Noise_NNpsk0+hfs_25519+Kyber1024_ChaChaPoly_BLAKE2s` with
+  one (the PAKE output is the PSK). X25519 and Kyber1024 run together in every
+  handshake — an attacker must break both. Each handshake message is ~1.6 KB
+  (≈3.2 KB per handshake). The side that `/dial`s is the initiator; the
+  teahouse/introducer assigns roles on their paths (later arrival initiates)
+- **First data frame, both directions**: the self-reported name — encrypted
+  like everything else (kind `0x05`), UTF-8, unsigned, purely cosmetic
+- **Chat frames**: every encrypted payload starts with a kind byte —
+  `0x00` chat line · `0x01` next-secret offer · `0x02` offer ack ·
+  `0x03` gathering contribution · `0x04` group ciphertext · `0x05` name.
+  Unknown kinds are skipped silently (forward compatibility)
 - **Hang-up**: an empty plaintext frame (a bare AEAD tag on the wire), or simply
   closing the connection
+- **Timeouts**: every meeting stage (PAKE, handshake, name exchange) is bounded
+  at 10 s — a connection that says nothing is dropped, never held
 - **Side channel — LAN discovery (UDP)**: `/shout` broadcasts a probe to port
   37777; every person listening answers with `name + dial address`. Carries
   presence only — never conversation, never secrets.
 
-## The gathering — group chat (designed, not yet built)
+## The gathering — group chat (v1 built)
 
-People also sit in circles. The design below is settled; implementation deliberately
-waits until the 1:1 crypto core is hardened and tested.
+People also sit in circles. Everyone dials everyone (full mesh), then `/circle`
+runs the contribute-and-derive ritual; `/gsay` speaks with your own subkey,
+one ciphertext fanned out to every link. New joiner? Re-run `/circle` — that
+*is* the rekey rule. The name on your screen always comes from the receiving
+link; crypto provides secrecy, topology provides attribution.
 
 - **Topology — a circle, not a stage.** Every member connects directly to every
   other (full mesh). Any scheme that saves links — a ring, a "moderator" — must
@@ -154,9 +190,11 @@ waits until the 1:1 crypto core is hardened and tested.
   inside the plaintext. Crypto provides secrecy; topology provides attribution.
 - **Honest limitation.** Contributions are broadcast, so any member can derive
   others' subkeys — but that grants no impersonation ability, because injection
-  needs a link only its owner has.
+  needs a link only its owner has. If members re-`/circle` at cross purposes,
+  some will hold mismatched group keys; an undecipherable group frame surfaces
+  as a "mumble" notice (not silence) — re-run `/circle` to converge.
 
-## Finding each other — discovery & pairing (partly built)
+## Finding each other — discovery & pairing (built)
 
 You already know everyone is *in* — listening from birth. The question is where
 to find them. Zero persistence forces a clean split of labor: **the system
@@ -170,66 +208,104 @@ paper, in your memory. Same shape as "recognizing the person is your job":
 - **A card — `/card` (built).** Prints your name and `ip:port` for every
   interface. Copy it down, read it over a phone, hand it over. Works anywhere
   the address is reachable.
-- **The teahouse — `--courier` (designed).** For two people behind two NAT
+- **The teahouse — `--courier` (built).** For two people behind two NAT
   walls. The same binary in its other job, deployed on any machine with a
-  public IP: it assigns room numbers and splices two outbound lines together.
-  Not a privileged server — no identity, no storage, no plaintext; anyone can
-  open one, and no teahouse is nobler than another. Both sides dial out, and a
-  NAT never blocks leaving, so this route always works. The teahouse sees who,
-  when, and how many bytes — never a word.
+  public IP: guests pick their own room numbers (agreed out-of-band, the same
+  channel as the secret), and the teahouse simply wires same-number arrivals
+  together. Not a privileged server — no identity, no storage, no plaintext;
+  anyone can open one, and no teahouse is nobler than another. Both sides dial
+  out, and a NAT never blocks leaving, so this route always works. The teahouse
+  sees who, when, and how many bytes — never a word.
+- **The introducer — `/punch` (built).** The keeper's side job: the same
+  port, UDP side. Two people who both want a *direct* line register the same
+  tag; the introducer tells each the other's public address and steps aside.
+  Then both knock on each other's doors at the same time — each NAT, believing
+  its own person left first, holds the door open. The Noise handshake runs
+  over that punched line; the introducer never touches a byte of it. Best
+  effort (the ~1.6 KB handshake messages travel as IP fragments) — if the wall
+  is too strict, you simply re-meet via `/meet` through the teahouse; nothing
+  falls back automatically.
 
-**Room number + secret (designed).** The room number is public — teahouse
-assigned, unique, prevents cross-talk. The secret is private — user-chosen,
-carried out-of-band. The system never generates, stores, or mandates secrets;
-their strength is a human responsibility, exactly like recognizing a voice. The
-two are always separate things.
+**Room number + secret (built).** The room number is public — user-chosen
+out-of-band; pick it unguessable, exactly like a secret, or two pairs may
+collide and get wired to each other. The secret is private — also user-chosen,
+also carried out-of-band. The system never mandates or stores your first
+secret; its strength is a human responsibility, exactly like recognizing a
+voice. (Rolling secrets in the chain are the exception that proves the rule:
+the system generates them, but only inside an already-authenticated channel,
+and they never touch disk.) The two are always separate things.
 
-**PAKE — proving the secret without showing it (designed).** SPAKE2 lets two
+**PAKE — proving the secret without showing it (built).** SPAKE2 lets two
 holders of the same secret authenticate mathematically while the secret never
 crosses the wire in any derivable form. A wrong secret fails cleanly; guessing
-can only happen online, where the teahouse can rate-limit it; offline
+can only happen online, and the armed challenge is one-shot — one guess per
+arming, then it's spent (a connection that never reaches the PAKE exchange
+doesn't spend it, so port scans can't burn your arrangement); offline
 brute-force does not exist.
 
-**The secret only ignites (designed).** A successful PAKE yields a key with
+**The secret only ignites (built).** A successful PAKE yields a key with
 exactly one duty: escort the Noise handshake (PSK mode). Every conversation
 key is a fresh per-session ephemeral — the secret never talks. A weak secret
 only hurts that one handshake instant, and everything burns at session end.
 
-**Hybrid post-quantum handshakes (designed).** A passive recorder can store
+**Hybrid post-quantum handshakes (built).** A passive recorder can store
 today's traffic and wait for a quantum computer to break X25519 — "harvest
 now, decrypt later". In this design the single handshake IS the whole crypto
 moment (no ratchets), and worse: the secret chain passes each next secret
 through the previous session, so a broken handshake eventually leaks *the next
 secret* — the recorder turns from an ear into a mouth, able to impersonate.
-Therefore the handshake goes hybrid: X25519 **and** ML-KEM-768 together, and
+Therefore the handshake goes hybrid: X25519 **and** Kyber1024 together, and
 the attacker must break **both** to win. Never pure-PQ replacement — new math
 is young (SIKE fell to a laptop in 2022), the hybrid keeps the 40-year-old
-lock as a floor. Costs ~2 KB per handshake. PAKE itself stays classical: its
-recording only ever leaks an already-consumed secret.
+lock as a floor. Costs ≈3.2 KB per handshake (two ~1.6 KB frames). PAKE itself
+stays classical: its recording only ever leaks an already-consumed secret.
 
-**The secret chain (designed).** At farewell, the next secret may be reserved
+**The secret chain (built).** At farewell, the next secret may be reserved
 inside the already-authenticated channel — offer plus acknowledgment, and an
 unacknowledged reservation is dropped: failure loses convenience, never
 security. The chain lives only in RAM; its lifespan is the intersection of both
 process lifetimes, and a restart returns you to the one out-of-band reading.
-Rolling secrets are never written to disk — a persisted secret is a long-term
-credential, which is the "face" this project deleted on purpose.
+The chain anchors to an address: it works on direct dials, may outlive the NAT
+mapping on punched lines (the reservation simply sits unused), and teahouse
+lines don't chain at all — rooms are one-shot, there is no anchor to hang a
+chain on. Rolling secrets are never written to disk — a persisted secret is a
+long-term credential, which is the "face" this project deleted on purpose.
 
-**A room seats two (designed).** The teahouse never hosts a group. A gathering
+**A room seats two (built).** The teahouse never hosts a group. A gathering
 weaves its own mesh — one two-person room per link, with the introducer
 brokering room number and secret to both sides over existing encrypted links.
 Pairwise Noise per link makes relayed frames unforgeable and uncorrelatable
 across rooms, and the group-key schedule above lives one floor above the
 wiring — unchanged.
 
+## Known limitations
+
+Honesty first — v1 has these sharp edges:
+
+- **No liveness probes.** A peer that vanishes without closing (or over a
+  punched UDP line, which has no EOF at all) leaves the line and its `/list`
+  entry hanging until you `/quit`. Meeting stages are all time-bounded, but
+  established conversations are not.
+- **The introducer's referral is unauthenticated.** Anyone who knows the tag
+  can register as your "peer" — the tag is a rendezvous, not an identity.
+  `meet_via` only accepts referrals from the introducer itself, but the
+  introducer trusts whoever shows up with the tag. Bring a secret if you need
+  to know who's on the other end.
+- **The teahouse pairs by room number alone.** Two pairs that pick the same
+  number get cross-wired; pick unguessable room numbers.
+- **Group membership is consistency-by-convention.** The full mesh is manual,
+  and simultaneous re-`/circle` runs can leave members with different group
+  keys (surfaced as mumble notices, fixed by re-circling). There is no
+  membership list to arbitrate — on purpose.
+- **One gathering at a time, per person.** `/circle` covers all live
+  conversations; you cannot sit in two circles with the same process.
+
 ## Where this could go
 
-| Idea                            | Metaphor                           | Constraint it must respect                |
-|---------------------------------|------------------------------------|-------------------------------------------|
-| UDP hole punching               | An introduction by a mutual friend | Must never touch plaintext                |
-| The teahouse (`--courier`)      | A courier who only introduces      | Design in "Finding each other"            |
-| IPv6-first direct dials         | Two people in the same room        | Already how it works                      |
-| C-ABI bindings (`.dll` / `.so`) | The same verbs in any language     | No hidden state, no widened trust surface |
+| Idea                       | Metaphor                           | Constraint it must respect           |
+|----------------------------|------------------------------------|--------------------------------------|
+| IPv6-first direct dials    | Two people in the same room        | Already how it works                 |
+| Growing the C-ABI surface  | Teaching the verbs more languages  | Add-only; frozen signatures forever  |
 
 Anything that stores messages, verifies identity, or introduces a privileged node
 breaks the model — it belongs in a different project.
