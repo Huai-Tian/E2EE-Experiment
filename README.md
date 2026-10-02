@@ -14,13 +14,13 @@ private conversation, then remember nothing.
 
 ## The model
 
-| A person                             | This program                                         |
-|--------------------------------------|------------------------------------------------------|
-| Ears                                 | `listen` — waits on a TCP port for someone to arrive |
-| A mouth                              | `dial` — reaches out to someone else's port          |
-| A language only the two of you speak | Noise NN end-to-end encryption                       |
-| Turning away and forgetting          | Zero persistence — nothing is ever written to disk   |
-| Recognizing who you're talking to    | **Your job**, after decryption                       |
+| A person                             | This program                                                   |
+|--------------------------------------|----------------------------------------------------------------|
+| Ears                                 | open from birth — listening from the moment the process starts |
+| A mouth                              | `/dial` — reach out to anyone, anytime, no restart needed      |
+| A language only the two of you speak | Noise NN end-to-end encryption                                 |
+| Turning away and forgetting          | Zero persistence — nothing is ever written to disk             |
+| Recognizing who you're talking to    | **Your job**, after decryption                                 |
 
 The last row is deliberate. This is the *telephone model* of security: the wire is
 private, but the person on the other end introduces themselves however they like.
@@ -60,30 +60,52 @@ they see Noise-encrypted frames and nothing else.
 - **The other end.** They can copy, paste, screenshot, and remember. E2EE binds
   the channel, not the person.
 
+One process is one person for its whole life: born with ears open, free to walk
+up to anyone at any moment (`/dial`), and able to hold several independent 1:1
+conversations at once — `/talk` moves your attention between them. Those parallel
+pairwise links are exactly the skeleton the gathering will later be built on.
+
 ## Quick start
 
 ```bash
 cargo build --release
 
-# Terminal 1 — the ear
-./target/release/E2EE-Experiment listen 0.0.0.0:7777 -n Alice
+# Terminal 1 — Alice is born, listening on 7777
+./target/release/E2EE-Experiment -n Alice
 
-# Terminal 2 — the mouth
-./target/release/E2EE-Experiment dial 127.0.0.1:7777 -n Bob
+# Terminal 2 — Bob is born on his own port, then walks over to Alice
+./target/release/E2EE-Experiment -n Bob 127.0.0.1:7778
+/dial 127.0.0.1:7777
 ```
 
 Type a line, press enter, and it appears on the other side (encrypted in transit).
-`/quit` or Ctrl-D hangs up politely; Ctrl-C walks away immediately.
+In-session: `/dial` to start a conversation, `/talk` to switch attention among
+several, `/list` to see who's around, `/bye` to say goodbye to the focused one,
+`/quit` or Ctrl-D to bid everyone farewell and leave; Ctrl-C walks away
+immediately.
 
 Chat goes to stdout, connection events to stderr — so the conversation itself
 stays pipeable.
+
+## A library in a CLI's clothing
+
+The core is a Rust library (crate `e2ee`); this binary is merely its first
+consumer. The library never prints and never reads stdin: actions go in as
+metaphor-verb methods — `born` / `dial` / `speak` / `talk_to` / `bye` /
+`leave` — and everything the person experiences flows out as an event stream
+(`Met`, `Heard`, `Left`, ...). The same person can live inside any program.
+
+Embedding path: Rust programs depend on this crate directly; once the verbs
+stabilize, the same API will be exposed as a C ABI (`.dll` / `.so`) for
+Windows and Linux, callable from any language that speaks C.
 
 ## Wire protocol
 
 - **Transport**: TCP
 - **Framing**: every message (handshake or data) is `u16 big-endian length + payload`
-- **Handshake**: Noise `NN` (`Noise_NN_25519_ChaChaPoly_BLAKE2s`), dialer = initiator
-    - `-> e` · `<- e, ee`
+- **Handshake**: Noise `NN` (`Noise_NN_25519_ChaChaPoly_BLAKE2s`), the side that
+  `/dial`s is the initiator
+  - `-> e` · `<- e, ee`
 - **First data frame, both directions**: the self-reported name (UTF-8, unsigned,
   purely cosmetic)
 - **Chat frames**: one UTF-8 line each, encrypted as Noise transport messages
@@ -129,11 +151,12 @@ waits until the 1:1 crypto core is hardened and tested.
 
 ## Where this could go
 
-| Idea                    | Metaphor                           | Constraint it must respect           |
-|-------------------------|------------------------------------|--------------------------------------|
-| UDP hole punching       | An introduction by a mutual friend | Must never touch plaintext           |
-| Ciphertext-only relay   | A courier                          | Forwards opaque bytes, keeps nothing |
-| IPv6-first direct dials | Two people in the same room        | Already how it works                 |
+| Idea                            | Metaphor                           | Constraint it must respect                |
+|---------------------------------|------------------------------------|-------------------------------------------|
+| UDP hole punching               | An introduction by a mutual friend | Must never touch plaintext                |
+| Ciphertext-only relay           | A courier                          | Forwards opaque bytes, keeps nothing      |
+| IPv6-first direct dials         | Two people in the same room        | Already how it works                      |
+| C-ABI bindings (`.dll` / `.so`) | The same verbs in any language     | No hidden state, no widened trust surface |
 
 Anything that stores messages, verifies identity, or introduces a privileged node
 breaks the model — it belongs in a different project.

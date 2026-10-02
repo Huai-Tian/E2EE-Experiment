@@ -34,10 +34,18 @@ binary_count: 1                            # INVARIANT: deliverable is exactly o
 deps:
 - tokio
 - snow
-roles:
-listen: { module: session::listen, metaphor: ear,  behavior: "tcp bind+accept; serves visitors serially; keeps listening after each conversation" }
-dial:   { module: session::dial,   metaphor: mouth, behavior: "tcp connect; one conversation; process exits after" }
+lifecycle: single-startup-person           # INVARIANT: no role subcommands; one process is born with both ears and mouth
+commands:                                  # in-session, parsed by session::command
+dial:  { syntax: "/dial ADDR:PORT",      behavior: "outbound connect + NN handshake as initiator; becomes focus; 5s connect timeout" }
+talk:  { syntax: "/talk id|name-prefix", behavior: "switch input focus; ambiguous prefix lists candidates" }
+list:  { syntax: "/list",                behavior: "enumerate live conversations, mark focused" }
+bye:   { syntax: "/bye",                 behavior: "empty-plaintext goodbye to focused conversation; ear task completes teardown" }
+quit:  { syntax: "/quit | Ctrl-D",       behavior: "goodbye to all conversations, then exit 0" }
+sessions: multiple-concurrent-1to1         # each link = independent Noise NN; mesh skeleton for group_chat
+focus_model: "typed lines go to the focused conversation; focus set by /dial or /talk; incoming conversations never steal focus"
 symmetry: peer-only                        # INVARIANT: no server/client split, no privileged node
+packaging: lib-plus-bin                    # single package: lib `e2ee` (for embedding) + bin `E2EE-Experiment` (first consumer); future C ABI deferred until verbs stabilize
+api_style: "library NEVER prints nor reads stdin; actions in = metaphor-verb methods (born/dial/speak/talk_to/roster/bye/leave); experiences out = Event stream (tokio mpsc); Event/LeaveReason/PersonError are non_exhaustive; errors carry semantics, CLI renders prose"
 conversation_flow:
 - noise-nn handshake                     # dialer = initiator
 - name exchange                          # first data frame each direction; utf8; unsigned
@@ -63,9 +71,10 @@ hangup: "empty plaintext frame (wire = bare 16B AEAD tag) | tcp close"
 clean_eof: "read_frame returns Ok(None) iff EOF lands exactly on frame boundary"
 
 modules:
-src/main.rs:    "cli: subcommand listen|dial, optional positional addr, optional -n name; default addr 0.0.0.0:7777; help text inline; exit codes 0/1/2"
+src/lib.rs:     "crate root: pub mod person + wire; re-exports Person/Events/Event/LeaveReason/PersonError/RosterEntry; lib-first packaging documented"
+src/person.rs:  "core person model: born/dial/speak/talk_to/roster/bye/leave; Inner{my_name,convos,focus,next_id,events}; free greet() (inbound failures → MeetFailed event, dial failures → PersonError); one ear task per conversation tears itself down; inbound arrivals never steal focus; ZERO printing, ZERO stdin"
 src/wire.rs:    "framing primitives; generic over AsyncRead/AsyncWrite; distinguishes clean EOF vs mid-frame break"
-src/session.rs: "listen/dial/converse/handshake/send; tokio select! bridges ear-task vs stdin; farewell wait 800ms"
+src/main.rs:    "thin CLI renderer: arg parse + select!{stdin lines, event stream}; maps PersonError/Event to zh prose; /talk name-prefix resolution lives here"
 
 invariants:                                  # ANY change violating these MUST be rejected
 - zero-persistence: no fs writes ever — no logs, config, cache, keys, history, state files
@@ -81,6 +90,7 @@ nat_traversal:    { metaphor: introducer, rule: "udp hole-punch coordination; mu
 ciphertext_relay: { metaphor: courier,   rule: "forward opaque frames only; store nothing, log nothing" }
 ipv6:             { metaphor: same-room }
 multiparty:       { metaphor: small-gathering, rule: "design settled — see group_chat section" }
+ffi_bindings:     { metaphor: teaching-the-verbs, rule: "C ABI mirrors the same verbs; add no hidden state, widen no trust surface; only after API stabilizes" }
 
 forbidden_extensions:                       # belong to a different project, not this one
 - offline message queue                   # breaks ephemerality
@@ -115,8 +125,9 @@ build: "cargo build --release"
 binary: "target/release/E2EE-Experiment"
 static_build: "rustup target add x86_64-unknown-linux-musl && cargo build --release --target x86_64-unknown-linux-musl"
 smoke_test: |
-two local instances: `listen 127.0.0.1:17777 -n A`, then `dial 127.0.0.1:17777 -n B`
-expect: each side prefixes received lines with the peer name; "/quit" → peer prints its 挂断了 goodbye and exits
+local instances on distinct ports: `... -n A 127.0.0.1:17777`, `... -n B 127.0.0.1:17778`, then B sends `/dial 127.0.0.1:17777`
+expect: each side prefixes received lines with the peer name; `/bye` → peer prints 挂断了
+three-instance: second inbound connection does NOT steal focus (prints 找上门来 hint); `/talk <id>` switches; `/quit` goodbyes all
 
 licensing:
 license: AGPL-3.0
@@ -130,7 +141,8 @@ disclaimer_keys:                          # machine summary of the human disclai
 - no-warranty-liability-capped-by-law
 
 glossary:                                   # chinese metaphor → mechanism (used in code comments)
-耳朵:      inbound tcp accept loop (listen)
+耳朵:      inbound tcp accept loop (person::born acceptor; one ear task per conversation)
+出生:      Person::born — bind + spawn acceptor, returns (Person, Events)
 嘴:        outbound tcp connect (dial)
 见面:      noise nn handshake
 密谈:      noise transport phase
@@ -140,3 +152,6 @@ glossary:                                   # chinese metaphor → mechanism (us
 自报家门:  unsigned self-reported name frame
 无名氏:    default name when -n omitted
 初次见面:  no key continuity — every connection starts from scratch
+找人:      /dial outbound connect
+注意力:    focus — which conversation receives typed lines
+收摊:      conversation teardown by the ear task

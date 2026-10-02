@@ -2,5 +2,25 @@
 name = "E2EE-Experiment"
 version = "0.1.0"
 edition = "2024"
+description = "一个像人一样的端到端加密对话实验：能听，能说，转身即忘"
+
+# 一个包，两个产物：库 e2ee（供其他程序接入）+ 同名二进制（第一号使用者）
+[lib]
+name = "e2ee"
+path = "src/lib.rs"
+
+[[bin]]
+name = "E2EE-Experiment"
+path = "src/main.rs"
 
 [dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "sync"] }
+snow = "0.10"
+thiserror = "2"
+
+# 产物只有一个可执行文件：LTO + 剥符号 + abort on panic，尽量小
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
