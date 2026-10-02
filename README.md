@@ -88,7 +88,8 @@ In-session: `/dial` to start a conversation, `/talk` to switch attention among
 several, `/list` to see who's around, `/card` to print your dial addresses,
 `/shout` to scan the LAN, `/bye` to say goodbye to the focused one,
 `/quit` or Ctrl-D to bid everyone farewell and leave; Ctrl-C walks away
-immediately.
+immediately. Born with `--hidden`, a person never answers `/shout` probes at all —
+reachable only by exact address or rendezvous.
 
 Chat goes to stdout, connection events to stderr — so the conversation itself
 stays pipeable.
@@ -97,31 +98,32 @@ stays pipeable.
 
 The core is a Rust library (crate `e2ee`); this binary is merely its first
 consumer. The library never prints and never reads stdin: actions go in as
-metaphor-verb methods — `born` / `dial` / `speak` / `talk_to` / `bye` /
-`leave` — and everything the person experiences flows out as an event stream
-(`Met`, `Heard`, `Left`, ...). The same person can live inside any program.
+metaphor-verb methods — `born` / `born_hidden` / `dial` / `speak` / `talk_to` /
+`bye` / `leave` — and everything the person experiences flows out as an event
+stream (`Met`, `Heard`, `Left`, ...). The same person can live inside any program.
 
 Embedding paths, both live: Rust programs depend on this crate directly; any
 language that speaks C links `libe2ee.so` / `e2ee.dll` — workspace member
-`ffi/`, header `include/e2ee.h`. The ABI is deliberately tiny (11 functions:
-create/destroy, dial, await-secret, speak, bye, poll, ...), per-handle runtime,
-add-only frozen. `ffi/ffi_test.c` is the executable contract; Python speaks it
-too via `ffi/ctypes_test.py`.
+`ffi/`, header `include/e2ee.h`. The ABI is deliberately tiny (12 functions:
+create/destroy, hidden-create, dial, await-secret, speak, bye, poll, ...),
+per-handle runtime, add-only frozen. `ffi/ffi_test.c` is the executable
+contract; Python speaks it too via `ffi/ctypes_test.py`.
 
 ## Testing & platforms
 
-`cargo test` runs 17 tests: real persons on ephemeral localhost
+`cargo test` runs 18 tests: real persons on ephemeral localhost
 ports, asserting only on the public event stream — bidirectional talk, clean
 farewell, focus never stolen by arrivals, teahouse pairing and room isolation,
 PAKE success/failure, secret-chain renewal, three-person circle chat, a
 punched (UDP hole-punched) direct conversation, an armed secret surviving
-port scans, the teahouse shrugging off silent connections, and teahouse lines
-not chaining — plus unit tests of the group key schedule and the hybrid PQ
+port scans, the teahouse shrugging off silent connections, teahouse lines
+not chaining, and a hidden person staying reachable by exact address — plus
+unit tests of the group key schedule and the hybrid PQ
 suites. The C ABI has
 its own contract test (`ffi/ffi_test.c` — full lifecycle including PAKE,
-secret chain, and error paths) and a Python ctypes round-trip. Linux is fully
-tested here, including a fully static musl build (no runtime deps,
-Kyber1024 inside); the FFI gate cross-compiles to `e2ee.dll` (all 11
+secret chain, hidden mode, and error paths) and a Python ctypes round-trip.
+Linux is fully tested here, including a fully static musl build (no runtime
+deps, Kyber1024 inside); the FFI gate cross-compiles to `e2ee.dll` (all 12
 symbols exported).
 
 ## Wire protocol
@@ -205,6 +207,14 @@ paper, in your memory. Same shape as "recognizing the person is your job":
 - **Same-room shout — `/shout` (built).** A UDP "anyone there?" broadcast on
   the LAN; everyone listening answers with a name and a dial address. An active
   query, not a standing beacon — no answer, no one home.
+- **Hidden — `--hidden` (built).** Some people answer no shouts. Born with
+  `--hidden`, a person never replies to LAN probes: broadcast cannot detect
+  their existence — the shout-reflex ear simply isn't there. Nothing else
+  changes: the TCP ear stays open, so anyone holding the exact address (from a
+  card) can still dial, and teahouse/introducer rendezvous work as usual.
+  Hiding is one-way: a hidden person may still `/shout` to find others — but
+  the probe itself announces the prober's IP to everyone listening, so a truly
+  hidden person stays quiet.
 - **A card — `/card` (built).** Prints your name and `ip:port` for every
   interface. Copy it down, read it over a phone, hand it over. Works anywhere
   the address is reachable.
@@ -299,6 +309,10 @@ Honesty first — v1 has these sharp edges:
   membership list to arbitrate — on purpose.
 - **One gathering at a time, per person.** `/circle` covers all live
   conversations; you cannot sit in two circles with the same process.
+- **Hiding is not invisibility.** `--hidden` silences the shout-reflex only;
+  your TCP listen port still answers dials, and a port scanner can still find
+  the open port (though nothing tells it what it is). True unreachability
+  means `/await secret` as well.
 
 ## Where this could go
 

@@ -217,6 +217,25 @@ impl Person {
     /// 出生：起个名字，守在一个地址上听。
     /// 返回这个人，和他的事件流。
     pub async fn born(name: &str, listen_addr: &str) -> Result<(Person, Events), PersonError> {
+        Self::born_impl(name, listen_addr, false).await
+    }
+
+    /// 出生（隐身）：同 [`Person::born`]，只是永不应答同屋的「有人吗」——
+    /// 广播探测探不到这个人的存在；拿着确切地址（名片、口头约定），
+    /// 或经茶馆、介绍人约好的人，才找得到他。
+    /// TCP 耳朵照常开着：隐身不是闭门，只是不应门铃之外的那声喊。
+    pub async fn born_hidden(
+        name: &str,
+        listen_addr: &str,
+    ) -> Result<(Person, Events), PersonError> {
+        Self::born_impl(name, listen_addr, true).await
+    }
+
+    async fn born_impl(
+        name: &str,
+        listen_addr: &str,
+        hidden: bool,
+    ) -> Result<(Person, Events), PersonError> {
         let listener = TcpListener::bind(listen_addr)
             .await
             .map_err(|source| PersonError::Bind {
@@ -299,8 +318,11 @@ impl Person {
             }
         });
 
-        // 同屋的耳朵：听到「有人吗」就应一声（占不到喊话端口就安静放弃）
-        tokio::spawn(discover::listen_for_shouts(name.to_string(), port));
+        // 同屋的耳朵：听到「有人吗」就应一声（占不到喊话端口就安静放弃）。
+        // 隐身的人压根不竖这只耳朵：广播探不到他，精确交往照旧。
+        if !hidden {
+            tokio::spawn(discover::listen_for_shouts(name.to_string(), port));
+        }
 
         Ok((person, rx))
     }

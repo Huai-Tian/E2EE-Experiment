@@ -95,6 +95,28 @@ pub extern "C" fn e2ee_person_create(
     name: *const c_char,
     listen_addr: *const c_char,
 ) -> *mut FfiPerson {
+    person_create_impl(name, listen_addr, false)
+}
+
+/// 出生（隐身）：同 e2ee_person_create，但永不应答同屋喊话——
+/// /shout 广播探测探不到这个人；拿着确切地址拨号、茶馆、介绍人照常。
+///
+/// # Safety
+/// name / listen_addr 必须是合法的 NUL 结尾 UTF-8 C 字符串。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_person_create_hidden(
+    name: *const c_char,
+    listen_addr: *const c_char,
+) -> *mut FfiPerson {
+    person_create_impl(name, listen_addr, true)
+}
+
+/// 两种出生的共通内里。
+fn person_create_impl(
+    name: *const c_char,
+    listen_addr: *const c_char,
+    hidden: bool,
+) -> *mut FfiPerson {
     let work = || -> Result<FfiPerson, String> {
         let name = unsafe { cstr_in(name, "name") }?;
         let addr = unsafe { cstr_in(listen_addr, "listen_addr") }?;
@@ -102,8 +124,11 @@ pub extern "C" fn e2ee_person_create(
             .enable_all()
             .build()
             .map_err(|e| format!("起不动运转时：{e}"))?;
-        let (person, events) = rt
-            .block_on(Person::born(&name, &addr))
+        let (person, events) = if hidden {
+            rt.block_on(Person::born_hidden(&name, &addr))
+        } else {
+            rt.block_on(Person::born(&name, &addr))
+        }
             .map_err(|e| e.to_string())?;
         let la = rt.block_on(person.listen_addr());
         Ok(FfiPerson {

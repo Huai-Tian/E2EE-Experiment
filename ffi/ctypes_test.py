@@ -7,6 +7,7 @@ lib = ctypes.CDLL("target/release/libe2ee.so")
 
 lib.e2ee_version.restype = ctypes.c_char_p
 lib.e2ee_person_create.restype = ctypes.c_void_p
+lib.e2ee_person_create_hidden.restype = ctypes.c_void_p
 lib.e2ee_person_destroy.argtypes = [ctypes.c_void_p]
 lib.e2ee_local_addr.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
 lib.e2ee_dial.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint64)]
@@ -50,6 +51,12 @@ else:
 
 assert ev.name == b"Bob" and ev.text == b"python ye neng shuo", (ev.name, ev.text)
 print(f"heard: [{ev.name.decode()}] {ev.text.decode()}")
+
+# 隐身出生：照常能说这套话（不应答 /shout 是 discover 层的事）
+hidden = lib.e2ee_person_create_hidden(b"Hidden", b"127.0.0.1:0")
+assert hidden
+lib.e2ee_person_destroy(hidden)
+print("hidden OK")
 
 lib.e2ee_person_destroy(alice)
 lib.e2ee_person_destroy(bob)

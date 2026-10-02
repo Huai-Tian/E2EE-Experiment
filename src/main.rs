@@ -15,6 +15,11 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   E2EE-Experiment [监听地址] [-n 名字]
       出生。默认在 0.0.0.0:7777 上听，等人来，也随时可以主动去找人。
       同一台机器开两个人时，记得用不同端口。
+  E2EE-Experiment --hidden [监听地址] [-n 名字]
+      隐身出生：永不应答 /shout 广播探测——同屋喊一嗓子也探不到你在。
+      拿确切地址 /dial、/meet、/punch 等精确交往一切照常（TCP 耳朵照常开）。
+      注意：隐身者仍可主动 /shout 找别人，但喊这一嗓子会把自己的 IP 暴露给
+      所有在听的人——真隐身连喊也不喊。
   E2EE-Experiment --courier [监听地址]
       开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
       （房号由客人带外自选，茶馆只认号接线）。
@@ -47,6 +52,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut name = String::from("无名氏");
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
     let mut as_courier = false;
+    let mut hidden = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut args = std::env::args().skip(1);
@@ -57,6 +63,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             "--courier" => as_courier = true,
+            "--hidden" => hidden = true,
             "-n" | "--name" => match args.next() {
                 Some(n) => name = n,
                 None => {
@@ -84,8 +91,18 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 
     // 出生；此后一半心思听事件，一半心思读输入。
-    let (person, mut events) = Person::born(&name, &listen_addr).await?;
-    eprintln!("我是 {name}，在听 {listen_addr}。等人来，或 /dial 找人（/quit 离场）");
+    // 隐身出生的人不应答同屋喊话（广播探不到存在），其余照常。
+    let (person, mut events) = if hidden {
+        Person::born_hidden(&name, &listen_addr).await?
+    } else {
+        Person::born(&name, &listen_addr).await?
+    };
+    let stealth_note = if hidden {
+        "（隐身：不应答 /shout）"
+    } else {
+        ""
+    };
+    eprintln!("我是 {name}，在听 {listen_addr}{stealth_note}。等人来，或 /dial 找人（/quit 离场）");
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     loop {

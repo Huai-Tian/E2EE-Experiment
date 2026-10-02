@@ -79,6 +79,24 @@ int main(void) {
     CHECK(e2ee_speak(b, "dui kong qi shuo") != 0, "speak without focus errors");
     show_err("speak no focus");
 
+    /* 隐身出生：探不到，但精确交往照常——这里验精确拨通 */
+    e2ee_person* h = e2ee_person_create_hidden("Hidden", "127.0.0.1:0");
+    CHECK(h != NULL, "create hidden H");
+    if (h) {
+        char haddr[64];
+        CHECK(e2ee_local_addr(h, haddr, sizeof haddr) == 0 && haddr[0] != '\0',
+              "local_addr hidden");
+        CHECK(e2ee_dial(h, addr, NULL, &id) == 0 && id > 0, "hidden dials A by exact address");
+        CHECK(wait_for(a, E2EE_EVENT_MET, &ev) && strcmp(ev.name, "Hidden") == 0,
+              "A met hidden H");
+        CHECK(e2ee_speak(h, "yin shen zhe zhao yang neng shuo") == 0, "speak hidden");
+        CHECK(wait_for(a, E2EE_EVENT_HEARD, &ev)
+                  && strcmp(ev.text, "yin shen zhe zhao yang neng shuo") == 0,
+              "A heard hidden H");
+        e2ee_person_destroy(h);
+        CHECK(1, "destroy hidden");
+    }
+
     e2ee_person_destroy(a);
     e2ee_person_destroy(b);
     CHECK(1, "destroy both");
