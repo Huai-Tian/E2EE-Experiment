@@ -20,6 +20,17 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
       拿确切地址 /dial、/meet、/punch 等精确交往一切照常（TCP 耳朵照常开）。
       注意：隐身者仍可主动 /shout 找别人，但喊这一嗓子会把自己的 IP 暴露给
       所有在听的人——真隐身连喊也不喊。
+  E2EE-Experiment --no-chain [监听地址] [-n 名字]
+      不续链出生：道别时不预约下一把暗号，也不接受别人的预约。
+      适合对陌生人常开的台席（如意见反馈热线）——谁来都行，散场不留锁
+      （默认的续链会把下一场留给上一位客人，陌生人反而进不来）。
+      可与 --hidden 叠加。
+  E2EE-Experiment --guard <机器暗号> [监听地址] [-n 名字]
+      常备门禁出生：每位来客都要对上这句暗号才谈得成，且从不消耗——
+      瞎拨多少次也锁不住台，真钥永远进得来。这句应是 32 字节级的
+      随机机器密钥（不是人类暗号：一次性切口「烧掉」防的是对低熵暗号
+      的在线爆破，机器密钥在线爆破本就不可能）。可与 --no-chain、
+      --hidden 叠加；对陌生人常开的武装台席推荐 --guard KEY --no-chain。
   E2EE-Experiment --courier [监听地址]
       开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
       （房号由客人带外自选，茶馆只认号接线）。
@@ -34,6 +45,9 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
       经介绍人打洞直连（双方报同一标签；打不通就换 /meet 走茶馆，不自动回退）
   /await <暗号>
       备好切口：下一位来客对得上才谈得成（一位一验，验完即焚）
+  /file <文件路径>
+      递一份文件给当前对话的人（≤32MB，分块加密，字节无损；
+      收到的文件自动放进 ./received/ 目录）
   /talk <编号|名字>     把注意力切到另一场对话
   /list                看看在场的人
   /card                打印自己的名片（名字 + 各网卡地址）
@@ -53,6 +67,8 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
     let mut as_courier = false;
     let mut hidden = false;
+    let mut no_chain = false;
+    let mut guard_secret: Option<String> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut args = std::env::args().skip(1);
@@ -64,6 +80,15 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             "--courier" => as_courier = true,
             "--hidden" => hidden = true,
+            "--no-chain" => no_chain = true,
+            "--guard" => match args.next() {
+                Some(g) => guard_secret = Some(g),
+                None => {
+                    eprintln!("--guard 后面要跟机器暗号（建议 32 字节随机串）\n");
+                    eprintln!("{HELP}");
+                    return Ok(ExitCode::from(2));
+                }
+            },
             "-n" | "--name" => match args.next() {
                 Some(n) => name = n,
                 None => {
@@ -97,12 +122,25 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     } else {
         Person::born(&name, &listen_addr).await?
     };
-    let stealth_note = if hidden {
-        "（隐身：不应答 /shout）"
-    } else {
-        ""
-    };
-    eprintln!("我是 {name}，在听 {listen_addr}{stealth_note}。等人来，或 /dial 找人（/quit 离场）");
+    // 不续链：道别不预约、来约不接受（开放台席形态）
+    if no_chain {
+        person.set_chaining(false).await;
+    }
+    // 常备门禁：每位来客都要对上这句机器暗号，从不消耗
+    if let Some(g) = &guard_secret {
+        person.expect_secret_stable(g.as_bytes()).await;
+    }
+    let mut notes = String::new();
+    if hidden {
+        notes.push_str("（隐身：不应答 /shout）");
+    }
+    if no_chain {
+        notes.push_str("（不续链：道别不预约，谁来都行）");
+    }
+    if guard_secret.is_some() {
+        notes.push_str("（常备门禁：每位来客都要对上暗号）");
+    }
+    eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（/quit 离场）");
 
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     loop {
@@ -287,6 +325,28 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
                 eprintln!("{e}");
             }
         }
+        "file" => {
+            // 路径取整行余文（可含空格）；读盘是 CLI 这个使用者的事——库只收字节
+            let path = cmd.strip_prefix("file").unwrap_or("").trim();
+            if path.is_empty() {
+                eprintln!("/file 需要文件路径，例如：/file ./tu-pian.png");
+                return Ok(false);
+            }
+            let name = std::path::Path::new(path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".into());
+            match tokio::fs::read(path).await {
+                Ok(data) => {
+                    let size = data.len();
+                    match person.send_file(&name, &data).await {
+                        Ok(()) => eprintln!("文件〔{}〕递出去了（{size} 字节）。", safe(&name)),
+                        Err(e) => eprintln!("{e}"),
+                    }
+                }
+                Err(e) => eprintln!("读不了 {path}：{e}"),
+            }
+        }
         "bye" => match person.bye().await {
             Ok(n) => eprintln!("跟 [{n}] 道别了。"),
             Err(e) => eprintln!("{e}"),
@@ -348,6 +408,42 @@ fn render(ev: Event) {
         }
         Event::CircleMumble { from } => {
             eprintln!("[{}] 说了句圈里解不开的话（密钥不合？密文被动过？）——通常该重新 /circle。", safe(&from));
+        }
+        Event::FileArrived { name, data, .. } => {
+            // 库永不落盘；CLI 是外层使用者，替人把东西放进 ./received/。
+            // 名字过安检：控制字符中和、路径分隔剥掉、只剩点儿的当没名字、重名加序。
+            let cleaned = safe(&name).replace(['/', '\\'], "·");
+            let cleaned = if cleaned.trim_matches(['.', ' ']).is_empty() {
+                "file".to_string()
+            } else {
+                cleaned
+            };
+            let _ = std::fs::create_dir_all("received");
+            let mut dest = std::path::Path::new("received").join(&cleaned);
+            let mut n = 1;
+            while dest.exists() {
+                n += 1;
+                dest = std::path::Path::new("received").join(format!("{n}-{cleaned}"));
+            }
+            match std::fs::write(&dest, &data) {
+                Ok(()) => eprintln!(
+                    "收到文件〔{}〕（{} 字节），放在 {}。",
+                    cleaned,
+                    data.len(),
+                    dest.display()
+                ),
+                Err(e) => eprintln!(
+                    "收到文件〔{cleaned}〕但写不进磁盘：{e}（{} 字节随进程离去）",
+                    data.len()
+                ),
+            }
+        }
+        Event::FileDeclined { from, name, size } => {
+            eprintln!(
+                "[{}] 想递一份超大的文件〔{}〕（{size} 字节，超过 32MB 上限），婉拒了。",
+                safe(&from),
+                safe(&name)
+            );
         }
         _ => {} // 库将来新增的经历，终端暂时不渲染
     }

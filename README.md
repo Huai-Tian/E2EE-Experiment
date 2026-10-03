@@ -111,15 +111,18 @@ contract; Python speaks it too via `ffi/ctypes_test.py`.
 
 ## Testing & platforms
 
-`cargo test` runs 18 tests: real persons on ephemeral localhost
+`cargo test` runs 27 tests: real persons on ephemeral localhost
 ports, asserting only on the public event stream — bidirectional talk, clean
 farewell, focus never stolen by arrivals, teahouse pairing and room isolation,
 PAKE success/failure, secret-chain renewal, three-person circle chat, a
 punched (UDP hole-punched) direct conversation, an armed secret surviving
 port scans, the teahouse shrugging off silent connections, teahouse lines
-not chaining, and a hidden person staying reachable by exact address — plus
-unit tests of the group key schedule and the hybrid PQ
-suites. The C ABI has
+not chaining, a hidden person staying reachable by exact address, an
+open desk (`--no-chain`) never locking strangers out, a stable guard
+(`--guard`) shrugging off endless wrong-key dials, lossless binary file
+transfer (over direct AND punched lines, with the 32 MB cap enforced), and
+padded chat lines round-tripping byte-exact — plus unit tests of the group
+key schedule, the hybrid PQ suites, and chat-frame parsing (both layouts). The C ABI has
 its own contract test (`ffi/ffi_test.c` — full lifecycle including PAKE,
 secret chain, hidden mode, and error paths) and a Python ctypes round-trip.
 Linux is fully tested here, including a fully static musl build (no runtime
@@ -138,13 +141,22 @@ symbols exported).
   without a secret, `Noise_NNpsk0+hfs_25519+Kyber1024_ChaChaPoly_BLAKE2s` with
   one (the PAKE output is the PSK). X25519 and Kyber1024 run together in every
   handshake — an attacker must break both. Each handshake message is ~1.6 KB
-  (≈3.2 KB per handshake). The side that `/dial`s is the initiator; the
+  plus 0–255 bytes of random padding (measured live: every handshake lands on
+  a different size) — the padding blurs the exact-size fingerprint and is
+  ignored by peers, old and new. The side that `/dial`s is the initiator; the
   teahouse/introducer assigns roles on their paths (later arrival initiates)
 - **First data frame, both directions**: the self-reported name — encrypted
   like everything else (kind `0x05`), UTF-8, unsigned, purely cosmetic
 - **Chat frames**: every encrypted payload starts with a kind byte —
-  `0x00` chat line · `0x01` next-secret offer · `0x02` offer ack ·
-  `0x03` gathering contribution · `0x04` group ciphertext · `0x05` name.
+  `0x01` next-secret offer · `0x02` offer ack ·
+  `0x03` gathering contribution · `0x04` group ciphertext · `0x05` name ·
+  `0x06` file head (name ‖ total size) · `0x07` file chunk (seq ‖ ≤32KB data) ·
+  `0x08` chat line (text length u16 ‖ text ‖ 0–255 random bytes — what the
+  CLI sends; a frame's size no longer hugs the text's length, measured: the
+  same sentence eight times lands on eight different sizes; receivers drop
+  the pad; no negotiation). `0x00` is the legacy bare-text chat line, still
+  understood for old peers. Peers predating `0x08` silently drop padded
+  lines — upgrade both ends together.
   Unknown kinds are skipped silently (forward compatibility)
 - **Hang-up**: an empty plaintext frame (a bare AEAD tag on the wire), or simply
   closing the connection
@@ -153,6 +165,23 @@ symbols exported).
 - **Side channel — LAN discovery (UDP)**: `/shout` broadcasts a probe to port
   37777; every person listening answers with `name + dial address`. Carries
   presence only — never conversation, never secrets.
+
+## Handing things over — files (v1 built)
+
+Words are not all two people exchange. `/file <path>` hands a file to the
+focused conversation: split into 32 KB chunks, each sealed as its own Noise
+frame, reassembled at the far end — **bytes never touch the text lane**, so
+binary arrives byte-for-byte (no UTF-8 mangling). Chunk size is chosen so a
+chunk plus framing fits a UDP datagram: files traverse direct dials, teahouse
+lines AND punched lines alike. Chunk boundaries are randomized within
+8–32 KB, so the fixed-32KB shape doesn't show (the receiver is size-agnostic —
+no negotiation needed); the total-volume shape is the application's business
+(pad your container format if it matters). A 32 MB cap (send and receive alike) bounds the
+in-RAM reassembly — the library never touches the disk; bytes surface as a
+`FileArrived` event and the consumer decides where they land (the CLI saves
+into `./received/`, with sanitized, collision-proofed names). One file in
+flight per conversation at a time; a peer's oversized offer is declined
+loudly, never buffered; a chunk that arrives out of order voids the transfer.
 
 ## The gathering — group chat (v1 built)
 
@@ -253,6 +282,16 @@ arming, then it's spent (a connection that never reaches the PAKE exchange
 doesn't spend it, so port scans can't burn your arrangement); offline
 brute-force does not exist.
 
+**Stable guard — `--guard` (built).** A receiver that must authenticate every
+caller arms a MACHINE key instead: every arrival must pass PAKE, and the
+arming is **never consumed** — wrong-key dials fail loudly, as many as an
+attacker cares to make, without ever locking the desk. (One-shot `/await`
+burns precisely to protect low-entropy human secrets from online guessing; a
+32-byte machine key needs no such protection — guessing is infeasible, so
+endless re-arming costs nothing.) Pair with `--no-chain` on open desks so
+farewells leave no lock either: `--guard KEY --no-chain` is the armed-desk
+shape.
+
 **The secret only ignites (built).** A successful PAKE yields a key with
 exactly one duty: escort the Noise handshake (PSK mode). Every conversation
 key is a fresh per-session ephemeral — the secret never talks. A weak secret
@@ -278,7 +317,10 @@ process lifetimes, and a restart returns you to the one out-of-band reading.
 The chain anchors to an address: it works on direct dials, may outlive the NAT
 mapping on punched lines (the reservation simply sits unused), and teahouse
 lines don't chain at all — rooms are one-shot, there is no anchor to hang a
-chain on. Rolling secrets are never written to disk — a persisted secret is a
+chain on. A receiver that stays open to strangers — a feedback line, say —
+opts out entirely with `--no-chain`: no reservations sent, none accepted;
+anyone can walk in, and every farewell leaves no lock. Rolling secrets are
+never written to disk — a persisted secret is a
 long-term credential, which is the "face" this project deleted on purpose.
 
 **A room seats two (built).** The teahouse never hosts a group. A gathering
@@ -313,6 +355,11 @@ Honesty first — v1 has these sharp edges:
   your TCP listen port still answers dials, and a port scanner can still find
   the open port (though nothing tells it what it is). True unreachability
   means `/await secret` as well.
+- **Cross-version chat is one-way.** The padded chat frame (`0x08`) is
+  invisible to peers running pre-0x08 builds (they skip unknown kinds
+  silently — no garbage, just no line). Old→new still reads fine (`0x00`
+  stays understood). Upgrade both ends together; group-chat frames are not
+  padded.
 
 ## Where this could go
 

@@ -707,3 +707,213 @@ async fn 隐身_精确交往照常() {
         ("Alice", "na zhe di zhi ye zhao de dao ni")
     );
 }
+
+#[tokio::test]
+async fn 开放台_不续链_陌生来客不被锁() {
+    // 台席：关闭续链（--no-chain 的库面）——对陌生人常开的接收方
+    let (desk, mut desk_ev, desk_addr) = spawn_person("Desk").await;
+    desk.set_chaining(false).await;
+
+    // 用户1：直连、留言、道别（道别会试图预约下一把暗号）
+    let (u1, mut u1_ev, _u1a) = spawn_person("User1").await;
+    u1.dial(&desk_addr).await.expect("u1 拨通");
+    expect(&mut desk_ev, met).await;
+    expect(&mut u1_ev, met).await;
+    u1.speak("fankui yi").await.expect("u1 留言");
+    u1.bye().await.expect("u1 道别");
+    expect(&mut desk_ev, left).await; // 台席看到收摊；其间不该有 SecretChained
+
+    // 用户2：不带暗号的陌生来客——必须照样进得来（默认续链会把他锁在门外）
+    let (u2, mut u2_ev, _u2a) = spawn_person("User2").await;
+    u2.dial(&desk_addr).await.expect("陌生来客应照样拨通（台席没被上锁）");
+    expect(&mut desk_ev, met).await;
+    expect(&mut u2_ev, met).await;
+    u2.speak("fankui er").await.expect("u2 留言");
+    let (from, text) = expect(&mut desk_ev, |ev| {
+        if let Event::Heard { name, text, .. } = ev {
+            Some((name.clone(), text.clone()))
+        } else {
+            None
+        }
+    })
+        .await;
+    assert_eq!((from.as_str(), text.as_str()), ("User2", "fankui er"));
+
+    // 用户3 接着来：依然敞开（不止容纳一位）
+    let (u3, _u3_ev, _u3a) = spawn_person("User3").await;
+    u3.dial(&desk_addr).await.expect("台席应一直敞开");
+}
+
+#[tokio::test]
+async fn 文件_无损往返_二进制字节一毫不差() {
+    let (_alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    // 约 110KB：跨多个 32KB 块；掺进非法 UTF-8 与边角字节——
+    // 文件走的是字节的车道，文字的安检（from_utf8_lossy）不该碰它一个字节
+    let mut data = Vec::new();
+    for i in 0..40_000u32 {
+        data.push((i % 256) as u8);
+        if i % 7 == 0 {
+            data.push(0xFF);
+        }
+    }
+    // 破 UTF-8 序列：过长 C0、代理区 ED A0 80、越界 F5 80 80、截断 E2 82
+    data.extend_from_slice(&[0xC0, 0xAF, 0xED, 0xA0, 0x80, 0xF5, 0x80, 0x80, 0xE2, 0x82]);
+    bob.send_file("bi-ji.dat", &data).await.expect("发文件");
+
+    let (name, got) = expect(&mut alice_ev, |ev| {
+        if let Event::FileArrived { name, data, .. } = ev {
+            Some((name.clone(), data.clone()))
+        } else {
+            None
+        }
+    })
+        .await;
+    assert_eq!(name, "bi-ji.dat");
+    assert_eq!(got.len(), data.len(), "长度必须一致");
+    assert_eq!(got, data, "字节必须一毫不差（无损，非法 UTF-8 原样到达）");
+
+    // 文件之后聊天照常——两条车道互不干扰
+    bob.speak("wen zi hai neng shuo").await.expect("聊天照常");
+    let (from, text) = expect(&mut alice_ev, |ev| {
+        if let Event::Heard { name, text, .. } = ev {
+            Some((name.clone(), text.clone()))
+        } else {
+            None
+        }
+    })
+        .await;
+    assert_eq!((from.as_str(), text.as_str()), ("Bob", "wen zi hai neng shuo"));
+}
+
+#[tokio::test]
+async fn 文件_超上限当场拒绝() {
+    let (_alice, _alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, _bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+
+    let huge = vec![0u8; e2ee::person::MAX_FILE_BYTES + 1];
+    let err = bob.send_file("ju-wen-jian.bin", &huge).await.expect_err("超限必须拒绝");
+    assert!(err.to_string().contains("32MB"), "错误应说明上限：{err}");
+
+    // 空名同样拒绝
+    let err = bob.send_file("  ", b"x").await.expect_err("空名必须拒绝");
+    assert!(err.to_string().contains("文件名"), "错误应指向文件名：{err}");
+}
+
+#[tokio::test]
+async fn 文件_打洞线上也照传() {
+    let teahouse = spawn_teahouse().await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let (alice, mut alice_ev, _a) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+
+    let alice_p = alice.clone();
+    let t = teahouse.clone();
+    tokio::spawn(async move {
+        let _ = alice_p.punch(&t, "wen-jian").await;
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    bob.punch(&teahouse, "wen-jian").await.expect("打洞");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    // 40KB = 两块：验证 32KB 的块装得进 UDP 数据报（这是块大小的设计依据）
+    let data: Vec<u8> = (0..40_000u32).map(|i| (i.wrapping_mul(31) % 256) as u8).collect();
+    bob.send_file("tu-pian.bin", &data).await.expect("打洞线上发文件");
+    let got = expect(&mut alice_ev, |ev| {
+        if let Event::FileArrived { data, .. } = ev {
+            Some(data.clone())
+        } else {
+            None
+        }
+    })
+        .await;
+    assert_eq!(got, data, "打洞线上字节同样一毫不差");
+}
+
+#[tokio::test]
+async fn 常备门禁_瞎拨锁不住_真钥照常进() {
+    let (desk, mut desk_ev, desk_addr) = spawn_person("Desk").await;
+    desk.expect_secret_stable(b"ji-qi-yao-0123456789abcdef0123456789abcdef")
+        .await;
+
+    // 恶意者轮番瞎拨：错钥、再错钥、不带钥——每一次都响亮失败，
+    // 但门禁从不被烧掉（一次性切口扛不住这种消耗，常备扛得住）
+    let (m1, _m1_ev, _a) = spawn_person("Mallory1").await;
+    assert!(m1.dial_secret(&desk_addr, Some(b"cuo-de")).await.is_err());
+    expect(&mut desk_ev, |ev| matches!(ev, Event::MeetFailed { .. }).then_some(())).await;
+
+    let (m2, _m2_ev, _b) = spawn_person("Mallory2").await;
+    assert!(m2.dial_secret(&desk_addr, Some(b"hai-shi-cuo")).await.is_err());
+    expect(&mut desk_ev, |ev| matches!(ev, Event::MeetFailed { .. }).then_some(())).await;
+
+    let (m3, _m3_ev, _c) = spawn_person("Mallory3").await;
+    assert!(m3.dial(&desk_addr).await.is_err(), "不带钥在武装台席必须被拒");
+    expect(&mut desk_ev, |ev| matches!(ev, Event::MeetFailed { .. }).then_some(())).await;
+
+    // 真用户带对钥：三番瞎拨之后照样进得来，密谈照常
+    let (user, mut user_ev, _u) = spawn_person("User").await;
+    user.dial_secret(&desk_addr, Some(b"ji-qi-yao-0123456789abcdef0123456789abcdef"))
+        .await
+        .expect("真钥必须进得来——瞎拨锁不住台");
+    expect(&mut desk_ev, met).await;
+    expect(&mut user_ev, met).await;
+    user.speak("fankui").await.expect("真用户发言");
+    let (from, text) = expect(&mut desk_ev, |ev| {
+        if let Event::Heard { name, text, .. } = ev {
+            Some((name.clone(), text.clone()))
+        } else {
+            None
+        }
+    })
+        .await;
+    assert_eq!((from.as_str(), text.as_str()), ("User", "fankui"));
+
+    // 成功之后门禁仍在：再瞎拨一次照样被拒（常备从不消耗）
+    let (m4, _m4_ev, _d) = spawn_person("Mallory4").await;
+    assert!(m4.dial_secret(&desk_addr, Some(b"you-cuo")).await.is_err());
+}
+
+#[tokio::test]
+async fn 聊天带垫_长短行照常说听() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    // 长短悬殊的几行都该原样到达：垫由收方丢弃，正文一个字不少、
+    // 也不该多出前缀或垫的字节（帧长与话长的关联就此被垫糊掉）
+    let long_line = "zhe ju hua te bie chang".repeat(60);
+    for line in ["a", "zhong deng chang du de yi ju hua", long_line.as_str()] {
+        bob.speak(line).await.expect("说");
+        let (from, got) = expect(&mut alice_ev, |ev| {
+            if let Event::Heard { name, text, .. } = ev {
+                Some((name.clone(), text.clone()))
+            } else {
+                None
+            }
+        })
+            .await;
+        assert_eq!((from.as_str(), got.as_str()), ("Bob", line));
+    }
+
+    // 反方向同样
+    alice.speak("hui hua").await.expect("回话");
+    let got = expect(&mut bob_ev, |ev| {
+        if let Event::Heard { text, .. } = ev {
+            Some(text.clone())
+        } else {
+            None
+        }
+    })
+        .await;
+    assert_eq!(got, "hui hua");
+}

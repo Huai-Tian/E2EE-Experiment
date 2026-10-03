@@ -45,7 +45,7 @@ architecture:
     - hkdf                                   # group key schedule
     - chacha20poly1305                       # group AEAD
   lifecycle: single-startup-person           # INVARIANT: no role subcommands; one process is born with both ears and mouth
-  birth_modes: "born (visible: answers /shout) | born_hidden / --hidden (NEVER answers /shout — see discovery_and_pairing.hidden_mode)"
+  birth_modes: "born (visible: answers /shout) | born_hidden / --hidden (NEVER answers /shout — see discovery_and_pairing.hidden_mode) | --no-chain (set_chaining(false): never offers a next secret, never accepts one — the open-desk shape, see secret_chain.no_chain_mode) | --guard <machine-secret> (expect_secret_stable: EVERY arrival must pass PAKE; arming NEVER consumed — endless wrong-key dials never lock the desk; one-shot /await keeps priority when also set; the armed open-desk shape is `--guard KEY --no-chain`)"
   other_job: "--courier — the same binary as a teahouse: room numbers are GUEST-CHOSEN (agreed out-of-band, same channel as secrets); it wires same-room arrivals, relays opaque bytes; no identity, no storage, no plaintext"
   commands:                                  # in-session, parsed by CLI handle_command (src/main.rs)
     dial:  { syntax: "/dial ADDR:PORT [secret]", behavior: "outbound connect + hybrid NN handshake as initiator; optional secret → PAKE first; auto-uses chained secret for that addr (burned only when actually verified: PAKE masks exchanged; a failed dial keeps the chained secret); 5s connect timeout" }
@@ -58,13 +58,14 @@ architecture:
     shout: { syntax: "/shout",               behavior: "udp-broadcast who-is-there on the lan; listeners reply name + dial addr; ~1.2s collect window; hidden persons still shout fine (but the probe reveals the prober's IP to listeners)" }
     circle: { syntax: "/circle",             behavior: "form a gathering: contribute-and-derive group key over ALL current conversations (requires full mesh; re-run after new joins = rekey)" }
     gsay:  { syntax: "/gsay TEXT",           behavior: "speak in the circle: seal ONCE with own subkey, fan out identical blob on every link" }
+    file:  { syntax: "/file PATH",           behavior: "hand a file to the focused conversation: CLI reads the path (consumer-side fs read — the LIBRARY never touches disk), sends as 0x06 head + 0x07 chunks (32KB each); lossless bytes; 32MB cap both ways; received files auto-save to ./received/ with sanitized collision-proofed names" }
     bye:   { syntax: "/bye",                 behavior: "offer next secret (chainable lines only), then empty-plaintext goodbye to focused conversation" }
     quit:  { syntax: "/quit | Ctrl-D",       behavior: "goodbye to all conversations (chainable lines offer secrets), then exit 0" }
   sessions: multiple-concurrent-1to1         # implemented 1:1 feature; ALSO the transport skeleton for group_chat — but group CONTENT crypto is the group key, NOT per-link e2ee; see group_chat
   focus_model: "typed lines go to the focused conversation; focus set by /dial or /talk; incoming conversations never steal focus"
   symmetry: peer-only                        # INVARIANT: no server/client split, no privileged node
   packaging: workspace-three-gates            # root pkg = rust lib `e2ee` + bin; ffi/ member = cdylib gate (libe2ee.so / e2ee.dll, same lib name) — see ffi block
-  api_style: "library NEVER prints nor reads stdin; actions in = metaphor-verb methods (born/born_hidden/dial/speak/talk_to/roster/card/shout/bye/leave); experiences out = Event stream (tokio mpsc); Event/LeaveReason/PersonError are non_exhaustive; errors carry semantics, CLI renders prose"
+  api_style: "library NEVER prints nor reads stdin nor touches the fs; actions in = metaphor-verb methods (born/born_hidden/dial/speak/send_file/talk_to/roster/card/shout/bye/leave); experiences out = Event stream (tokio mpsc); Event/LeaveReason/PersonError are non_exhaustive; errors carry semantics, CLI renders prose"
   conversation_flow:
     - pake-optional                          # iff secret present, BEFORE noise; one mask each way
     - noise-nn-hybrid-handshake              # dialer = initiator; X25519+Kyber1024
@@ -76,7 +77,7 @@ architecture:
 crypto:
   suite_no_secret: "Noise_NNhfs_25519+Kyber1024_ChaChaPoly_BLAKE2s"      # implemented: hybrid X25519+Kyber1024
   suite_with_secret: "Noise_NNpsk0+hfs_25519+Kyber1024_ChaChaPoly_BLAKE2s" # implemented: PAKE output as PSK
-  pake: "SPAKE2 (spake2 crate, Ed25519Group) — masks exchanged, secret never crosses the wire; wrong secret → loud failure (error mentions 暗号); burn semantics: secret spent iff masks were exchanged (early disconnects never burn)"
+  pake: "SPAKE2 (spake2 crate, Ed25519Group) — masks exchanged, secret never crosses the wire; wrong secret → loud failure (error mentions 暗号); burn semantics: secret spent iff masks were exchanged (early disconnects never burn); stable guard (--guard / expect_secret_stable): never-consumed arming for 32-byte MACHINE keys — the burn exists to protect low-entropy human secrets from online guessing, machine keys don't need it, so wrong-key floods cannot lock the desk"
   static_keys: none                          # INVARIANT: ephemeral per-connection only
   identity_layer: none                       # INVARIANT: no auth / TOFU / trust store / accounts
   auth_model: telephone                      # secrecy by default; PAKE = optional per-meeting human-carried secret; identity still judged by humans post-decryption
@@ -90,16 +91,20 @@ wire_protocol:
   frame: "{u16_be length}{payload}"
   frame_cap: 65535
   handshake_msgs: 2                          # →e(+e1,kem) | ←e,ee(+ekem1) ; each snow message = one frame; ~1.6KB each (Kyber1024 inside; ≈3.2KB per handshake)
+  handshake_padding: "each handshake message carries 0..=255 bytes of random Noise payload — blurs the exact 1600/1632B hybrid fingerprint (measured: every handshake lands on a different size); receivers ignore handshake payloads, so old peers interoperate; NO negotiation needed"
   pake_msgs: 2                               # before noise iff secret present: SPAKE2 masks, one frame each (~65B)
   meet_timeouts: "every meeting stage (pake / noise handshake / name exchange) bounded at 10s (person::MEET_TIMEOUT) — silent connections are dropped, never held; courier JOIN frame likewise bounded at 10s (courier::JOIN_TIMEOUT), per-connection, accept loop never blocks"
   first_app_frame: "kind-tagged encrypted NAME frame (0x05 + utf8 name) — both directions, immediately after handshake; names are application data and NEVER cross the wire in plaintext (the teahouse must stay blind)"
   app_frame_kinds:                           # first byte of every encrypted payload
-    chat: "0x00 + utf8 line"
+    chat: "0x00 + utf8 line — LEGACY bare text; still PARSED for old peers (send_chat no longer emits it)"
+    padded_chat: "0x08 + text_len(u16) ‖ text ‖ random pad(0..=255) — WHAT send_chat EMITS; frame size no longer correlates with text length (measured: same sentence ×8 → 8 different sizes); receiver takes text_len bytes and DROPS the pad (no negotiation, no peer support needed); a length prefix past the body voids the frame silently; peers predating 0x08 silently drop padded lines — see known_limitations.cross_version_chat_one_way"
     offer_secret: "0x01 + 32B next-secret (sent before farewell)"
     ack_secret: "0x02 (acknowledge an offer; sender then chains it)"
     contrib: "0x03 + 32B gathering contribution"
-    circle_chat: "0x04 + nonce(12B) ‖ group-AEAD (same blob fanned out on every link)"
+    circle_chat: "0x04 + nonce(12B) ‖ group-AEAD (same blob fanned out on every link; NOT padded)"
     name: "0x05 + utf8 name (first app frame; consumed by register_convo, ear never sees it)"
+    file_head: "0x06 + name_len(u8) ‖ name ‖ total_bytes(u64) — receiver declines >32MB loudly (FileDeclined), never buffers"
+    file_chunk: "0x07 + seq(u32) ‖ data — 32KB per chunk (2+1+4+32768=32775 < 65507, so chunks fit UDP datagrams: files work over tcp AND punched lines); receiver reassembles in RAM bounded by the head's total; out-of-order/overflowing seq voids the transfer"
   unknown_kinds: "silently skipped — forward compatibility"
   hangup: "empty plaintext frame (wire = bare 16B AEAD tag) | tcp close"
   clean_eof: "read_frame returns Ok(None) iff EOF lands exactly on frame boundary"
@@ -118,20 +123,31 @@ wire_protocol:
     transport: "UdpPunch implements AsyncRead+AsyncWrite: one frame per datagram (frames never span datagrams), punch-echo datagrams discarded, max frame 65507B (udp payload limit — a >64KB chat line fails loudly); two background porters (recv→channel, channel→send) die with the halves; NOTE: no liveness detection — a vanished peer leaves the line hanging until /quit"
     fallback: "handshake frames ~1.6KB travel as ip fragments; loss = failure; on failure the USER re-routes via /meet manually — no automatic fallback"
 
+file_transfer:                              # STATUS: implemented (v1) — a GENERAL 1:1 capability, no deployment-specific behavior
+  status: implemented-v1
+  capability: "lossless binary handover between any two persons, on ANY conversation path (direct dial / teahouse / punched line)"
+  lossless: "bytes ride the encrypted wire untouched — from_utf8_lossy NEVER applies to file payloads (that is the text lane only); the receiving end asserts byte-equality in tests incl. invalid-UTF-8 sequences"
+  chunking: "chunk sizes RANDOMIZED within 8–32KB — blurs the fixed-32KB signature; the receiver is size-agnostic (takes whatever each chunk carries), so old peers interoperate with NO negotiation; max 32KB because 2+1+4+32768=32775 < 65507 fits a UDP datagram — one shape, every path"
+  cap: "MAX_FILE_BYTES = 32MB, enforced symmetrically (sender refuses locally: FileTooLarge; receiver declines remote offers: FileDeclined event, state never created)"
+  in_flight: "ONE transfer per conversation per direction: sender guard (outgoing_files, FileBusy error), receiver replaces state on a new head (a stalled/malicious half-file never blocks the next)"
+  robustness: "seq must match next_seq exactly; mismatch or overflow past the announced total voids the whole transfer (state dropped silently — bounded waste)"
+  zero_persistence: "reassembly lives in RAM (Inner.inbound_files); the LIBRARY never reads or writes the fs — bytes surface as Event::FileArrived{id,name,data} and the CONSUMER decides (CLI: ./received/ with sanitized collision-proofed names; a server operator may pipe them into their own encryption vault instead)"
+  ffi_status: "FileArrived/FileDeclined currently map to tag 0 in e2ee_poll (old consumers survive); an e2ee file API (send_file/take_file) is the natural add-only extension when a C consumer needs it"
+
 modules:
   src/lib.rs:     "crate root: pub mod circle + courier + discover + person + punch + wire; re-exports Person/Events/Event/LeaveReason/PersonError/RosterEntry/Discovered"
-  src/person.rs:  "core person model: born/born_hidden (shared born_impl; hidden skips the shout-listener spawn)/listen_addr/expect_secret/dial/dial_secret/meet_at_teahouse[_secret]/punch[_secret]/speak/circle_speak/form_circle/talk_to/roster/card/shout/bye/leave; Inner{my_name,listen_port,listen_addr,convos,focus,next_id,events,expecting_secret,chained_secrets,pending_offers,gathering}; handshake<S> is GENERIC over AsyncRead+AsyncWrite+Unpin (tcp and UdpPunch alike); convo halves are BoxedWriter/BoxedReader; ear() dispatches on frame_kind; ZERO printing, ZERO stdin. Security-critical internals: HandshakeFailure/GreetFailure carry a `burned` flag (secret consumed iff SPAKE2 masks were actually exchanged — port scans never burn an armed secret); register_convo encrypts the NAME frame like all app data; Convo.chainable gates secret-chain offers (teahouse lines never offer); dial() keeps the chained secret unless it was actually verified"
+  src/person.rs:  "core person model: born/born_hidden (shared born_impl; hidden skips the shout-listener spawn)/listen_addr/expect_secret/expect_secret_stable/set_chaining/dial/dial_secret/meet_at_teahouse[_secret]/punch[_secret]/speak/send_file/circle_speak/form_circle/talk_to/roster/card/shout/bye/leave; Inner{my_name,listen_port,listen_addr,convos,focus,next_id,events,expecting_secret,stable_secret,chained_secrets,pending_offers,chaining,inbound_files,outgoing_files,gathering}; handshake<S> is GENERIC over AsyncRead+AsyncWrite+Unpin (tcp and UdpPunch alike); convo halves are BoxedWriter/BoxedReader; ear() dispatches on frame_kind; ZERO printing, ZERO stdin, ZERO fs. Security-critical internals: HandshakeFailure/GreetFailure carry a `burned` flag (secret consumed iff SPAKE2 masks were actually exchanged — port scans never burn an armed secret); stable_secret is the never-consumed machine-key guard (arrival selection: one-shot expecting_secret takes priority, else stable clone); noise_stage pads each handshake message with 0..=255 random bytes (shape blurring, peer-ignored); send_chat emits padded chat 0x08 (len-prefix ‖ text ‖ random pad; chat_text() parses BOTH 0x08 and legacy 0x00); send_file_frames randomizes chunk sizes 8–32KB; register_convo encrypts the NAME frame like all app data; Convo.chainable gates secret-chain offers (teahouse lines never offer); Inner.chaining is the master switch (open desks: false); dial() keeps the chained secret unless it was actually verified"
   src/punch.rs:   "introducer client + punch transport: meet_via (register w/ retry, connect, punch loop, role; INTRO2 source-checked), UdpPunch/PunchReader/PunchWriter (frame-per-datagram, punch-echo swallowing); see wire_protocol.introducer_and_punch"
   src/circle.rs:  "group key schedule: derive_group_key (HKDF over byte-sorted contributions), derive_sender_subkey, seal/open (ChaCha20Poly1305, nonce = counter ‖ sender-tag); unit tests for order-independence and subkey isolation"
   src/courier.rs: "teahouse: serve() wires same-room arrivals (rooms GUEST-CHOSEN, never assigned; PAIRED R/I role assignment; per-connection JOIN frame bounded at 10s so the accept loop never blocks), splices raw bytes both ways; PLUS serve_introducer on the same port number over udp (INTRO1/INTRO2, tag pairing, ttl 90s, waiting-tag cap 1024)"
   src/wire.rs:    "framing primitives; generic over AsyncRead/AsyncWrite; distinguishes clean EOF vs mid-frame break"
   src/discover.rs: "lan presence: card() interface enumeration via if-addrs; shout() udp probe/reply with self-echo filter; listen_for_shouts() reflex listener spawned at born() unless hidden"
-  src/main.rs:    "thin CLI renderer: arg parse (incl. --courier, --hidden) + select!{stdin lines, event stream}; maps PersonError/Event to zh prose; safe() sanitizes ALL remote-controlled strings (control chars → '·') incl. /shout replies; /talk name-prefix resolution lives here"
+  src/main.rs:    "thin CLI renderer: arg parse (incl. --courier, --hidden, --no-chain) + select!{stdin lines, event stream}; maps PersonError/Event to zh prose; safe() sanitizes ALL remote-controlled strings (control chars → '·') incl. /shout replies; /talk name-prefix resolution lives here"
 ffi/src/lib.rs:   "cdylib gate (see ffi block): 12 exported e2ee_* symbols over the same Person; per-handle tokio runtime"
 include/e2ee.h:   "C header — MUST change together with ffi/src/lib.rs (frozen ABI)"
 ffi/ffi_test.c:   "C contract test: full lifecycle incl. PAKE, secret chain, hidden mode, wrong-secret and no-focus error paths; prints FFI OK"
 ffi/ctypes_test.py: "python ctypes round-trip: create/local_addr/await_secret/dial/speak/poll/destroy + create_hidden — proves any-C-language reachability"
-tests/conversation.rs: "15 integration tests: real Persons on ephemeral ports, event-stream-only assertions — talk/farewell/focus/card/teahouse(×2)/secret(×2)/secret-chain/circle/punch + scanner-does-not-burn-secret/mute-connection-does-not-block-teahouse/teahouse-no-chain/hidden-exact-contact"
+tests/conversation.rs: "21 integration tests: real Persons on ephemeral ports, event-stream-only assertions — talk/farewell/focus/card/teahouse(×2)/secret(×2)/secret-chain/circle/punch + scanner-does-not-burn-secret/mute-connection-does-not-block-teahouse/teahouse-no-chain/hidden-exact-contact/open-desk-no-chain + file-lossless-roundtrip(110KB incl. invalid-UTF-8)/file-cap-refused/file-over-punched-udp + stable-guard-endures-wrong-key-floods + padded-chat-roundtrip(short/mid/long lines byte-exact) — plus 3 unit tests in src/person.rs for chat_text() parsing both layouts"
 tests/pq.rs:       "hybrid suite round-trip: NNhfs + NNpsk0+hfs both parse, handshake, and transport"
 
 invariants:                                  # ANY change violating these MUST be rejected
@@ -210,6 +226,7 @@ discovery_and_pairing:                      # how two people (possibly behind NA
     key_schedule: "PAKE output only ignites the Noise handshake (PSK mode); ALL conversation keys are fresh per-session ephemerals — the secret never talks; everything burns at session end"
   secret_chain:                             # automatic renewal, within RAM only
     mechanism: "at farewell, reserve the NEXT secret inside the already-authenticated channel — offer + ack; an unacknowledged reservation is dropped (failure loses convenience, never security); an incoming offer never clobbers an already-armed /await slot (no arm, no ack — the offer expires)"
+    no_chain_mode: "set_chaining(false) / --no-chain — offers are neither sent (bye/leave skip) nor accepted (ear ignores OFFER frames entirely); the OPEN-DESK deployment shape: a public receiver (feedback line) that any stranger may dial; with default chaining, every farewell rotates the armed secret to the PREVIOUS visitor, locking the next stranger out — an anonymous dial against an armed endpoint even BURNS the reservation (protocol mismatch: PAKE-armed responder vs plain-NN visitor). open desks MUST run --no-chain; the armed variant (authenticate every caller, resist the wrong-key-flood DoS) is `--guard KEY --no-chain` — the stable guard is never consumed"
     anchor: "the chain hangs on a peer ADDRESS: direct dials work; punched lines anchor to the peer's public NAT endpoint (may be gone next session — the reservation sits unused, harmless); teahouse lines never chain (Convo.chainable = false — one-shot rooms, no anchor; otherwise the armed secret would block the next plain /meet)"
     dial_burn_semantics: "dial() auto-uses the chained secret for that addr and removes it ONLY when actually verified (handshake success, or PAKE masks exchanged) — a dial that never connects keeps the reservation for the next try"
     lifespan: "intersection of both process lifetimes; a restart returns to the one out-of-band reading"
@@ -253,12 +270,12 @@ ffi:                                        # STATUS: implemented (v1 core surfa
   threading: "handle lifetime (create/destroy) managed serially on one thread; never destroy while another thread is still polling"
   secrets: "dial's secret param is the SPAKE2 pairing secret; NULL = plain handshake (auto-uses a chained secret if one exists for that address)"
   hidden: "e2ee_person_create_hidden = born_hidden — never answers /shout; everything else identical"
-  not_yet_exposed: "teahouse / circle / shout / card / roster — add on demand under the same freeze rules"
+  not_yet_exposed: "teahouse / circle / shout / card / roster / file transfer (FileArrived/FileDeclined → tag 0; an e2ee_send_file/e2ee_take_file pair is the natural add-only extension) / stable guard (e2ee_await_secret_stable — never-consumed machine-key arming) — add on demand under the same freeze rules"
 
 verify:
   build: "cargo build --release"
   binary: "target/release/E2EE-Experiment"
-  test: "cargo test --release — 18 tests total: 2 circle unit + 15 integration (conversation.rs: talk/farewell/focus/card/teahouse×2/secret×2/secret-chain/circle/punch + scanner-does-not-burn-secret/mute-teahouse/teahouse-no-chain/hidden-exact-contact) + 1 pq suite; in-process real persons on ephemeral localhost ports; ~4s"
+  test: "cargo test --release — 27 tests total: 5 unit (2 circle + 3 chat_text parsing) + 21 integration (conversation.rs: talk/farewell/focus/card/teahouse×2/secret×2/secret-chain/circle/punch + scanner-does-not-burn-secret/mute-teahouse/teahouse-no-chain/hidden-exact-contact/open-desk-no-chain + file-lossless-roundtrip/file-cap-refused/file-over-punched-udp + stable-guard-endures-wrong-key-floods + padded-chat-roundtrip) + 1 pq suite; in-process real persons on ephemeral localhost ports; ~4.5s"
   ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so (~1.0MB, measured 1004KB); windows: cargo build --release -p e2ee-ffi --target x86_64-pc-windows-gnu → e2ee.dll (~860KB); verify symbols: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 12)"
   ffi_contract_test: "gcc -O2 -Wall -I include ffi/ffi_test.c -o /tmp/ffi_test -L target/release -l:libe2ee.so -Wl,-rpath,$PWD/target/release && /tmp/ffi_test — expect last line 'FFI OK'; then python3 ffi/ctypes_test.py — expect 'ctypes OK' + 'hidden OK'"
   static_build: "cargo build --release --target x86_64-unknown-linux-musl — static-pie ~1.3MB (measured 1,324KB, Kyber1024 included), runs anywhere"
@@ -273,6 +290,10 @@ verify:
     circle via CLI: three instances dial each other (full mesh), one `/circle`, all print 圈子铸成了, `/gsay` heard by both others
     punch via CLI: run `--courier 127.0.0.1:18888` (now also introducer on udp), two instances `/punch 127.0.0.1:18888 tag [secret]`, expect 对话开始 + bidirectional talk over the punched udp line
     hidden via CLI: start `--hidden -n H 127.0.0.1:17779` and visible `-n A 127.0.0.1:17777`; A `/shout` must NOT list H; `/dial 127.0.0.1:17779` still connects and talks; H prints the 隐身 note at birth
+    open desk via CLI: `--no-chain -n Desk 127.0.0.1:17780`, then TWO instances dial in sequence (each says hi and /bye) — BOTH must succeed; without --no-chain the second stranger is locked out (the first farewell rotated the armed secret to the first visitor); unattended shape: `tail -f /dev/null | ./E2EE-Experiment --no-chain -n Desk 0.0.0.0:PORT >> feedback.log 2>&1 &`
+    file via CLI: A listens in its own dir, B `/dial` then `/file /path/to/blob.bin` (make it >64KB with invalid-UTF-8 bytes); A must print 收到文件 and ./received/blob.bin must be md5-identical to the original; chat before/after still works
+    guard via CLI: `--guard <32B-key> -n Desk 0.0.0.0:PORT`; a wrong-key dial and a no-secret dial both fail loudly; the RIGHT key connects and talks; a further wrong-key dial after the success STILL fails (arming never consumed); handshake-shape check: tcpdump 4 dials — every handshake's large segments land on different lengths (random padding live)
+    chat-padding check: B dials A then sends the SAME short line 8 times; A hears 8 identical lines; tcpdump shows 8 DIFFERENT ciphertext segment lengths (with no padding all 8 would be identical)
     card: `/card` prints one `name  ip:port` line per interface
     shout: B `/shout` discovers A (name + dial addr); same-host note: only the FIRST non-hidden instance binds shout port 37777 — later instances listen-deafen but can still shout
 
@@ -294,6 +315,7 @@ known_limitations:                          # honest edges of v1 — do NOT pape
   group_membership_by_convention: "manual full mesh; simultaneous re-/circle can leave members with mismatched group keys — surfaced as CircleMumble, fixed by re-circling; no roster arbitrates (on purpose)"
   one_gathering_per_process: "/circle covers ALL live conversations; a process cannot sit in two circles"
   hidden_is_not_invisible: "--hidden silences the shout reflex only — the TCP listen port still accepts dials and a port scanner still finds the open port (though nothing identifies it); pair with /await secret for true unreachability"
+  cross_version_chat_one_way: "peers predating kind 0x08 silently drop padded chat lines (unknown-kind skip — no garbage, just an invisible line); old→new still readable (legacy 0x00 stays parsed); upgrade both ends together; group-chat frames (0x04) are not padded"
 
 glossary:                                   # chinese metaphor → mechanism (used in code comments)
   耳朵:      inbound tcp accept loop (person::born acceptor; one ear task per conversation)

@@ -33,6 +33,13 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(5);
 /// 连上却不吭声的（端口扫描之类），不该一直占着门厅与切口。
 const MEET_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 单个文件的大小上限，收发同限。收方在内存里重组（零持久化：库永不
+/// 落盘），32MB 对任何现代机器都轻松，又足以拦下恶意巨块。
+pub const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
+/// 每块数据的大小：2+1+4+32768 = 32775 < 65507——一块加帧头装得进
+/// UDP 数据报，于是文件在直连、茶馆、打洞线上都同样能传。
+const FILE_CHUNK_LEN: usize = 32 * 1024;
+
 /// 一个人经历过、需要让外层知道的事。
 /// non_exhaustive：往后的经历种类只会更多，外层匹配请留一个兜底臂。
 #[non_exhaustive]
@@ -57,6 +64,11 @@ pub enum Event {
     /// 圈里收到一句解不开的话：密钥不合（成员集不一致）或密文被动过。
     /// 不中断会话，只提醒——通常意味着该重新围一次。
     CircleMumble { from: String },
+    /// 一份文件收齐了：字节原样都在内存里（data），无损。落不落盘、
+    /// 落在哪，是外层使用者的事——库永不写盘。
+    FileArrived { id: u64, name: String, data: Vec<u8> },
+    /// 对方想递一份超过上限的文件，婉拒了（提醒人类，不中断会话）。
+    FileDeclined { from: String, name: String, size: u64 },
 }
 
 /// 一场对话是怎么结束的。
@@ -101,6 +113,12 @@ pub enum PersonError {
     Encrypt(#[source] snow::Error),
     #[error("话没送到——[{name}] 恐怕已经走了。")]
     ByeFailed { name: String },
+    #[error("这份文件太大了（{size} 字节）：一次至多 32MB。")]
+    FileTooLarge { size: usize },
+    #[error("文件名不能用：留了空、或超过 255 字节。")]
+    FileNameBad,
+    #[error("上一份文件还没递完，一份递完再递下一份。")]
+    FileBusy,
 }
 
 /// 事件流：这个人的一切经历从这里流出。
@@ -121,6 +139,15 @@ mod frame_kind {
     /// 自报家门：其后是 UTF-8 名字（握手后第一帧，双方同时先发后收）。
     /// 也走密文——名字是应用数据，不该裸奔在线上给茶馆和路人看热闹。
     pub const NAME: u8 = 0x05;
+    /// 文件头：其后是 名字长度u8 ‖ 名字UTF-8 ‖ 总字节数u64（开传前先报家门）
+    pub const FILE_HEAD: u8 = 0x06;
+    /// 文件块：其后是 序号u32 ‖ 数据（每块 ≤32KB，一块一帧，打洞线也装得下）
+    pub const FILE_CHUNK: u8 = 0x07;
+    /// 带垫的聊天行：其后是 正文长u16 ‖ 正文 ‖ 随机垫(0..=255)。
+    /// 帧长不再紧贴正文长——「看包长猜话长」的关联被垫糊掉；
+    /// 收方按长度前缀取正文、垫直接丢弃，于是无需对端任何配合。
+    /// 旧版同伴不认识 0x08：沉默跳过（看不见这行，但不显乱码）。
+    pub const PADDED_CHAT: u8 = 0x08;
 }
 
 /// 握手失败的账：错在哪，以及切口是否已被查验。
@@ -191,12 +218,33 @@ struct Inner {
     events: mpsc::UnboundedSender<Event>,
     /// 等人的切口：设了之后，下一位来客必须对得上才谈得成。一位一焚。
     expecting_secret: Option<Vec<u8>>,
+    /// 常备门禁（机器密钥形态）：每位来客都要对上才谈得成，且从不消耗。
+    /// one-shot 的「烧」护的是低熵人类暗号（防在线爆破）；32 字节机器
+    /// 密钥在线爆破本就不可能——于是错多少次都锁不住台，真钥永远进得来。
+    /// 一次性切口（/await）若在，优先生效；烧掉之后门禁照常。
+    stable_secret: Option<Vec<u8>>,
     /// 暗号链（主动侧）：地址 → 上一场告别时预约的下一把。用过即焚。
     chained_secrets: HashMap<String, Vec<u8>>,
     /// 挂起待确认的预约：对话编号 → 新暗号。收到确认才入链。
     pending_offers: HashMap<u64, Vec<u8>>,
+    /// 续链总开关（默认开）。关掉后：道别不预约、来约不接受——
+    /// 对陌生人常开的台席（意见反馈热线）用它，谁来都行，散场不留锁。
+    /// 链是便利不是必需，关掉只丢便利，不丢安全。
+    chaining: bool,
+    /// 正在进门的文件（每场对话至多一份在途）：内存重组，上限 MAX_FILE_BYTES。
+    inbound_files: HashMap<u64, InboundFile>,
+    /// 正在出门的文件（每场对话至多一份在途）：防两份并发交错成乱麻。
+    outgoing_files: std::collections::HashSet<u64>,
     /// 正在围坐的圈子（至多一个：一个人同时在一个屋里说话）
     gathering: Option<Gathering>,
+}
+
+/// 一份正在进门的东西：名字、总长、已收的字节、下一块的序号。
+struct InboundFile {
+    name: String,
+    total: u64,
+    buf: Vec<u8>,
+    next_seq: u32,
 }
 
 /// 一个人。克隆不产生新的人，只是多一只手牵着他。
@@ -261,8 +309,12 @@ impl Person {
                 next_id: 1,
                 events: tx,
                 expecting_secret: None,
+                stable_secret: None,
                 chained_secrets: HashMap::new(),
                 pending_offers: HashMap::new(),
+                chaining: true,
+                inbound_files: HashMap::new(),
+                outgoing_files: std::collections::HashSet::new(),
                 gathering: None,
             })),
         };
@@ -286,10 +338,19 @@ impl Person {
                 let inner = inner.clone();
                 // 每位来客单独接待：一位握手卡住，不耽误下一位
                 tokio::spawn(async move {
-                    // 等人的切口：先取走（一位一验）。若这位来客连暗号
-                    // 都没验到（握手没走到对暗号），原样归还——
-                    // 端口扫一下就把切口烧掉，等于替你撕了暗号约定。
-                    let secret = inner.lock().await.expecting_secret.take();
+                    // 门禁的两种形态，来客进门先领一份：
+                    // - 一次性切口（/await）：取走即焚——一位一验，
+                    //   没验到暗号的失败原样归还（扫描烧不掉约定）；
+                    // - 常备门禁（--guard）：复制一把、从不取走——
+                    //   机器密钥不怕在线爆破，瞎拨多少次也锁不住台。
+                    // 两者并存时一次性切口优先（那是人显式备给下一位的）。
+                    let (secret, one_shot) = {
+                        let mut p = inner.lock().await;
+                        match p.expecting_secret.take() {
+                            Some(s) => (Some(s), true),
+                            None => (p.stable_secret.clone(), false),
+                        }
+                    };
                     // 来客的来源地址：将来他主动来续链时的锚
                     let peer_addr = stream
                         .peer_addr()
@@ -298,8 +359,8 @@ impl Person {
                     if let Err(f) =
                         greet(&inner, stream, false, secret.as_deref(), peer_addr).await
                     {
-                        // 切口没被查验过：归还（若期间没人重新备下新的）
-                        if !f.burned {
+                        // 只有一次性切口存在「归还」；常备的从没取走，无需归还
+                        if !f.burned && one_shot {
                             let mut p = inner.lock().await;
                             if p.expecting_secret.is_none() {
                                 p.expecting_secret = secret;
@@ -335,6 +396,22 @@ impl Person {
     /// 备好切口：下一位来客必须对得上这句暗号才谈得成（一位一焚）。
     pub async fn expect_secret(&self, secret: &[u8]) {
         self.inner.lock().await.expecting_secret = Some(secret.to_vec());
+    }
+
+    /// 立起常备门禁：**每一位**来客都要对上这句暗号才谈得成，且从不消耗——
+    /// 错多少次、进多少次，门禁都还立在门口，真钥永远进得来。
+    /// 这句应是 32 字节级的随机机器密钥（客户端内嵌），不是人类暗号：
+    /// 一次性切口的「烧」防的是对低熵暗号的在线爆破，机器密钥在线爆破
+    /// 本就不可能，不需要那份保护——于是瞎拨锁不住台（DoS 无效）。
+    pub async fn expect_secret_stable(&self, secret: &[u8]) {
+        self.inner.lock().await.stable_secret = Some(secret.to_vec());
+    }
+
+    /// 续链开关：关掉后这个人道别不预约、来约不接受。
+    /// 对陌生人常开的台席用它（`--no-chain` 的库面）——
+    /// 不然每个道别的客人都会给下一位陌生来客上门锁。
+    pub async fn set_chaining(&self, enabled: bool) {
+        self.inner.lock().await.chaining = enabled;
     }
 
     /// 找人：拨通、握手、成为当前对话。返回对话编号。
@@ -493,6 +570,89 @@ impl Person {
         send_chat(&cipher, &writer, text.as_bytes()).await
     }
 
+    /// 递一份文件给此刻注意力所在的人：分块加密发送，每块独立成帧。
+    /// 字节原样走密文、原样进门——二进制不欠文字的安检（无损，
+    /// 收到的每一个字节都与给出的一毫不差）。上限收发同限（32MB）；
+    /// 库不读盘也不写盘：字节从哪来、到哪去，都由外层使用者决定。
+    /// 一场对话同一时刻只递一份（并发递第二份会被拒），聊天照常穿插。
+    pub async fn send_file(&self, name: &str, data: &[u8]) -> Result<(), PersonError> {
+        if data.len() > MAX_FILE_BYTES {
+            return Err(PersonError::FileTooLarge { size: data.len() });
+        }
+        let name = name.trim();
+        if name.is_empty() || name.len() > 255 || name.contains('\0') {
+            return Err(PersonError::FileNameBad);
+        }
+        let target = {
+            let mut p = self.inner.lock().await;
+            let Some(id) = p.focus else {
+                return Err(PersonError::NoFocus);
+            };
+            // 一场对话一份在途：两份交错会让对方的重组乱序
+            if p.outgoing_files.contains(&id) {
+                return Err(PersonError::FileBusy);
+            }
+            let Some(c) = p.convos.get(&id) else {
+                return Err(PersonError::NoConvo);
+            };
+            let pair = (c.cipher.clone(), c.writer.clone());
+            p.outgoing_files.insert(id);
+            (id, pair.0, pair.1)
+        };
+        let result = self
+            .send_file_frames(name, data, &target.1, &target.2)
+            .await;
+        self.inner.lock().await.outgoing_files.remove(&target.0);
+        result
+    }
+
+    /// 文件的实际出门：先递家门（名字＋总长），再逐块递字节。
+    /// 块与块的边界在 [8KB, 32KB] 里随机——「每块都恰好 32KB」的固定
+    /// 形状是指纹，随机化把它抹掉。收方本就不假设块长（来多大收多大），
+    /// 于是这纯属发送方的私事，无需协商、旧版照收。总量的形状
+    /// （这份文件大约多大）是另一层：要抹它得靠应用层把容器凑整。
+    async fn send_file_frames(
+        &self,
+        name: &str,
+        data: &[u8],
+        cipher: &Arc<Mutex<TransportState>>,
+        writer: &Arc<Mutex<BoxedWriter>>,
+    ) -> Result<(), PersonError> {
+        let mut head = Vec::with_capacity(2 + name.len());
+        head.push(name.len() as u8);
+        head.extend_from_slice(name.as_bytes());
+        head.extend_from_slice(&(data.len() as u64).to_be_bytes());
+        send_typed(cipher, writer, frame_kind::FILE_HEAD, &head).await?;
+        let mut rest = data;
+        let mut seq: u32 = 0;
+        while !rest.is_empty() {
+            let take = if rest.len() > FILE_CHUNK_LEN {
+                Self::random_in(FILE_CHUNK_LEN / 4, FILE_CHUNK_LEN)
+            } else {
+                rest.len()
+            };
+            let (chunk, tail) = rest.split_at(take);
+            let mut part = Vec::with_capacity(4 + chunk.len());
+            part.extend_from_slice(&seq.to_be_bytes());
+            part.extend_from_slice(chunk);
+            send_typed(cipher, writer, frame_kind::FILE_CHUNK, &part).await?;
+            rest = tail;
+            seq += 1;
+        }
+        Ok(())
+    }
+
+    /// [lo, hi] 闭区间里随机取一。垫形用（不是密码学决策点）；
+    /// 取不出随机数就回 hi——垫不出来只是形状不糊，功能照常。
+    fn random_in(lo: usize, hi: usize) -> usize {
+        let span = hi - lo + 1;
+        let mut b = [0u8; 2];
+        if getrandom::fill(&mut b).is_err() {
+            return hi;
+        }
+        lo + (u16::from_be_bytes(b) as usize) % span
+    }
+
     /// 把注意力切到另一场对话。返回对方的名字。
     pub async fn talk_to(&self, id: u64) -> Result<String, PersonError> {
         let name = {
@@ -551,15 +711,16 @@ impl Person {
                         c.writer.clone(),
                         c.their_name.clone(),
                         c.chainable,
+                        p.chaining,
                         id,
                     )
                 })
             })
         };
-        let Some((cipher, writer, name, chainable, id)) = target else {
+        let Some((cipher, writer, name, chainable, chaining, id)) = target else {
             return Err(PersonError::NoFocus);
         };
-        if chainable {
+        if chainable && chaining {
             offer_next_secret(&self.inner, id, &cipher, &writer).await;
         }
         send_frame(&cipher, &writer, &[])
@@ -570,17 +731,25 @@ impl Person {
         Ok(name)
     }
 
-    /// 离场：和所有人道别（挂得住链的每场都尝试预约下一把）。
+    /// 离场：和所有人道别（续链开着且挂得住链的每场都尝试预约下一把）。
     pub async fn leave(&self) {
         let targets: Vec<_> = {
             let p = self.inner.lock().await;
             p.convos
                 .iter()
-                .map(|(id, c)| (*id, c.cipher.clone(), c.writer.clone(), c.chainable))
+                .map(|(id, c)| {
+                    (
+                        *id,
+                        c.cipher.clone(),
+                        c.writer.clone(),
+                        c.chainable,
+                        p.chaining,
+                    )
+                })
                 .collect()
         };
-        for (id, cipher, writer, chainable) in targets {
-            if chainable {
+        for (id, cipher, writer, chainable, chaining) in targets {
+            if chainable && chaining {
                 offer_next_secret(&self.inner, id, &cipher, &writer).await;
             }
             let _ = send_frame(&cipher, &writer, &[]).await;
@@ -803,26 +972,29 @@ async fn ear(
                 match read {
                     Ok(0) => break LeaveReason::Farewell,
                     Ok(n) => match plain[0] {
-                        frame_kind::CHAT => {
-                            let text =
-                                String::from_utf8_lossy(&plain[1..n]).into_owned();
-                            let p = inner.lock().await;
-                            p.events
-                                .send(Event::Heard {
-                                    id,
-                                    name: their_name.clone(),
-                                    text,
-                                })
-                                .ok();
+                        frame_kind::CHAT | frame_kind::PADDED_CHAT => {
+                            // 新旧两种排法都认：0x08 带长度前缀（垫直接丢弃），
+                            // 0x00 是旧同伴的裸正文。
+                            if let Some(text) = chat_text(plain[0], &plain[1..n]) {
+                                let p = inner.lock().await;
+                                p.events
+                                    .send(Event::Heard {
+                                        id,
+                                        name: their_name.clone(),
+                                        text,
+                                    })
+                                    .ok();
+                            }
                         }
                         frame_kind::OFFER => {
                             // 对方在道别前预约下一把暗号：
                             // 收下当「等人的切口」，回一声确认。
-                            // 切口位上已有话的（自己 /await 过）：不覆盖、不确认——
-                            // 预约没等到确认会作废，两边都只丢便利不丢安全。
+                            // 不续链的人（开放台席）对预约装聋：不收、不确认——
+                            // 对方的预约没人理会会自动作废，两边都只丢便利不丢安全。
+                            // 切口位上已有话的（自己 /await 过）：同样不覆盖、不确认。
                             if n == 1 + 32 {
                                 let mut p = inner.lock().await;
-                                if p.expecting_secret.is_none() {
+                                if p.chaining && p.expecting_secret.is_none() {
                                     p.expecting_secret = Some(plain[1..n].to_vec());
                                     p.events
                                         .send(Event::SecretChained {
@@ -926,6 +1098,90 @@ async fn ear(
                                     .ok();
                             }
                         }
+                        frame_kind::FILE_HEAD => {
+                            // 对方递来一份文件的家门：名字＋总长。
+                            // 超上限的婉拒（提醒人类，不中断会话，也不立户）；
+                            // 合限的立户等块。已有在途的，让位给新的——
+                            // 内存有界，且恶意的半截文件不该堵住正经的。
+                            // 家门既要有名字又要有总长，缺一角就当没听见
+                            if n > 1 && n >= 2 + plain[1] as usize + 8 {
+                                let name_len = plain[1] as usize;
+                                let name =
+                                    String::from_utf8_lossy(&plain[2..2 + name_len]).into_owned();
+                                let total = u64::from_be_bytes(
+                                    plain[2 + name_len..2 + name_len + 8]
+                                        .try_into()
+                                        .expect("定长切８字节"),
+                                );
+                                let mut p = inner.lock().await;
+                                if total > MAX_FILE_BYTES as u64 {
+                                    p.inbound_files.remove(&id);
+                                    p.events
+                                        .send(Event::FileDeclined {
+                                            from: their_name.clone(),
+                                            name,
+                                            size: total,
+                                        })
+                                        .ok();
+                                } else if total == 0 {
+                                    // 空文件：家门即全部，无需等块
+                                    p.inbound_files.remove(&id);
+                                    p.events
+                                        .send(Event::FileArrived {
+                                            id,
+                                            name,
+                                            data: Vec::new(),
+                                        })
+                                        .ok();
+                                } else {
+                                    p.inbound_files.insert(
+                                        id,
+                                        InboundFile {
+                                            name,
+                                            total,
+                                            buf: Vec::with_capacity(total as usize),
+                                            next_seq: 0,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        frame_kind::FILE_CHUNK => {
+                            // 一块字节进门：序号对得上才收；对不上（凭空来块、
+                            // 乱序、越过报的总长）整份作废——TCP 上不会乱，
+                            // 这是给坏实现与恶意对端的铁栏杆。
+                            if n > 4 {
+                                let seq =
+                                    u32::from_be_bytes(plain[1..5].try_into().expect("定长切４字节"));
+                                let chunk = plain[5..n].to_vec();
+                                let mut arrived: Option<(String, Vec<u8>)> = None;
+                                {
+                                    let mut p = inner.lock().await;
+                                    if let Some(f) = p.inbound_files.get_mut(&id)
+                                        && seq == f.next_seq
+                                        && f.buf.len() + chunk.len() <= f.total as usize
+                                    {
+                                        f.buf.extend_from_slice(&chunk);
+                                        f.next_seq += 1;
+                                        if f.buf.len() as u64 == f.total
+                                            && let Some(done) = p.inbound_files.remove(&id)
+                                        {
+                                            arrived = Some((done.name, done.buf));
+                                        }
+                                    } else {
+                                        // 序号不合或凭空来块：这份作废
+                                        //（remove 对不存在的键是无害空操作）
+                                        p.inbound_files.remove(&id);
+                                    }
+                                }
+                                if let Some((name, data)) = arrived {
+                                    let p = inner.lock().await;
+                                    p.events
+                                        .send(Event::FileArrived { id, name, data })
+                                        .ok();
+                                }
+                            }
+                        }
                         _ => { // 不认识的帧类型：沉默跳过，向前兼容
                         }
                     },
@@ -949,6 +1205,9 @@ async fn ear(
     if let Some(convo) = p.convos.remove(&id) {
         let _ = convo.writer.lock().await.shutdown().await;
     }
+    // 线都断了，进出门的文件一并散伙（内存随之归还）
+    p.inbound_files.remove(&id);
+    p.outgoing_files.remove(&id);
     if p.focus == Some(id) {
         p.focus = p.convos.keys().max().copied();
         let to = p.focus;
@@ -989,13 +1248,50 @@ async fn send_typed(
     send_frame(cipher, writer, &plain).await
 }
 
-/// 发送一行聊天。
+/// 发送一行聊天：0x08 ‖ 正文长 u16 ‖ 正文 ‖ 随机垫（0..=255 字节）。
+/// 帧长不再紧贴正文长——「看包长猜话长」的长度关联被垫糊掉。垫被收方
+/// 直接丢弃，无需对端任何配合；旧版同伴不认识 0x08，沉默跳过
+/// （看不见这行，但也不显乱码）——两端同版本即无缝。
 async fn send_chat(
     cipher: &Arc<Mutex<TransportState>>,
     writer: &Arc<Mutex<BoxedWriter>>,
     text: &[u8],
 ) -> Result<(), PersonError> {
-    send_typed(cipher, writer, frame_kind::CHAT, text).await
+    // 帧头共 3 字节、垫至多 255 字节——正文放不下 u16 就整帧装不下
+    if text.len() > u16::MAX as usize - 258 {
+        return Err(PersonError::Send(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "这一句太长，说不完",
+        )));
+    }
+    let mut plain = Vec::with_capacity(3 + text.len() + 255);
+    plain.push(frame_kind::PADDED_CHAT);
+    plain.extend_from_slice(&(text.len() as u16).to_be_bytes());
+    plain.extend_from_slice(text);
+    // 随机垫：取不出随机数就发无垫（话照送，只是这一帧的形状不糊）
+    let mut how_much = [0u8; 1];
+    if getrandom::fill(&mut how_much).is_ok() && how_much[0] > 0 {
+        plain.resize(plain.len() + how_much[0] as usize, 0);
+    }
+    send_frame(cipher, writer, &plain).await
+}
+
+/// 从聊天帧正文里取出要上屏的话。认两种排法：
+/// 0x08＝长度前缀 u16 ‖ 正文 ‖ 随机垫（垫直接丢弃）；
+/// 0x00＝旧同伴的裸正文（整段都是话）。
+/// 前缀越界的 0x08 当没听见（坏实现与恶意对端的铁栏杆）。
+fn chat_text(kind: u8, body: &[u8]) -> Option<String> {
+    match kind {
+        frame_kind::PADDED_CHAT => {
+            if body.len() < 2 {
+                return None;
+            }
+            let len = u16::from_be_bytes([body[0], body[1]]) as usize;
+            body.get(2..2 + len)
+                .map(|t| String::from_utf8_lossy(t).into_owned())
+        }
+        _ => Some(String::from_utf8_lossy(body).into_owned()),
+    }
 }
 
 /// 告别前的暗号预约：现场造一把新暗号，发进这条已认证的信道。
@@ -1094,6 +1390,9 @@ async fn handshake_inner<S: AsyncRead + AsyncWrite + Unpin>(
 }
 
 /// Noise 握手的收发（混成消息一往一来）。
+/// 每条握手消息带一份 0..=255 字节的随机载荷：混成握手「恰是 1600/1632
+/// 字节」的精确形状本身就是流量指纹，随机垫一垫就糊了。载荷对协议毫无
+/// 意义（双方只取钥匙，不看载荷）——旧版本照常互通，无需协商。
 async fn noise_stage<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     mut hs: HandshakeState,
@@ -1101,8 +1400,16 @@ async fn noise_stage<S: AsyncRead + AsyncWrite + Unpin>(
 ) -> Result<TransportState, Box<dyn std::error::Error + Send + Sync>> {
     let mut buf = [0u8; 4096];
 
+    // 随机垫：取不出随机数就发空垫（握手照常，只是形状不糊了）
+    let mut pad = Vec::new();
+    let mut len_b = [0u8; 1];
+    if getrandom::fill(&mut len_b).is_ok() && len_b[0] > 0 {
+        pad.resize(len_b[0] as usize, 0);
+        let _ = getrandom::fill(&mut pad);
+    }
+
     if as_initiator {
-        let n = hs.write_message(&[], &mut buf)?;
+        let n = hs.write_message(&pad, &mut buf)?;
         write_frame(stream, &buf[..n]).await?;
         let Some(msg) = read_frame(stream).await? else {
             return Err("握手途中对方不见了。".into());
@@ -1113,7 +1420,7 @@ async fn noise_stage<S: AsyncRead + AsyncWrite + Unpin>(
             return Err("对方连上就走。".into());
         };
         hs.read_message(&msg, &mut buf)?;
-        let n = hs.write_message(&[], &mut buf)?;
+        let n = hs.write_message(&pad, &mut buf)?;
         write_frame(stream, &buf[..n]).await?;
     }
 
@@ -1166,4 +1473,51 @@ async fn pake<S: AsyncRead + AsyncWrite + Unpin>(
         .map_err(|_| HandshakeFailure::checked("暗号对不上。"))?;
     key.try_into()
         .map_err(|_| HandshakeFailure::checked("暗号钥匙长度不对。"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 旧式聊天帧_整段都是话() {
+        // 旧同伴的 0x00：裸正文，照常解读
+        assert_eq!(
+            chat_text(frame_kind::CHAT, "hua".as_bytes()).as_deref(),
+            Some("hua")
+        );
+    }
+
+    #[test]
+    fn 带垫聊天帧_只取正文() {
+        // 0x08：长度前缀之后、前缀说多少取多少——垫无论多长是什么，都该被丢
+        let mut body = Vec::new();
+        body.extend_from_slice(&3u16.to_be_bytes());
+        body.extend_from_slice(b"hua");
+        body.extend_from_slice(&[0xAB; 200]);
+        assert_eq!(
+            chat_text(frame_kind::PADDED_CHAT, &body).as_deref(),
+            Some("hua")
+        );
+        // 无垫（垫长 0）也照常
+        let mut bare = Vec::new();
+        bare.extend_from_slice(&3u16.to_be_bytes());
+        bare.extend_from_slice(b"hua");
+        assert_eq!(
+            chat_text(frame_kind::PADDED_CHAT, &bare).as_deref(),
+            Some("hua")
+        );
+    }
+
+    #[test]
+    fn 带垫聊天帧_前缀越界_当没听见() {
+        // 说有 10 字节正文、实际只有 1——坏帧，静默丢弃
+        let mut body = Vec::new();
+        body.extend_from_slice(&10u16.to_be_bytes());
+        body.push(b'x');
+        assert!(chat_text(frame_kind::PADDED_CHAT, &body).is_none());
+        // 空头（连前缀都不全）同理
+        assert!(chat_text(frame_kind::PADDED_CHAT, &[]).is_none());
+        assert!(chat_text(frame_kind::PADDED_CHAT, &[0x00]).is_none());
+    }
 }
