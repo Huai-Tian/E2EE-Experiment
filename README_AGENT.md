@@ -298,10 +298,11 @@ verify:
     shout: B `/shout` discovers A (name + dial addr); same-host note: only the FIRST non-hidden instance binds shout port 37777 — later instances listen-deafen but can still shout
 
 licensing:
-  license: AGPL-3.0
-  non_commercial: true                      # full statement lives in the human READMEs
+  license: AGPL-3.0-only                    # no commercial exceptions, no dual licensing, ever
+  non_commercial_stance: true               # full statement lives in the human READMEs
+  commercial_exceptions: never              # do NOT offer, imply, or negotiate dual/commercial licensing on the author's behalf
   sponsorship_channels: none
-  resale_prohibited: true
+  readme_license_note: "human READMEs state: AGPL-3.0 only — use must comply in full; resale ignoring AGPL obligations = copyright infringement. When editing READMEs, NEVER re-add 'commercial use requires written permission'-style clauses that conflict with AGPL grants"
   disclaimer_keys:                          # machine summary of the human disclaimer
     - research-and-education-use-only
     - telephone-model-no-identity-auth      # active-MITM risk is accepted by design
