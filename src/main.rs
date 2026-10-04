@@ -235,7 +235,8 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
                 return Ok(false);
             };
             person.expect_secret(secret.as_bytes()).await;
-            eprintln!("切口备好了：下一位来客要对上「{secret}」才谈得成。");
+            // 只确认已备好，不回显暗号本体——它不该出现在任何输出流里
+            eprintln!("切口备好了：下一位来客要对上这句暗号才谈得成。");
         }
         "talk" => {
             let Some(key) = parts.next() else {
