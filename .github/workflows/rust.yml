@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Linux：构建 + 全量测试（干净环境里的回归防线）
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - run: cargo build --verbose
+      - run: cargo test --verbose
+
+  # Windows：你日常开发在 Windows，双向都不许回归
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+      - run: cargo build --verbose
+      - run: cargo test --verbose
+
+  # musl 静态构建：验证 release 产物形态永远可构建
+  musl-static-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target x86_64-unknown-linux-musl
