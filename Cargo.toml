@@ -1,6 +1,6 @@
 [package]
 name = "E2EE-Experiment"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2024"
 description = "一个像人一样的端到端加密对话实验：能听，能说，转身即忘"
 
