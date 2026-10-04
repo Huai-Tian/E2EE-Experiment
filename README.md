@@ -203,8 +203,7 @@ before touching anything.
 ## 🚫 Non-Commercial Statement
 
 This project is initiated by the developer out of personal interest and for
-technical research purposes, and is **non-commercial** in nature. The terms
-below are binding conditions for obtaining and using this project:
+technical research purposes, and is **non-commercial** in nature.
 
 - **Permanently free**:
   This project is completely free, with **no paid features, memberships,
@@ -221,12 +220,18 @@ below are binding conditions for obtaining and using this project:
   This project is consistently positioned for **cryptographic protocol
   research and educational exchange** — a research tool for the community,
   not a commercial product.
-- **Commercial use requires prior written permission**:
-  Any commercial use of this project — including but not limited to selling,
-  reselling, profit-oriented redistribution, commercial hosting or SaaS
-  offerings, incorporation into commercial products or services, or building
-  derivative commercial products — **requires prior written authorization
-  from the copyright holder**. Unauthorized commercial use is prohibited.
+
+**License is AGPL-3.0 only — no commercial exceptions.** This project is
+offered under the terms of the GNU AGPL-3.0 (see [LICENSE](LICENSE)), and
+**every use must comply with that license in full**. What AGPL requires —
+source disclosure for distributed derivatives, and for network services,
+complete corresponding source offered to all users — is exactly what it
+means to use this project. **Commercial use that cannot accept AGPL terms
+does not have the author's authorization**: the author does not offer, and
+will not negotiate, dual licensing, commercial exceptions, or proprietary
+redistribution. Reselling builds for profit while ignoring AGPL obligations
+is copyright infringement.
+
 - **Attribution and statement integrity**:
   Redistribution of unmodified builds is permitted only together with this
   statement and proper attribution. **Removing, altering, or obscuring this
