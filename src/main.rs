@@ -63,6 +63,11 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
 
 #[tokio::main]
 async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
+    // 内存卫生（T1 通道封堵）：转储核心文件 = 把全部明文秘密写进磁盘。
+    // 关掉它；再提醒未加密 swap 的存在（swap 落盘是另一条 T1 通道）。
+    // 这是 CLI 这个使用者的进程策略——库本体不碰进程级设置。
+    harden_process();
+
     let mut name = String::from("无名氏");
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
     let mut as_courier = false;
@@ -170,6 +175,42 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     person.leave().await;
     Ok(ExitCode::SUCCESS)
 }
+
+/// 进程级加固（unix）：两件事，失败都静默——加固是尽力而为，不该挡住出生。
+/// 1. RLIMIT_CORE=0 —— 本进程永不转储核心文件（core dump 会把全部
+///    明文秘密整页写进磁盘，是 T1 持久化通道里最容易关的一条）。
+/// 2. /proc/swaps 检查 —— 有未加密 swap 分区就 stderr 一行提醒。
+///    zram（RAM 内压缩）不算落盘，不提醒；swap 加密与否无法从
+///    /proc/swaps 看出，只能提醒用户自己确认。
+#[cfg(unix)]
+fn harden_process() {
+    // 1. 拒绝 core dump
+    unsafe {
+        let lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        let _ = libc::setrlimit(libc::RLIMIT_CORE, &lim);
+    }
+
+    // 2. 未加密 swap 提醒
+    if let Ok(text) = std::fs::read_to_string("/proc/swaps") {
+        for line in text.lines().skip(1) {
+            // 列：Filename Type Size Used Priority
+            let mut parts = line.split_whitespace();
+            let (Some(_path), Some(kind)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            if kind == "partition" {
+                eprintln!("提醒：检测到 swap 分区。若它未加密，被换出的内存页（可能含明文）会落到磁盘。建议 swap 加密或关闭。");
+                break; // 提醒一次就够
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn harden_process() {}
 
 /// 场内指令。返回 true 表示要离场。
 async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std::error::Error>> {

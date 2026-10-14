@@ -776,7 +776,7 @@ async fn 文件_无损往返_二进制字节一毫不差() {
         .await;
     assert_eq!(name, "bi-ji.dat");
     assert_eq!(got.len(), data.len(), "长度必须一致");
-    assert_eq!(got, data, "字节必须一毫不差（无损，非法 UTF-8 原样到达）");
+    assert_eq!(&got[..], &data[..], "字节必须一毫不差（无损，非法 UTF-8 原样到达）");
 
     // 文件之后聊天照常——两条车道互不干扰
     bob.speak("wen zi hai neng shuo").await.expect("聊天照常");
@@ -834,7 +834,7 @@ async fn 文件_打洞线上也照传() {
         }
     })
         .await;
-    assert_eq!(got, data, "打洞线上字节同样一毫不差");
+    assert_eq!(&got[..], &data[..], "打洞线上字节同样一毫不差");
 }
 
 #[tokio::test]

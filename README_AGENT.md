@@ -115,8 +115,8 @@ crypto:
   pq_hybrid: implemented                     # X25519 AND Kyber1024, both must break; NEVER pure-PQ
   mid_session_swap: impossible-by-aead
 
-memory_hygiene:                              # STATUS: settled design, NOT yet implemented (pending_work.P1)
-  status: settled-design-2026-10-13
+memory_hygiene:                              # STATUS: IMPLEMENTED 2026-10-14 (P1 landed)
+  status: implemented
   threat_tiers:                              # what we defend against, honestly layered
     T0_same_machine_software: "root / kernel / ptrace / /proc/pid/mem — OUT OF SCOPE (telephone-model boundary, documented)"
     T1_secondary_persistence: "swap-to-disk, zram writeback, core dumps, hibernate images — OUR battlefield; fully closeable in software"
@@ -124,18 +124,16 @@ memory_hygiene:                              # STATUS: settled design, NOT yet i
     T3_physical_extraction: "cold boot (dram remanence), chip-off/JTAG reconfig — hardware domain; app-level unsolvable; shrink the window only"
   in_memory_encryption: "REJECTED — NEVER re-propose (settled_decisions.rejected.in_memory_encryption). Circular argument: the key that decrypts must itself live in memory; CPU must see plaintext to compute. Without a hardware anchor this is security theater (a costume, not a lock). TRESOR-style register-resident keys don't fit Noise session state; TEE/TrustZone migration breaks single-binary symmetry and plaintext crosses the normal world anyway."
   goal: exposure-minimization                 # minimize TIME WINDOW and PHYSICAL EXTENT of secrets in RAM, weld T1 shut
-  zeroize_scope:                             # everything on this list gets zeroize-on-drop / zeroizing wrappers
-    - spake2 ignition key [u8;32]
-    - group key + sender subkeys + contributions r_i
-    - chained/expecting/stable secrets
-    - file-transfer buffers (32MB plaintext currently resident!) — InboundFile.buf, FileArrived.data
-    - chat plaintext frame buffers
-  snow_gap: "snow 0.10.0 has NO zeroize feature — TransportState session keys stay on the heap after drop. DECISION PENDING (pending_work.P1): minimal vendored fork adding ZeroizeOnDrop to CipherState (preferred, tiny diff, behavior-identical) vs accept-and-document the residue"
-  mlock: "lock KEY pages only (KB-scale, within RLIMIT_MEMLOCK); 32MB file buffers NOT locked (accepted, documented) — optional future: segmented zeroizing pipeline for file transfer"
-  dump_refusal: "RLIMIT_CORE=0 + MADV_DONTDUMP on key pages; evaluate memfd_secret on linux"
-  android_note: "android zram is IN-RAM compressed swap, but Android 17 mmd adds zram WRITEBACK to /data loopback — the 'android has no swap-to-disk' intuition is FALSE on new versions; mlock on key pages closes it"
-  swap_check: "desktop CLI startup reads /proc/swaps; unencrypted swap partition → one stderr warning line (zero cost, honest engineering)"
-  honest_boundary: "T2/T3 remain out of reach; the promise upgrades from 'zero persistence' to 'zero persistence + active memory hygiene' — threat model docs gain a tier table"
+  implemented_layers:                         # what P1 shipped
+    snow_fork: "vendored fork at vendor/snow (patch.crates-io) — SymmetricStateData h/ck wipe on drop + local HKDF/key copies wiped in mix_key/mix_key_and_hash/split; HandshakeState.psks Zeroizing (also kills upstream's per-token Copy residue); Dh25519/P256 privkey Drop-wipe; Kyber1024 secret-key volatile wipe (needs unsafe ptr write — pqcrypto field is private; fork relaxes upstream's unsafe_code=forbid). Cipher internals (ChaCha20Poly1305) already wipe via upstream chacha20poly1305→chacha20/zeroize chain — untouched. Behavior bit-identical: snow's own 66-test suite ships in the fork copy and passes"
+    own_secrets: "person.rs all self-held secrets wrapped Zeroizing: expecting/stable/chained/pending secrets, Gathering (my_r/contribs/key), InboundFile.buf, Event::FileArrived.data (Rust API type change — the 32MB plaintext is now wipe-on-drop), ear()/hello()/send_typed()/send_chat() plaintext frame buffers, pake() ignition key (handshake chain: Zeroizing pake → Zeroizing psks in fork → wiped symmetricstate — no plaintext copy survives)"
+    cli_harden: "main.rs harden_process(): RLIMIT_CORE=0 (unix) + /proc/swaps unencrypted-partition warning. Library never touches process policy — CLI-only, as the api_style discipline requires"
+    circle_borrow: "circle.rs derive_group_key takes &[&[u8]] (borrows, never moves contributions)"
+  mlock_evaluation:                           # evaluated during implementation — honest outcome
+    verdict: deferred-with-reason
+    why: "mlock operates at 4KB page granularity while our keys are 32B heap objects sharing pages with ordinary data — locking 'key pages' is imprecise (locks extra), RLIMIT_MEMLOCK-bound (64KB default), and Rust's allocator gives no page-aligned key placement without a custom allocator. zeroize (drop-time wipe) + swap/coredump closure deliver the T1 story; mlock would guard the 'swapped out WHILE LIVE' window at the cost of allocator complexity. Revisit only with a concrete page-aligned secret allocator design; do NOT cargo-cult mlock back in"
+  honest_boundary: "T2/T3 remain out of reach; kill -9 / power loss skips Drop (residue until reboot — inherent to zeroize-class defenses, documented); the promise stands as 'zero persistence + active memory hygiene'"
+  coercion_stance: "with this landed, physical-coercion defense is INHERENT — zero-persistence + wipe-on-drop + ephemeral keys compose into 'close the program and nothing remains'. No duress mode, no panic wipe, no hidden state to find. Owner ruling 2026-10-14; see settled_decisions.kept.coercion_defense_inherent"
 
 # ───────────────────────────────────────────────────────────────
 # WIRE PROTOCOL (as-built + settled v2 additions)
@@ -364,7 +362,7 @@ invariants:
 settled_decisions:
   kept:
     relay_circle: "flood circles are THE answer to >8 groups — connected-is-enough; the v1 key schedule is kept unchanged"
-    compromised_device: "a seized device that stays in the circle keeps reading — this is INHERENT to group keys, NOT introduced by relay circles; physical-coercion defenses are a LATER, separate work item"
+    compromised_device: "a seized device that stays in the circle keeps reading — this is INHERENT to group keys, NOT introduced by relay circles; and per the coercion_defense_inherent ruling below, no separate defense work exists to defer: close the program and nothing remains"
     leave_rekeys: "departures MUST rekey — 'that is how it works in real life too' — implemented as topup, not full re-gathering"
     one_time_signing: "ed25519 one-time circle signing keys (option B) — approved 2026-10-13; the only acceptable replacement for topological attribution"
     small_circle_markers: "relayed-contribution markers are unnecessary in small circles — 'people naturally know' (small circles are all-direct anyway; markers only ever render on relayed arrivals)"
@@ -372,6 +370,7 @@ settled_decisions:
     solo_circle: "a circle of one is allowed — circles absorb the entire 'broadcast/audience' concept"
     ownerless: "'there was never an owner — speech among equals is how reality works; those wanting a one-voice platform should use mainstream social media'"
     android_abi: "prebuilt libraries for all android ABIs (pending_work.P5)"
+    coercion_defense_inherent: "owner ruling 2026-10-14: physical-coercion protection is INHERENT, not a feature — zero-persistence + wipe-on-drop + ephemeral keys compose into 'the user merely closes the program'; no duress mode, no panic wipe, no separate coercion subsystem will ever be built. Precise claim + boundaries: a CLEAN exit leaves nothing anywhere (this is what P1 made true — before it, RAM residue survived exit); kill -9/power cut leaves the documented seconds-scale RAM residue; a RUNNING seized device reads live speech like any live conversation — that is the compromised_device scenario, ended by closing. NEVER propose a duress/panic-wipe feature"
   rejected:                                  # do NOT re-propose
     in_memory_encryption: "rejected — encrypting memory with a key that must itself live in memory is circular; a costume, not a lock; exposure-minimization instead (memory_hygiene)"
     mls_adoption: "MLS/TreeKEM rejected for v2 — credential framework collides with no-identity-layer; dependency weight breaks single-binary; documented future direction only"
@@ -387,12 +386,12 @@ settled_decisions:
 
 known_limitations:
   no_liveness_probes: "established conversations have no keepalive — a vanished peer hangs the line until /quit; under v2 circles this upgrades from personal nuisance to circle impact (a zombie member's contribution stays in the key until topup)"
-  seized_device_reads_on: "a seized in-circle device reads until its lines die + topup lands; old plaintext remains readable to old key holders (history, not a leak); physical-coercion defense is deferred future work"
+  seized_device_reads_on: "a seized in-circle device reads until its lines die + topup lands; old plaintext remains readable to old key holders (history, not a leak); the coercion answer is inherent — close the program and nothing remains (settled_decisions.kept.coercion_defense_inherent)"
   identity_bounded_by_direct_links: "contribution name-binding under flooding is first-seen + provenance — secrecy is mathematical, member-identity certainty is bounded by direct connections (group_v2.binding_honesty)"
   flood_frame_loss: "lost contributions ⇒ key mismatch ⇒ CircleMumble; recovery = re-gather (convergence patience is the real v2 scaling limit, ~50)"
   circle_race: "simultaneous gathering formation can leave members with mismatched keys — CircleMumble surfaces it, re-circling converges"
-  zram_writeback_residue: "android mmd zram writeback lands idle pages on /data — key-page mlock (memory_hygiene) closes the key exposure; the 32MB file buffer stays an accepted, documented residue"
-  snow_zeroize_gap: "snow 0.10 TransportState keys are not zeroized on drop — pending fork-vs-document decision (pending_work.P1)"
+  zram_writeback_residue: "android mmd zram writeback lands idle pages on /data — keys are wipe-on-drop (P1) so the residue window ends at process exit; mlock evaluated-and-deferred (memory_hygiene.mlock_evaluation); the 32MB file buffer stays an accepted, documented residue"
+  snow_zeroize_gap: "RESOLVED by P1 — the vendored fork (vendor/snow) wipes TransportState/CipherState key material, chain values, PSKs, DH and Kyber private keys; upstream snow 0.10 still lacks this, which is WHY the fork exists (see memory_hygiene.implemented_layers.snow_fork)"
   cross_version_chat_one_way: "peers predating 0x08 silently drop padded lines; v2 frame kinds 0x09-0x0C inherit the same one-way property"
   nested_no_prior_art: "serverless nested circles have no known prior art — experimental label stays until hardened"
 
@@ -402,9 +401,8 @@ known_limitations:
 
 pending_work:
   P1_memory_hygiene:
-    status: not-started
-    scope: "implement memory_hygiene: zeroize crate across the listed scope; mlock key pages; RLIMIT_CORE=0 + MADV_DONTDUMP; /proc/swaps startup warning; snow fork decision (vendored minimal ZeroizeOnDrop fork PREFERRED vs document residue) — owner to confirm fork"
-    slices: "zeroize wrappers → key-page mlock → dump refusal → swap check → docs (threat tier table)"
+    status: DONE-2026-10-14
+    landed: "snow vendored fork (vendor/snow) + full Zeroizing coverage in person.rs + CLI RLIMIT_CORE/swap-check + circle.rs borrow refactor. mlock evaluated-and-deferred (see memory_hygiene.mlock_evaluation). All suites green: 27 own + 66 fork + FFI contract + ctypes"
   P2_flood_circle_core:
     status: not-started
     depends: []

@@ -8,6 +8,12 @@ description = "一个像人一样的端到端加密对话实验：能听，能�
 [workspace]
 members = ["ffi"]
 
+# 内存卫生（P1）：snow 的 vendored fork——上游 0.10.0 的会话密钥/链值/
+# PSK/Kyber 私钥在 drop 后以明文残留。fork 只加 zeroize（delta 见
+# vendor/snow/Cargo.toml 头注释），行为逐位相同，snow 自带测试随副本在库。
+[patch.crates-io]
+snow = { path = "vendor/snow" }
+
 # Rust 库（供 Rust 程序直接依赖；C ABI 在 ffi/ 成员里）
 [lib]
 name = "e2ee"
@@ -27,6 +33,12 @@ getrandom = { version = "0.4.3", features = ["std"] }
 sha2 = "0.11.0"
 hkdf = "0.13.0"
 chacha20poly1305 = "0.11.0"
+# 内存卫生（P1）：本库自持秘密（点火钥匙/暗号链/凑话/文件缓冲）的
+# 用后即焚包装；snow 侧密钥由 vendored fork 覆盖
+zeroize = "1"
+# CLI 进程级防护（RLIMIT_CORE=0）——库本体不碰进程策略
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # 产物只有一个可执行文件：LTO + 剥符号 + abort on panic，尽量小
 [profile.release]

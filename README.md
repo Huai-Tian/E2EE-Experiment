@@ -63,6 +63,14 @@ secrets), and the other end itself (they can copy, paste, screenshot).
   there is no roster to leak because none is ever stored.
 - **The name on your screen comes from the wire, not the plaintext** — no
   one can put words in another's mouth inside a conversation or a group.
+- **Close it and it's forgotten — that IS the coercion defense** — nothing
+  is ever written to disk, keys and plaintext are wiped from memory the
+  moment they're done, and every conversation's keys are ephemeral: after a
+  clean exit, searching the whole machine finds nothing. There is no
+  "duress mode", because there is no history to hide. Honest edges: a hard
+  kill (`kill -9` / power cut) leaves a seconds-scale RAM residue that
+  fades on reboot, and a seized *running* device of course reads what is
+  being said — true of any live conversation; closing ends it.
 
 ## Getting started
 

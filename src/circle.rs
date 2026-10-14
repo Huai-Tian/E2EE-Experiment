@@ -21,8 +21,10 @@ const NONCE_LEN: usize = 12;
 
 /// 从全部贡献铸出群钥匙。贡献必须按字节排序后拼接——顺序无关，
 /// 无需成员名单，人人得出同一把。
-pub fn derive_group_key(contribs: &[Vec<u8>]) -> [u8; 32] {
-    let mut sorted: Vec<&[u8]> = contribs.iter().map(|c| c.as_slice()).collect();
+/// 借用切片入参（不移动贡献本体）——调用方的贡献存放于
+/// Zeroizing 容器，密钥函数只看不拿。
+pub fn derive_group_key(contribs: &[&[u8]]) -> [u8; 32] {
+    let mut sorted: Vec<&[u8]> = contribs.to_vec();
     sorted.sort_unstable();
     let mut ikm = Vec::with_capacity(CONTRIB_LEN * sorted.len());
     for c in &sorted {
@@ -87,17 +89,15 @@ mod tests {
     #[test]
     fn 排序无关_人人同钥() {
         let rs: Vec<Vec<u8>> = (0..4).map(|i| vec![i as u8; 32]).collect();
-        let k1 = derive_group_key(&rs);
-        let mut shuffled = rs.clone();
-        shuffled.reverse();
-        let k2 = derive_group_key(&shuffled);
+        let k1 = derive_group_key(&[&rs[0][..], &rs[1][..], &rs[2][..], &rs[3][..]]);
+        let k2 = derive_group_key(&[&rs[3][..], &rs[2][..], &rs[1][..], &rs[0][..]]);
         assert_eq!(k1, k2, "贡献顺序不应影响群钥匙");
     }
 
     #[test]
     fn 子钥加密_指定人可解() {
         let rs: Vec<Vec<u8>> = (0..3).map(|i| vec![i as u8 + 1; 32]).collect();
-        let k = derive_group_key(&rs);
+        let k = derive_group_key(&[&rs[0][..], &rs[1][..], &rs[2][..]]);
         let s0 = derive_sender_subkey(&k, &rs[0]);
         let blob = seal(&s0, 7, &rs[0], "今晚吃火锅".as_bytes());
         assert_eq!(open(&s0, &blob).unwrap(), "今晚吃火锅".as_bytes());

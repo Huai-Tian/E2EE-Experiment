@@ -13,6 +13,7 @@ use snow::{Builder, HandshakeState, TransportState};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
+use zeroize::Zeroizing;
 
 use crate::discover::{self, Discovered};
 use crate::wire::{read_frame, write_frame};
@@ -65,8 +66,9 @@ pub enum Event {
     /// 不中断会话，只提醒——通常意味着该重新围一次。
     CircleMumble { from: String },
     /// 一份文件收齐了：字节原样都在内存里（data），无损。落不落盘、
-    /// 落在哪，是外层使用者的事——库永不写盘。
-    FileArrived { id: u64, name: String, data: Vec<u8> },
+    /// 落在哪，是外层使用者的事——库永不写盘。data 是 Zeroizing：
+    /// 用后即焚（外层取走字节后本缓冲随 drop 清零）。
+    FileArrived { id: u64, name: String, data: Zeroizing<Vec<u8>> },
     /// 对方想递一份超过上限的文件，婉拒了（提醒人类，不中断会话）。
     FileDeclined { from: String, name: String, size: u64 },
 }
@@ -183,13 +185,14 @@ struct GreetFailure {
 }
 
 /// 一场围坐：凑话、铸出的群钥匙、发言计数。
+/// 贡献与群钥匙是秘密（群钥匙能开全圈的话）——Zeroizing 用后即焚。
 struct Gathering {
     /// 我自己的贡献
-    my_r: Vec<u8>,
+    my_r: Zeroizing<Vec<u8>>,
     /// 各条线上收到的贡献：对话编号 → 贡献
-    contribs: HashMap<u64, Vec<u8>>,
+    contribs: HashMap<u64, Zeroizing<Vec<u8>>>,
     /// 收齐后铸出的群钥匙
-    key: Option<[u8; 32]>,
+    key: Option<Zeroizing<[u8; 32]>>,
     /// 我的发言计数（nonce 唯一性）
     counter: u64,
 }
@@ -217,16 +220,16 @@ struct Inner {
     next_id: u64,
     events: mpsc::UnboundedSender<Event>,
     /// 等人的切口：设了之后，下一位来客必须对得上才谈得成。一位一焚。
-    expecting_secret: Option<Vec<u8>>,
+    expecting_secret: Option<Zeroizing<Vec<u8>>>,
     /// 常备门禁（机器密钥形态）：每位来客都要对上才谈得成，且从不消耗。
     /// one-shot 的「烧」护的是低熵人类暗号（防在线爆破）；32 字节机器
     /// 密钥在线爆破本就不可能——于是错多少次都锁不住台，真钥永远进得来。
     /// 一次性切口（/await）若在，优先生效；烧掉之后门禁照常。
-    stable_secret: Option<Vec<u8>>,
+    stable_secret: Option<Zeroizing<Vec<u8>>>,
     /// 暗号链（主动侧）：地址 → 上一场告别时预约的下一把。用过即焚。
-    chained_secrets: HashMap<String, Vec<u8>>,
+    chained_secrets: HashMap<String, Zeroizing<Vec<u8>>>,
     /// 挂起待确认的预约：对话编号 → 新暗号。收到确认才入链。
-    pending_offers: HashMap<u64, Vec<u8>>,
+    pending_offers: HashMap<u64, Zeroizing<Vec<u8>>>,
     /// 续链总开关（默认开）。关掉后：道别不预约、来约不接受——
     /// 对陌生人常开的台席（意见反馈热线）用它，谁来都行，散场不留锁。
     /// 链是便利不是必需，关掉只丢便利，不丢安全。
@@ -240,10 +243,11 @@ struct Inner {
 }
 
 /// 一份正在进门的东西：名字、总长、已收的字节、下一块的序号。
+/// buf 是明文（最大 32MB 驻留内存）——Zeroizing：收完交给事件后清零。
 struct InboundFile {
     name: String,
     total: u64,
-    buf: Vec<u8>,
+    buf: Zeroizing<Vec<u8>>,
     next_seq: u32,
 }
 
@@ -356,8 +360,9 @@ impl Person {
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_default();
+                    let greet_secret = secret.as_ref().map(|s| &s[..]);
                     if let Err(f) =
-                        greet(&inner, stream, false, secret.as_deref(), peer_addr).await
+                        greet(&inner, stream, false, greet_secret, peer_addr).await
                     {
                         // 只有一次性切口存在「归还」；常备的从没取走，无需归还
                         if !f.burned && one_shot {
@@ -395,7 +400,7 @@ impl Person {
 
     /// 备好切口：下一位来客必须对得上这句暗号才谈得成（一位一焚）。
     pub async fn expect_secret(&self, secret: &[u8]) {
-        self.inner.lock().await.expecting_secret = Some(secret.to_vec());
+        self.inner.lock().await.expecting_secret = Some(Zeroizing::new(secret.to_vec()));
     }
 
     /// 立起常备门禁：**每一位**来客都要对上这句暗号才谈得成，且从不消耗——
@@ -404,7 +409,7 @@ impl Person {
     /// 一次性切口的「烧」防的是对低熵暗号的在线爆破，机器密钥在线爆破
     /// 本就不可能，不需要那份保护——于是瞎拨锁不住台（DoS 无效）。
     pub async fn expect_secret_stable(&self, secret: &[u8]) {
-        self.inner.lock().await.stable_secret = Some(secret.to_vec());
+        self.inner.lock().await.stable_secret = Some(Zeroizing::new(secret.to_vec()));
     }
 
     /// 续链开关：关掉后这个人道别不预约、来约不接受。
@@ -418,7 +423,8 @@ impl Person {
     /// 若上一场告别时与这个地址预约过下一把暗号，自动带上（用过才焚）。
     pub async fn dial(&self, addr: &str) -> Result<u64, PersonError> {
         let chained = self.inner.lock().await.chained_secrets.get(addr).cloned();
-        match self.dial_inner(addr, chained.as_deref()).await {
+        let chained_ref = chained.as_ref().map(|s| &s[..]);
+        match self.dial_inner(addr, chained_ref).await {
             Ok(id) => {
                 // 谈成了：链上的暗号花在了这场对话上
                 self.inner.lock().await.chained_secrets.remove(addr);
@@ -765,8 +771,9 @@ impl Person {
             if p.convos.is_empty() {
                 return Err(PersonError::NoConvo);
             }
-            let mut r = vec![0u8; crate::circle::CONTRIB_LEN];
-            getrandom::fill(&mut r).map_err(|_| PersonError::Greet("造不出凑话。".into()))?;
+            let mut r = Zeroizing::new(vec![0u8; crate::circle::CONTRIB_LEN]);
+            getrandom::fill(&mut r[..])
+                .map_err(|_| PersonError::Greet("造不出凑话。".into()))?;
             p.gathering = Some(Gathering {
                 my_r: r.clone(),
                 contribs: HashMap::new(),
@@ -788,17 +795,13 @@ impl Person {
             let Some(g) = p.gathering.as_mut() else {
                 return Err(PersonError::NoCircle);
             };
-            let Some(k) = g.key else {
+            let Some(k) = g.key.as_ref() else {
                 return Err(PersonError::NoCircle);
             };
+            let subkey = crate::circle::derive_sender_subkey(k, &g.my_r);
             let counter = g.counter;
             g.counter += 1;
-            let blob = crate::circle::seal(
-                &crate::circle::derive_sender_subkey(&k, &g.my_r),
-                counter,
-                &g.my_r,
-                text.as_bytes(),
-            );
+            let blob = crate::circle::seal(&subkey, counter, &g.my_r, text.as_bytes());
             let targets: Vec<_> = p
                 .convos
                 .values()
@@ -886,11 +889,11 @@ async fn register_convo(
         else {
             return Ok(None);
         };
-        let mut plain = vec![0u8; ciphertext.len()];
+        let mut plain = Zeroizing::new(vec![0u8; ciphertext.len()]);
         let n = cipher
             .lock()
             .await
-            .read_message(&ciphertext, &mut plain)
+            .read_message(&ciphertext, &mut plain[..])
             .map_err(|_| PersonError::Greet("名字这帧没解开——信道有问题。".into()))?;
         if n == 0 || plain[0] != frame_kind::NAME {
             return Err(PersonError::Greet("对面没好好报名字。".into()));
@@ -965,10 +968,11 @@ async fn ear(
     let reason = loop {
         match read_frame(&mut rh).await {
             Ok(Some(ciphertext)) => {
-                let mut plain = vec![0u8; ciphertext.len()];
+                // 明文缓冲用后即焚：每一帧的解密产物在帧处理完就清零
+                let mut plain = Zeroizing::new(vec![0u8; ciphertext.len()]);
                 // 先把读结果取出：锁守卫若留在 match 里，
                 // 下面回 ACK 时再锁同一把 cipher 就是自锁
-                let read = cipher.lock().await.read_message(&ciphertext, &mut plain);
+                let read = cipher.lock().await.read_message(&ciphertext, &mut plain[..]);
                 match read {
                     Ok(0) => break LeaveReason::Farewell,
                     Ok(n) => match plain[0] {
@@ -995,7 +999,7 @@ async fn ear(
                             if n == 1 + 32 {
                                 let mut p = inner.lock().await;
                                 if p.chaining && p.expecting_secret.is_none() {
-                                    p.expecting_secret = Some(plain[1..n].to_vec());
+                                    p.expecting_secret = Some(Zeroizing::new(plain[1..n].to_vec()));
                                     p.events
                                         .send(Event::SecretChained {
                                             with: their_name.clone(),
@@ -1019,13 +1023,13 @@ async fn ear(
                             // 我自己还没凑过话的，现在凑上并广播（凑话自传染）；
                             // 收齐全部贡献即铸出群钥匙。
                             if n == 1 + crate::circle::CONTRIB_LEN {
-                                let their = plain[1..n].to_vec();
+                                let their = Zeroizing::new(plain[1..n].to_vec());
                                 let mut p = inner.lock().await;
                                 let lines = p.convos.len();
-                                let mut mine_to_send: Option<Vec<u8>> = None;
+                                let mut mine_to_send: Option<Zeroizing<Vec<u8>>> = None;
                                 if p.gathering.is_none() {
-                                    let mut r = vec![0u8; crate::circle::CONTRIB_LEN];
-                                    if getrandom::fill(&mut r).is_ok() {
+                                    let mut r = Zeroizing::new(vec![0u8; crate::circle::CONTRIB_LEN]);
+                                    if getrandom::fill(&mut r[..]).is_ok() {
                                         mine_to_send = Some(r.clone());
                                         p.gathering = Some(Gathering {
                                             my_r: r,
@@ -1040,13 +1044,14 @@ async fn ear(
                                     g.contribs.insert(id, their);
                                     let need = lines; // 其余人各一份
                                     if fresh && g.key.is_none() && g.contribs.len() >= need {
-                                        let mut all: Vec<Vec<u8>> =
-                                            g.contribs.values().cloned().collect();
-                                        all.push(g.my_r.clone());
-                                        g.key = Some(crate::circle::derive_group_key(&all));
+                                        let mut all: Vec<&[u8]> =
+                                            g.contribs.values().map(|c| &c[..]).collect();
+                                        all.push(&g.my_r);
+                                        let members = all.len();
+                                        g.key = Some(Zeroizing::new(crate::circle::derive_group_key(&all)));
                                         p.events
                                             .send(Event::CircleFormed {
-                                                members: all.len(),
+                                                members,
                                             })
                                             .ok();
                                     }
@@ -1066,14 +1071,14 @@ async fn ear(
                                 let Some(g) = p.gathering.as_ref() else {
                                     continue;
                                 };
-                                let Some(k) = g.key else {
+                                let Some(k) = g.key.as_ref() else {
                                     continue;
                                 };
                                 let Some(r) = g.contribs.get(&id) else {
                                     continue;
                                 };
                                 crate::circle::open(
-                                    &crate::circle::derive_sender_subkey(&k, r),
+                                    &crate::circle::derive_sender_subkey(k, r),
                                     &plain[1..n],
                                 )
                             };
@@ -1130,7 +1135,7 @@ async fn ear(
                                         .send(Event::FileArrived {
                                             id,
                                             name,
-                                            data: Vec::new(),
+                                            data: Zeroizing::default(),
                                         })
                                         .ok();
                                 } else {
@@ -1139,7 +1144,7 @@ async fn ear(
                                         InboundFile {
                                             name,
                                             total,
-                                            buf: Vec::with_capacity(total as usize),
+                                            buf: Zeroizing::new(Vec::with_capacity(total as usize)),
                                             next_seq: 0,
                                         },
                                     );
@@ -1154,7 +1159,7 @@ async fn ear(
                                 let seq =
                                     u32::from_be_bytes(plain[1..5].try_into().expect("定长切４字节"));
                                 let chunk = plain[5..n].to_vec();
-                                let mut arrived: Option<(String, Vec<u8>)> = None;
+                                let mut arrived: Option<(String, Zeroizing<Vec<u8>>)> = None;
                                 {
                                     let mut p = inner.lock().await;
                                     if let Some(f) = p.inbound_files.get_mut(&id)
@@ -1242,7 +1247,7 @@ async fn send_typed(
     kind: u8,
     payload: &[u8],
 ) -> Result<(), PersonError> {
-    let mut plain = Vec::with_capacity(1 + payload.len());
+    let mut plain = Zeroizing::new(Vec::with_capacity(1 + payload.len()));
     plain.push(kind);
     plain.extend_from_slice(payload);
     send_frame(cipher, writer, &plain).await
@@ -1264,14 +1269,15 @@ async fn send_chat(
             "这一句太长，说不完",
         )));
     }
-    let mut plain = Vec::with_capacity(3 + text.len() + 255);
+    let mut plain = Zeroizing::new(Vec::with_capacity(3 + text.len() + 255));
     plain.push(frame_kind::PADDED_CHAT);
     plain.extend_from_slice(&(text.len() as u16).to_be_bytes());
     plain.extend_from_slice(text);
     // 随机垫：取不出随机数就发无垫（话照送，只是这一帧的形状不糊）
     let mut how_much = [0u8; 1];
     if getrandom::fill(&mut how_much).is_ok() && how_much[0] > 0 {
-        plain.resize(plain.len() + how_much[0] as usize, 0);
+        let new_len = plain.len() + how_much[0] as usize;
+        plain.resize(new_len, 0);
     }
     send_frame(cipher, writer, &plain).await
 }
@@ -1302,14 +1308,14 @@ async fn offer_next_secret(
     cipher: &Arc<Mutex<TransportState>>,
     writer: &Arc<Mutex<BoxedWriter>>,
 ) {
-    let mut x = [0u8; 32];
-    if getrandom::fill(&mut x).is_err() {
+    let mut x = Zeroizing::new([0u8; 32]);
+    if getrandom::fill(&mut x[..]).is_err() {
         return; // 造不出暗号就算了：链是便利，不是必需
     }
-    if send_typed(cipher, writer, frame_kind::OFFER, &x).await.is_err() {
+    if send_typed(cipher, writer, frame_kind::OFFER, &x[..]).await.is_err() {
         return; // 没送出去：作废
     }
-    inner.lock().await.pending_offers.insert(convo_id, x.to_vec());
+    inner.lock().await.pending_offers.insert(convo_id, Zeroizing::new(x.to_vec()));
 }
 
 /// 见面三件套：
@@ -1347,7 +1353,7 @@ async fn handshake_inner<S: AsyncRead + AsyncWrite + Unpin>(
 ) -> Result<TransportState, HandshakeFailure> {
     // 第 1 件：暗号。有则先对，得出点火钥匙；无则跳过。
     // 对暗号也限时：占着切口不说话的，等不得（超时不算查验，切口归还）。
-    let psk = match secret {
+    let psk: Option<Zeroizing<[u8; 32]>> = match secret {
         Some(secret) => {
             match tokio::time::timeout(MEET_TIMEOUT, pake(stream, as_initiator, secret)).await {
                 Err(_) => return Err(HandshakeFailure::early("对暗号太慢，不等了。")),
@@ -1368,7 +1374,7 @@ async fn handshake_inner<S: AsyncRead + AsyncWrite + Unpin>(
     let params: snow::params::NoiseParams = suite.parse().map_err(HandshakeFailure::early)?;
     let mut builder = Builder::new(params);
     if let Some(psk) = &psk {
-        builder = builder.psk(0, psk).map_err(HandshakeFailure::early)?;
+        builder = builder.psk(0, &*psk).map_err(HandshakeFailure::early)?;
     }
     let hs: HandshakeState = if as_initiator {
         builder
@@ -1433,11 +1439,13 @@ async fn noise_stage<S: AsyncRead + AsyncWrite + Unpin>(
 /// 暗号本身从不出现在线上。
 /// 半路断线的失败（early）不算查验过暗号：切口可原样归还；
 /// 遮罩都交换完、finish 跑过（对错都算）才算（checked）。
+/// 返回 Zeroizing：点火钥匙交给 Noise 后即焚（snow fork 侧的 psks
+/// 同样是 Zeroizing，整条链不留明文副本）。
 async fn pake<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     as_initiator: bool,
     secret: &[u8],
-) -> Result<[u8; 32], HandshakeFailure> {
+) -> Result<Zeroizing<[u8; 32]>, HandshakeFailure> {
     use spake2::{Ed25519Group, Identity, Password, Spake2};
 
     let password = Password::new(secret);
@@ -1468,11 +1476,15 @@ async fn pake<S: AsyncRead + AsyncWrite + Unpin>(
             .map_err(HandshakeFailure::early)?;
         m
     };
-    let key: Vec<u8> = state
-        .finish(&their_mask)
-        .map_err(|_| HandshakeFailure::checked("暗号对不上。"))?;
-    key.try_into()
-        .map_err(|_| HandshakeFailure::checked("暗号钥匙长度不对。"))
+    let key = Zeroizing::new(
+        state
+            .finish(&their_mask)
+            .map_err(|_| HandshakeFailure::checked("暗号对不上。"))?,
+    );
+    let ignition: [u8; 32] = key[..]
+        .try_into()
+        .map_err(|_| HandshakeFailure::checked("暗号钥匙长度不对。"))?;
+    Ok(Zeroizing::new(ignition))
 }
 
 #[cfg(test)]
