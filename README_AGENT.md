@@ -7,7 +7,8 @@
 #              NORMATIVE (constraints), not decoration. File body is pure YAML.
 #              STRUCTURAL INVARIANT: the whole file MUST parse as ONE valid
 #              YAML document.
-# SCOPE      : as-built facts describe HEAD (post-P2, pre-3.0.0). group_v3,
+# SCOPE      : as-built facts describe HEAD (v3 slice-1/2/3 landed 2026-10-15,
+#              pre-3.0.0-release: seat flow + SAS still pending). group_v3,
 #              sas, seat_flow and pending_work carry OWNER-SETTLED DESIGNS not
 #              yet written — every such block is status-tagged. NEVER document
 #              planned work as built; NEVER re-propose anything listed in
@@ -312,12 +313,12 @@ group_v2_as_built:
   test_status: "31 total: 25 integration (incl. 4 new v2: star topology, solo circle, voluntary-leave rekey, signature forgery rejection) + 5 unit + 1 pq — all green; FFI 12 symbols + contract + ctypes green"
 
 # ───────────────────────────────────────────────────────────────
-# GROUP v3 — 公理重建（settled design 2026-10-15, not yet implemented）
+# GROUP v3 — 公理重建（slice-1/2/3 已落地 2026-10-15；seat flow/SAS 见 pending_work.P3）
 # 这是 theory 块的实例化。一切机制可回溯公理；一切裁决见 theory.rulings。
 # ───────────────────────────────────────────────────────────────
 
 group_v3:
-  status: settled-design-not-implemented     # implement per pending_work.P3 (core) + P4 (removal face); P6 nesting after
+  status: partially-implemented              # slice-1/2/3 LANDED 2026-10-15 (roster/0x0F genesis/信念路由/署名 0x0C/见证人 RM/在场辩护/点名)；seat flow (0x10-0x12) + SAS (/word) + 判例矩阵 pending — implement per pending_work.P3 slice-4/5/6; P4 removal face next; P6 nesting after
   one_line: >-
     圈不是对象，是 N 个局部信念的对齐。协议的职责不是维持一致（那是同步机，
     违反 A2），而是制造四种感知：听见（AEAD）、嗓音（签名）、在场（直连）、
@@ -583,12 +584,12 @@ known_limitations:
 
 pending_work:
   P3_v3_axiom_rebuild:                       # 核心：理论落地。slice 顺序=依赖顺序
-    status: not-started
+    status: in-progress                     # slice-1/2/3 LANDED 2026-10-15（39 测试全绿）；slice-4/5/6 pending
     depends: []
     slices:
-      - "slice-1 名单即圈：roster 行结构（name‖r‖pk‖contrib_sig）+ 0x0F 创世（署名邀请名单+seats）+ 名字到齐完成 + 信念路由（ Kills P-02/P-03/P-05 主体）"
-      - "slice-2 告别与补话：署名 0x0C + 见证人 RM topup（无 epoch/无选举/无级联）+ 在场辩护（近期验签发言 vs RM 冲突→扣下+响亮）（Kills P-01/P-06 主体）"
-      - "slice-3 点名：/circle 重敲=新 circle_id 重聚（与创世同构复用）；mumble 响亮呈现；无自动建议（Kills P-06 修复路径）"
+      - "[x] slice-1 名单即圈：roster 行结构（name‖r‖pk‖contrib_sig）+ 0x0F 创世（署名邀请名单+seats）+ 名字到齐完成 + 信念路由（ Kills P-02/P-03/P-05 主体）"
+      - "[x] slice-2 告别与补话：署名 0x0C + 见证人 RM topup（无 epoch/无选举/无级联）+ 在场辩护（近期验签发言 vs RM 冲突→扣下+响亮）（Kills P-01/P-06 主体）"
+      - "[x] slice-3 点名：/circle 重敲=新 circle_id 重聚（与创世同构复用）；mumble 响亮呈现；无自动建议（Kills P-06 修复路径）"
       - "slice-4 入席流：0x10 看座（骨架无 r）/ 0x11 落座署名 / 0x0B ADD（自署行+引荐收据）/ 0x12 座次表（全表仅递成员）+ r 唯一性响亮检查 + 同名见证裁决（Kills P-04/P-05/P-07/P-09/P-12）"
       - "slice-5 对词：/word 1:1 会话短词 + 群短词（K 派生）；即时显示零落盘（Kills P-08 的可检测性）"
       - "slice-6 判例测试矩阵：attack_precedents 每条的 test 字段全部落为集成测试 + 交换代数断言（不相交变更序无关）+ 50 人规模 + 点名恢复全场景"
@@ -671,7 +672,7 @@ glossary:
 
 verify:
   build: "cargo build --release"
-  test: "cargo test --release — 31 tests at HEAD (25 integration + 5 unit + 1 pq), ~seconds"
+  test: "cargo test --release — 39 tests at HEAD (27 integration + 11 unit + 1 pq), ~seconds"
   ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so; verify: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 12)"
   ffi_contract_test: "gcc -O2 -Wall -I include ffi/ffi_test.c -o /tmp/ffi_test -L target/release -l:libe2ee.so -Wl,-rpath,$PWD/target/release && /tmp/ffi_test — expect 'FFI OK'; then python3 ffi/ctypes_test.py"
   static_build: "cargo build --release --target x86_64-unknown-linux-musl — static-pie ~1.3MB"

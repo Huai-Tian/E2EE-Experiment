@@ -1,6 +1,8 @@
 [package]
 name = "E2EE-Experiment"
-version = "1.0.1"
+# 3.0.0：v3 公理重建——0x09/0x0B/0x0C 布局断代（wire-breaking，无 2.0.0，
+# 见 README_AGENT removals_3_0_0.version_window）
+version = "3.0.0"
 edition = "2024"
 description = "一个像人一样的端到端加密对话实验：能听，能说，转身即忘"
 

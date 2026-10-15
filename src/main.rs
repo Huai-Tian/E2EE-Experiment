@@ -52,7 +52,8 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   /list                看看在场的人
   /card                打印自己的名片（名字 + 各网卡地址）
   /shout               同屋喊一圈，看看谁在（局域网发现）
-  /circle              围坐一圈：与当前在场的人凑话铸群钥匙（须先互连）
+  /circle              开台/围坐/点名：署名邀请名单=当前在场的人；名单上的
+                       名字自署到齐后铸群钥。在圈中重跑 = 点名重聚（修复路径）
   /gsay <话>           在圈内说一句（加密一次，人人同时收到）
   /bye                 和当前对话的人道别
   /quit 或 Ctrl-D      和所有人道别，离场
@@ -354,7 +355,10 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
             }
         }
         "circle" => match person.form_circle().await {
-            Ok(n) => eprintln!("凑话发出去了，{n} 人一圈（收齐自动开讲）。"),
+            Ok(n) => eprintln!(
+                "开台了：邀请名单 {n} 人（名单上的名字自署到齐后自动开讲）。\
+                 在圈中重跑 = 点名重聚（新圈号重新围坐）。"
+            ),
             Err(e) => eprintln!("{e}"),
         },
         "gsay" => {
@@ -446,13 +450,23 @@ fn render(ev: Event) {
             eprintln!("和 [{}] 的暗号链续上了：下一场免念。", safe(&with));
         }
         Event::CircleFormed { members } => {
-            eprintln!("圈子铸成了：{members} 人，屋里的话开讲（/gsay）。");
+            eprintln!("圈子铸成了：名单 {members} 人全部自署到场，屋里的话开讲（/gsay）。");
         }
         Event::CircleMumble { from } => {
-            eprintln!("[{}] 说了句圈里解不开的话（密钥不合？密文被动过？）——通常该重新 /circle。", safe(&from));
+            eprintln!(
+                "[{}] 转来一句圈里解不开的话（响亮分歧：你们的信念分岔了）——\
+                 修复路径永远是点名：重跑 /circle。",
+                safe(&from)
+            );
         }
         Event::CircleRekeyed { members, change } => {
             eprintln!("圈子换了新钥匙（{change}），现在 {members} 人在座。");
+        }
+        Event::CircleRejected { detail } => {
+            eprintln!("圈子响亮拒绝：{}", safe(&detail));
+        }
+        Event::CircleConflict { detail } => {
+            eprintln!("圈内有冲突（人类裁决）：{}", safe(&detail));
         }
         Event::FileArrived { name, data, .. } => {
             // 库永不落盘；CLI 是外层使用者，替人把东西放进 ./received/。

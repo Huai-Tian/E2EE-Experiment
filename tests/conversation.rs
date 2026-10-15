@@ -366,77 +366,6 @@ fn left(ev: &Event) -> Option<String> {
 }
 
 #[tokio::test]
-async fn 围坐一圈_三人成圈群聊() {
-    let (alice, mut alice_ev, _a2) = spawn_person("Alice").await;
-    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
-    let (_carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
-
-    // 全连接三条线：Alice 拨 Bob、Alice 拨 Carol、Bob 拨 Carol。
-    // 线是双向的，谁拨都算一条；每人手里两条，三人成网。
-    alice.dial(&bob_addr).await.expect("A-B");
-    alice.dial(&carol_addr).await.expect("A-C");
-    bob.dial(&carol_addr).await.expect("B-C");
-    // 每人见到两位
-    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
-        expect(ev, met).await;
-        expect(ev, met).await;
-    }
-
-    // 围坐：Alice 发起凑话（自传染，三人各自凑话、各自铸出同一把钥匙）
-    let members = alice.form_circle().await.expect("凑话");
-    assert_eq!(members, 3);
-    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
-        let n = expect(ev, |e| {
-            if let Event::CircleFormed { members } = e {
-                Some(*members)
-            } else {
-                None
-            }
-        })
-            .await;
-        assert_eq!(n, 3, "人人收齐三人贡献");
-    }
-
-    // 屋里的话：Alice 一句，Bob、Carol 同时听见
-    alice.circle_speak("今晚吃火锅").await.expect("群发");
-    let (from_b, text_b) = expect(&mut bob_ev, |ev| {
-        if let Event::Heard { name, text, .. } = ev {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    let (from_c, text_c) = expect(&mut carol_ev, |ev| {
-        if let Event::Heard { name, text, .. } = ev {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!((from_b.as_str(), text_b.as_str()), ("Alice", "今晚吃火锅"));
-    assert_eq!((from_c.as_str(), text_c.as_str()), ("Alice", "今晚吃火锅"));
-
-    // Bob 也说一句，Alice 听见（来线署名 = Bob）
-    bob.circle_speak("我带毛肚").await.expect("Bob 群发");
-    let (from_a, text_a) = expect(&mut alice_ev, |ev| {
-        if let Event::Heard { name, text, .. } = ev {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!((from_a.as_str(), text_a.as_str()), ("Bob", "我带毛肚"));
-
-    // 圈外人 Mallory 即使偷到密文也读不懂：他没参与凑话。
-    // （这里用「没围圈的人 circle_speak 直接失败」来验状态边界）
-    let (mallory, _m_ev, _m) = spawn_person("Mallory").await;
-    assert!(mallory.circle_speak("偷听").await.is_err());
-}
-
-#[tokio::test]
 async fn 介绍人_打洞直连密谈() {
     let teahouse = spawn_teahouse().await;
     // 给介绍人（UDP 那半边）一点开张时间
@@ -919,7 +848,7 @@ async fn 聊天带垫_长短行照常说听() {
     assert_eq!(got, "hui hua");
 }
 
-// ── v2 泛洪圈测试矩阵（P2）──────────────────────────────────
+// ── v3 名单即圈测试矩阵（P3 slice-1/2 + 判例库集成面）──────────
 
 /// 从事件里取 CircleRekeyed。
 fn rekeyed(ev: &Event) -> Option<(usize, String)> {
@@ -930,183 +859,244 @@ fn rekeyed(ev: &Event) -> Option<(usize, String)> {
     }
 }
 
+/// 从事件里取 CircleFormed 的人数。
+fn formed(ev: &Event) -> Option<usize> {
+    if let Event::CircleFormed { members } = ev {
+        Some(*members)
+    } else {
+        None
+    }
+}
+
+/// 从事件里取 Heard 的（说话人, 文本）。
+fn heard(ev: &Event) -> Option<(String, String)> {
+    if let Event::Heard { name, text, .. } = ev {
+        Some((name.clone(), text.clone()))
+    } else {
+        None
+    }
+}
+
+/// 三人全连接开台成圈。名单=[Alice,Bob,Carol]，返回三套人 + 事件流。
+async fn three_mesh() -> (
+    Person,
+    UnboundedReceiver<Event>,
+    Person,
+    UnboundedReceiver<Event>,
+    Person,
+    UnboundedReceiver<Event>,
+) {
+    let (alice, mut alice_ev, _a) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, b_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, c_addr) = spawn_person("Carol").await;
+    alice.dial(&b_addr).await.expect("A-B");
+    alice.dial(&c_addr).await.expect("A-C");
+    bob.dial(&c_addr).await.expect("B-C");
+    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
+        expect(ev, met).await;
+        expect(ev, met).await;
+    }
+    // Alice 开台：邀请名单 = [Alice, Bob, Carol]
+    let n = alice.form_circle().await.expect("开台");
+    assert_eq!(n, 3, "名单=发起者+两条线");
+    (alice, alice_ev, bob, bob_ev, carol, carol_ev)
+}
+
 #[tokio::test]
-async fn 泛洪圈_星型拓扑_连通即可成圈() {
-    // 星型：hub=Bob，Alice/Carol 只与 Bob 相连（无 A-C 直连）。
-    // v1 的全连接前提被废除——泛洪应让三人照常成圈、照常群聊。
+async fn 围坐一圈_三人成圈群聊() {
+    // 全连接：名单到齐 → 铸钥 → 群聊双向可达。
+    let (alice, mut alice_ev, bob, mut bob_ev, _carol, mut carol_ev) = three_mesh().await;
+
+    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
+        let m = expect(ev, formed).await;
+        assert_eq!(m, 3, "名单上的名字全部自署到场即铸钥");
+    }
+
+    // Alice 一句，Bob、Carol 同时听见（子钥解密 + 验签双闸）
+    alice.circle_speak("今晚吃火锅").await.expect("群发");
+    for ev in [&mut bob_ev, &mut carol_ev] {
+        let got = expect(ev, heard).await;
+        assert_eq!((got.0.as_str(), got.1.as_str()), ("Alice", "今晚吃火锅"));
+    }
+
+    // Bob 回话，Alice 听见
+    bob.circle_speak("我带毛肚").await.expect("Bob 群发");
+    let got = expect(&mut alice_ev, heard).await;
+    assert_eq!((got.0.as_str(), got.1.as_str()), ("Bob", "我带毛肚"));
+
+    // 圈外人 Mallory 没围圈：不能说（状态边界）
+    let (mallory, _m_ev, _m) = spawn_person("Mallory").await;
+    assert!(mallory.circle_speak("偷听").await.is_err());
+}
+
+#[tokio::test]
+async fn 名单圈_星型拓扑_成员导出子图连通() {
+    // 星型：hub=Bob，Alice/Carol 只与 Bob 相连。信念路由下
+    // 泛洪经 hub 转达——成员导出子图连通即可成圈。
     let (alice, mut alice_ev, _a2) = spawn_person("Alice").await;
     let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
     let (carol, mut carol_ev, _c2) = spawn_person("Carol").await;
 
     alice.dial(&bob_addr).await.expect("A-B");
     carol.dial(&bob_addr).await.expect("C-B");
-    // 注意：expect 会跳过 Knocked，等到真正的 Met
     expect(&mut alice_ev, met).await;
     expect(&mut bob_ev, met).await;
     expect(&mut bob_ev, met).await;
     expect(&mut carol_ev, met).await;
 
     let n = bob.form_circle().await.expect("枢纽发起");
-    assert_eq!(n, 3, "Bob 视角：自己 + 两条线");
+    assert_eq!(n, 3, "名单=[Bob,Alice,Carol]");
     for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
-        let m = expect(ev, |e| {
-            if let Event::CircleFormed { members } = e {
-                Some(*members)
-            } else {
-                None
-            }
-        })
-            .await;
-        assert_eq!(m, 3, "泛洪下人人收齐三人贡献");
+        let m = expect(ev, formed).await;
+        assert_eq!(m, 3, "泛洪下名单名字到齐即成");
     }
 
-    // 星型群聊：Alice 的话经 Bob 转达 Carol。
-    // 注意：星型下 Alice 的回声不存在——泛洪转发「来源线除外」，
-    // B 不会把 A 的话转回 A（全连接时 B/C 都会转回来才有回声）。
+    // 星型群聊：Alice 的话经 Bob 转达 Carol（信念路由转发）
     alice.circle_speak("xing xing quan").await.expect("说");
-    for (ev, from) in [(&mut bob_ev, "Alice"), (&mut carol_ev, "Alice")] {
-        let got = expect(ev, |e| {
-            if let Event::Heard { name, text, .. } = e {
-                Some((name.clone(), text.clone()))
-            } else {
-                None
-            }
-        })
-            .await;
-        assert_eq!(got.0, from);
+    for ev in [&mut bob_ev, &mut carol_ev] {
+        let got = expect(ev, heard).await;
+        assert_eq!(got.0, "Alice");
         assert_eq!(got.1, "xing xing quan");
     }
 }
 
 #[tokio::test]
-async fn 一人成圈_开台等人_补话入席() {
-    // Alice 一人成圈（开台）→ Bob 拨入 → ADD 补话入席 → 双人成钥群聊。
+async fn 一人成圈_开台等入席流() {
+    // 一人成圈默认开台（舞台）：立即成钥（K=HKDF([r])）。
+    // 新人经入席流（slice-4）落座——本版先钉「开台存在且不误吸收」。
     let (alice, mut alice_ev, _a2) = spawn_person("Alice").await;
     let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
 
-    // 一人成圈：无线可发，纯等（v1 会报 NoConvo——v2 放开）
     let n = alice.form_circle().await.expect("一人也能成圈");
-    assert_eq!(n, 1);
+    assert_eq!(n, 1, "一人圈=开台");
+    let m = expect(&mut alice_ev, formed).await;
+    assert_eq!(m, 1, "名单只有我，立即铸钥");
 
-    // Bob 拨入 Alice——但 v2 圈不会自动吸收新线（需要 ADD 补话）。
-    // 这里验证：拨号后 Alice 圈仍是 1 人，Bob 说话仍 NoCircle
-    //（补话入席的完整链路依赖引荐人帧，留给 CLI/后续迭代——本测
-    // 先钉住「一人圈存在且不误吸收」的边界）。
+    // Bob 拨入——v3 圈不自动吸收新线（入座必须走入席流）
     alice.dial(&bob_addr).await.expect("A-B");
     expect(&mut alice_ev, met).await;
     expect(&mut bob_ev, met).await;
-    assert!(bob.circle_speak("hai bu zai quan li").await.is_err());
+    assert!(bob.circle_speak("hai bu zai quan li").await.is_err(), "不在名单上不能说");
 }
 
 #[tokio::test]
-async fn 泛洪圈_自愿离场_补话换钥_旧钥失效() {
-    // 三人成圈 → Carol 自愿离场（/bye 路径）→ 最小贡献者补话换钥
-    // → Carol 的旧钥读不到新话（她已离线收不到；用「离场后幸存者
-    // 照常群聊」验证换钥没毁圈）。
+async fn 名单未到齐_不开讲_名单外不吸收() {
+    // P-03 的完成语义：凑话完成由名单说了算——名单外的人后到，
+    // 信念路由下进不来。名单内的人没到齐，永不铸钥。
     let (alice, mut alice_ev, _a2) = spawn_person("Alice").await;
-    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
-    let (_carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    let (_bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, _c) = spawn_person("Carol").await;
 
     alice.dial(&bob_addr).await.expect("A-B");
-    alice.dial(&carol_addr).await.expect("A-C");
-    bob.dial(&carol_addr).await.expect("B-C");
-    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
-        expect(ev, met).await;
-        expect(ev, met).await;
-    }
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    // 此时 Carol 尚未连入——名单=[Alice, Bob]
+    alice.form_circle().await.expect("开台");
+    // A/B 成圈（2 人名单到齐）
+    let ma = expect(&mut alice_ev, formed).await;
+    let mb = expect(&mut bob_ev, formed).await;
+    assert_eq!((ma, mb), (2, 2));
 
-    alice.form_circle().await.expect("凑话");
-    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
-        expect(ev, |e| {
-            if let Event::CircleFormed { members } = e {
-                Some(*members)
-            } else {
-                None
-            }
-        })
-            .await;
-    }
+    // Carol 事后拨入 Bob——她不在名单上：信念路由下零圈帧到达她
+    carol.dial(&bob_addr).await.expect("C-B");
+    expect(&mut bob_ev, met).await;
+    assert!(carol.circle_speak("wo ye yao").await.is_err(), "名单外不能说");
 
-    println!("DBG: carol leaving");
-    _carol.leave().await;
-    println!("DBG: carol left");
-
-    // Alice/Bob 应看到 CircleRekeyed（Carol 离席）+ Carol 的 Left×2
-    let mut saw_rekey = false;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    'collect: loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            break;
-        }
-        let mut got = None;
-        tokio::select! {
-            e = alice_ev.recv() => if let Some(e) = e { got = Some(e); },
-            e = bob_ev.recv() => if let Some(e) = e { got = Some(e); },
-            _ = tokio::time::sleep(left) => break 'collect,
-        }
-        if let Some(e) = got {
-            match e {
-                Event::CircleRekeyed { members, change } => {
-                    assert_eq!(members, 2, "离场后剩两人");
-                    assert!(change.contains("Carol"), "变更点名离场者");
-                    saw_rekey = true;
-                }
-                Event::Left { .. } => {}
-                _ => {}
-            }
+    // A 说话：B 听见；Carol 侧 2 秒内不得出现任何圈内事件
+    alice.circle_speak("ming dan de ren cai neng shuo").await.expect("说");
+    let got = expect(&mut bob_ev, heard).await;
+    assert_eq!(got.1, "ming dan de ren cai neng shuo");
+    let mut leaked = false;
+    let deadline = Instant::now() + Duration::from_millis(2000);
+    while let Ok(Some(ev)) =
+        timeout(deadline.saturating_duration_since(Instant::now()), carol_ev.recv()).await
+    {
+        if matches!(
+            ev,
+            Event::CircleFormed { .. } | Event::CircleMumble { .. } | Event::CircleRekeyed { .. }
+        ) {
+            leaked = true;
         }
     }
-    println!("DBG: saw_rekey={saw_rekey}");
-    assert!(saw_rekey, "离场必须触发补话换钥");
-
-    // 换钥后幸存者照常群聊
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    alice.circle_speak("ren ran neng shuo").await.expect("换钥后照常说");
-    let got = expect(&mut bob_ev, |e| {
-        if let Event::Heard { name, text, .. } = e {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!(got.0, "Alice");
-    assert_eq!(got.1, "ren ran neng shuo");
+    assert!(!leaked, "信念路由（P-02）：圈外线收到零圈帧");
 }
 
 #[tokio::test]
-async fn 泛洪圈_署名防冒充_坏签名拒收() {
-    // 圈外人无法冒充圈内人说话：没有凑话公钥就签不出能过双闸的帧。
-    // 用「未入圈者的 circle_speak 失败」钉住状态边界（签名层面的
-    // 伪造攻击在集成层不可构造——库内无注入接口，这是边界证明）。
-    let (alice, mut alice_ev, _a2) = spawn_person("Alice").await;
-    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+async fn 署名告别_双见证人收敛() {
+    // P-06 的活体版：全连接 A-B-C，Carol 署名告退——她的两条线的
+    // 对端（Alice、Bob）都是一跳直接接收者=见证人，各自发 RM
+    //（删同一人+各旋转各自的行，T2 不相交）→ 双向收敛。
+    let (alice, mut alice_ev, bob, mut bob_ev, carol, _carol_ev) = three_mesh().await;
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        expect(ev, formed).await;
+    }
+
+    // Carol 临走说一句（在场辩护的豁免场景：说完晚安就告别）
+    carol.circle_speak("wan an").await.expect("临别赠言");
+    expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
+    expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
+
+    // 署名告退：0x0C 泛洪出去，Alice/Bob 各自见证、各自补话
+    carol.leave().await;
+
+    // 每位幸存者应用两份 RM（自己的 + 对端见证人的）→ 两次换钥
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        let r1 = expect(ev, rekeyed).await;
+        assert_eq!(r1.0, 2, "Carol 离席后剩两人");
+        assert!(r1.1.contains("Carol"), "变更点名离场者：{}", r1.1);
+        let r2 = expect(ev, rekeyed).await;
+        assert_eq!(r2.0, 2, "第二份 RM 收敛后仍是两人：{}", r2.1);
+    }
+
+    // 收敛后双向群聊（两份 RM 应用顺序无关，终态同钥——交换代数）
+    alice.circle_speak("sheng cun zhe dui hua").await.expect("幸存者 A 说");
+    let got = expect(&mut bob_ev, heard).await;
+    assert_eq!(got.1, "sheng cun zhe dui hua");
+    bob.circle_speak("sheng cun zhe hui hua").await.expect("幸存者 B 说");
+    let got = expect(&mut alice_ev, heard).await;
+    assert_eq!(got.1, "sheng cun zhe hui hua");
+}
+
+#[tokio::test]
+async fn 点名_重跑circle_修复一切() {
+    // A4：点名=新圈号重新聚首，与创世同构——唯一的真理修复路径。
+    // 离场后的残局（僵尸、旧钥）用一次 /circle 全部抚平。
+    let (alice, mut alice_ev, _bob, mut bob_ev, carol, _carol_ev) = three_mesh().await;
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        expect(ev, formed).await;
+    }
+
+    // Carol 署名告退（残局：幸存者经历换钥窗口）
+    carol.leave().await;
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        expect(ev, rekeyed).await;
+        expect(ev, rekeyed).await;
+    }
+
+    // 点名：Alice 重跑 /circle——此时她的会话只剩 Bob
+    let n = alice.form_circle().await.expect("点名");
+    assert_eq!(n, 2, "点名名单=当前在座者 [Alice, Bob]");
+    let ma = expect(&mut alice_ev, formed).await;
+    let mb = expect(&mut bob_ev, formed).await;
+    assert_eq!((ma, mb), (2, 2), "新圈号重新聚首成功");
+
+    // 新圈照常群聊（社会连续、密码学新鲜）
+    alice.circle_speak("dian ming hou zhao chang shuo").await.expect("说");
+    let got = expect(&mut bob_ev, heard).await;
+    assert_eq!(got.1, "dian ming hou zhao chang shuo");
+}
+
+#[tokio::test]
+async fn 圈内署名_防冒充边界() {
+    // 圈外人无法冒充圈内人说话：没有名单行里的嗓音钥就签不出
+    // 能过双闸的帧（伪造层面的验证在单元测试；此处钉状态边界）。
+    let (_alice, mut alice_ev, bob, mut bob_ev, _carol, _carol_ev) = three_mesh().await;
+    expect(&mut alice_ev, formed).await;
+    expect(&mut bob_ev, formed).await;
     let (mallory, _m_ev, _m2) = spawn_person("Mallory").await;
 
-    alice.dial(&bob_addr).await.expect("A-B");
-    expect(&mut alice_ev, met).await;
-    expect(&mut bob_ev, met).await;
-
-    alice.form_circle().await.expect("凑话");
-    for ev in [&mut alice_ev, &mut bob_ev] {
-        expect(ev, |e| {
-            matches!(e, Event::CircleFormed { .. }).then_some(())
-        })
-            .await;
-    }
-
-    // Mallory 没围圈：不能说
     assert!(mallory.circle_speak("jia mao").await.is_err());
-    // 圈内照常
     bob.circle_speak("zhen de").await.expect("圈内能说");
-    let got = expect(&mut alice_ev, |e| {
-        if let Event::Heard { name, text, .. } = e {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
+    let got = expect(&mut alice_ev, heard).await;
     assert_eq!((got.0.as_str(), got.1.as_str()), ("Bob", "zhen de"));
 }
