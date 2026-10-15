@@ -111,6 +111,9 @@ theory:
     2026_10_15_no_voting: "表决该不该有？A2：无全序 → 表决不可实现 → 快照+收据。"
     2026_10_15_sync_layer_dies: "P2 的同步机（epoch/initiator 选举/validity 规则/级联定时器）整体违反 A2。不是换更好的，是不需要。"
     2026_10_15_no_backoff_for_pake: "PAKE 猜错要不要退避？不要——SPAKE2 结构上每猜一次必须到场答一次（离线爆破数学上不存在），错误敲门在 Event 流里是响的，听见敲错门由人类感知免费完成。加退避器=检测式编码，违反哲学。暗号长短是宾客自己的选择。"
+    2026_10_16_topup_signature_payload: "topup 签名的载荷 = 变更 + 发起者自己的新行（RM：witness_sig 签 circle_id‖RM‖离场者‖新行；ADD：introducer_sig 签 circle_id‖ADD‖新人行）。行的当前有效签名 = 最初的落座署名，或最近一次旋转她的 topup 签名。没有任何机制旋转别人的 r——RM 转见证人自己的，ADD 转引荐人自己的，增删和旋转永远同签名者（A1）。"
+    2026_10_16_presence_wallclock: "在场辩护的『近期』= 本地挂钟 30 秒窗口（帧无时间戳，counter 单调但无速率语义——水位不随沉默衰减，无法表达『最近还在说』）。到达时刻本地记账，不落盘、不进协议。判定输入 = 本地证据 ∪ 任何线到达的该成员近期已验签发言——泛洪天然把在场证明送上门，见证人可以不看她，挡不住别人的线把她的声音转过来（A2：证据的到达延迟由泛洪补偿）。已见其署名告别 → 视为一致照常应用。"
+    2026_10_16_sas_format: "SAS 短词 = 12 位数字分 4 组（123 456 789 012，约 40bit）。人类工程学：电话念 12 位分组数字是数十年验证过的仪式；安全性：与 ZRTP 20-30bit 相比更保守，且每次聚首新鲜、不累积不持久。1:1 从 Noise transcript 哈希派生，群从 HKDF(K, \"circle-sas\") 派生。"
 
   decision_procedure:                       # 编码模型遇到任何设计问题时的裁决流程
     step_1: "找公理依据：提案的每个机制，问它由哪条公理生成。答不出 → 默认拒绝。"
@@ -168,8 +171,9 @@ architecture:
     bye:   { syntax: "/bye", behavior: "offer next secret (chainable lines only), then circle_bye (0x0C) if in a circle, then empty-plaintext goodbye to focused conversation" }
     quit:  { syntax: "/quit | Ctrl-D", behavior: "circle_bye to all circles (chainable lines offer secrets), goodbye to all conversations, exit 0" }
   planned_commands_v3:
-    word: { syntax: "/word", behavior: "SAS 对词——1:1 聚焦时显示会话短词；在圈内时显示群短词（K 派生）。MITM 把聚首劈成两半 ⇒ 两半短词不同 ⇒ 人类对词即察觉。见 group_v3.sas" }
-    bring: { syntax: "/bring NAME (拟名)", behavior: "领人入座：向聚焦会话对端发 0x10 看座，走 seat_flow。名字如何确认属于人类信道——协议只认署名。" }
+    word: { syntax: "/word", behavior: "SAS 对词——1:1 聚焦时显示会话短词（transcript 派生）；在圈内时显示群短词（HKDF(K, circle-sas) 派生）。格式：12 位数字分 4 组（~40bit）。见 group_v3.sas" }
+    bring: { syntax: "/bring [拟名]", behavior: "领人入座：向聚焦会话对端（候选人）发 0x10 看座。带拟名 → 期望门（0x11 自署名不匹配则响亮暂停）；不带 → 无门直接自动。封桌时警告但照发（拒绝是全员契约行为，不是发起人自我审查）。见 group_v3.admission" }
+    sit: { syntax: "/sit [名字]", behavior: "落座：候选人收到看座事件后触发——0x11 落座署名必须是候选人本人的手势（A1）。默认取本人 0x05 自报名，可覆盖；多个邀约按 /talk 模式列候选。见 group_v3.admission" }
   sessions: multiple-concurrent-1to1
   focus_model: "typed lines go to the focused conversation; focus set by /dial or /talk; incoming conversations never steal focus"
   symmetry: peer-only                        # INVARIANT: no server/client split, no privileged node — extends to circles (ownerless)
@@ -251,7 +255,7 @@ wire_protocol:
     # ── circle frames, P2 as-built ──
     contrib_v2: "0x09 + circle_id(8B) ‖ size ‖ name ‖ r(32B) ‖ sig_pk(32B) — declared contribution. v3 ADDS contrib_sig(64B) over (circle_id‖name‖r‖sig_pk): the row becomes SELF-CERTIFIED (P-05 fix); without it the row is unsigned debt"
     circle_signed: "0x0A + circle_id(8B) ‖ sender_tag(4B) ‖ counter(8B) ‖ group-AEAD ‖ sig(64B) — signed circle speech, dual-gate (subkey decrypt + verify_strict)"
-    topup: "0x0B — P2 as-built: circle_id ‖ epoch(u32) ‖ change-spec ‖ fresh_r(32B) ‖ initiator_sig(64B). v3 RESTRUCTURES (see group_v3.topup): epoch DIES, initiator election DIES, witness signs for RM, introducer signs for ADD"
+    topup: "0x0B — P2 as-built: circle_id ‖ epoch(u32) ‖ change-spec ‖ fresh_r(32B) ‖ initiator_sig(64B). v3 RESTRUCTURES (see group_v3.rekey.topup): epoch DIES, initiator election DIES; RM = witness 新行(自签)+witness_sig, ADD = 新人行+引荐人新行(自签,P-13 旋转)+introducer_sig — 布局镜像对称，行结构三载体同构"
     circle_bye: "0x0C + circle_id(8B) ‖ name — P2 as-built is UNSIGNED (forgeable, P-01). v3 ADDS bye_sig(64B) over (circle_id‖name)"
     # ── v3 frame kinds (settled design, NOT implemented — see group_v3) ──
     genesis: "0x0F + circle_id(8B) ‖ seats(u8: 0=closed 封桌 / 1=open 开台) ‖ count(u8) ‖ invited names ‖ creator_sig(64B) — 开台公告：署名的邀请名单=发起者感知快照（事实陈述，非权力凭证）。凑话完成条件=名单上的名字全部自署到场（计数死，P-03 fix）。点名=新 circle_id 的重新 0x0F，社会连续、密码学新鲜"
@@ -321,6 +325,7 @@ group_v3:
 
   the_circle_object:                         # 名单（member table）是圈的唯一状态
     roster_row: "name ‖ r(32B) ‖ sig_pk(32B) ‖ contrib_sig(64B over circle_id‖name‖r‖sig_pk) — 每行自签（A1：身体的印），任何人伪造不了任何一行"
+    row_rotation_semantics: "r 旋转后原 contrib_sig 签的是旧值，行『失签』。行的当前有效签名 = 最初的落座署名（0x11），或最近一次旋转她的 topup 签名（RM 见证人行 / ADD 引荐人行——帧携带重签的整行）。行结构三载体同构：座次表 0x12、ADD 新人行、RM/ADD 发起者新行 = 同一解析器同一验证器"
     roster_is_belief: "每个成员的名单是她的局部信念（A2）——没有权威副本；名单即路由表即世界观"
     scaling_note: "~50 members ≈ 3.5KB/roster — negligible"
 
@@ -346,28 +351,33 @@ group_v3:
       social_continuity: "密码学上是新圈；社会上是同一张桌重新点名"
       trigger: "仅手动（再敲 /circle）。协议绝不自动建议点名——『建议』本身就是一个检测器，违反『协议不监视，人类做验证』（A2）。机器对已听见的失败（mumble）的响应仅限响亮呈现"
     topup:                                   # 补话（快速路径——人类也有捷径：有人离席，剩下的人不会重新自我介绍）
-      rm_layout: "0x0B + circle_id ‖ 'RM' ‖ leaver_name ‖ fresh_r(32B) ‖ witness_sig(64B)"
+      rm_layout: "0x0B + circle_id ‖ 'RM' ‖ leaver_name ‖ 见证人新行(自签: name‖r‖pk‖contrib_sig, ~100B) ‖ witness_sig(64B, 签 circle_id‖RM‖离场者‖新行)。见证人换 r 后原 contrib_sig 失签——『每行自签』是公理级不变量（座次表 0x12 递给新人时每行必须可验），故帧携带重签整行"
       rm_witness: "见证人=死线持有者（A2：离席只对死线持有者可观察），不再是 smallest-r 选举人——她自己供应 fresh_r 并署名。最小 r 占位攻击（P-06 前身）随选举机制整体死亡"
-      rm_presence_defense: "在场辩护：RM 点名者的近期已验签发言（counter 水位内）与 RM 矛盾 → 扣下 topup + 响亮冲突 + 人类裁决。『还在说话即不可被判离开』"
+      rm_presence_defense: "在场辩护：RM 点名者在 30 秒挂钟窗口内有已验签发言（判定输入 = 本地证据 ∪ 任何线到达的该成员近期已验签发言——泛洪天然补偿证据到达延迟）且与 RM 矛盾 → 扣下 topup + 响亮冲突 + 人类裁决。已见其署名告别 → 视为一致照常应用。『还在说话即不可被判离开』。窗口起点=帧到达时刻本地记账（不落盘、不进协议）；counter 水位语义废弃（不随沉默衰减，无法表达『最近还在说』）"
       rm_false_witness_honesty: "沉睡成员可被伪证 RM（见证人撒谎『我的线死了』）→ 临时驱逐，成员回来发言即 mumble → 点名回归。物理等价：你离席接电话时有人散布你走了——桌子重排，你回来发现桌变了。响亮、可恢复、入 known_limitations"
-      add_layout: "0x0B + circle_id ‖ 'ADD' ‖ newcomer_row(name‖r‖sig_pk‖contrib_sig) ‖ introducer_sig(64B)"
-      add_no_fresh_r: "ADD 不需要 fresh_r——没有离开者需要遗忘；新人自选的 r 就是新熵（K_new 含它），旧窃听者无从推导"
+      add_layout: "0x0B + circle_id ‖ 'ADD' ‖ 新人行(自签: name‖r‖pk‖contrib_sig) ‖ 引荐人新行(自签, 含旋转后 r) ‖ introducer_sig(64B, 签 circle_id‖ADD‖新人行)。布局与 RM 镜像对称"
+      add_fresh_r_p13: "引荐人旋转自己的 r（P-13 修复）：恶意载体存档密文 + 共谋候选人入座 → 若 ADD 不旋转任何 r，新人拿到 0x12 全表现行 r、排除自己即算出 K_old → 解密入座前历史。旋转后 K_old 缺引荐人的旧 r，无从推导。密钥边界=成员边界：RM 封未来于离开者，ADD 封过去于进入者（A3 两半合璧）。注：无共谋时旧窃听者论证仍成立（她拿不到任何现行 r）"
       add_semantics_ruling: "递话不代笔（settled 2026-10-15）：引荐人递的是新人自署的整行，伪造不了任何字段；她的签名只是引荐收据（问责：出问题时『谁带来的人』有答案）"
       exchange_algebra: "不相交变更序无关（T2：集合加减排代换天然可交换）；一切不可交换情形（同人二次变更、见证冲突、部分投递）必然退化为 mumble——响亮，交给点名。级联定时器、发起人选举、validity 规则：整体删除，不是换更好的，是不需要"
       pure_rekey: "无纯换钥 topup——密钥保鲜=点名（谁、何时、为什么换，是全桌的事，不是一个人的事）"
     transitional_window: "RM/ADD 应用不一致期间，滞后成员仍在旧钥下发言；刚拿到名单者可解滞后发言——物理等价：你走向桌子时有人正把话说完，你听见了尾巴。入档为已知边界，不修"
 
   admission:                                 # 入席（seat flow：0x10 → 0x11 → 0x0B ADD → 0x12）
+    commands: "引荐人 /bring [拟名]（向聚焦对端发 0x10——聚焦对端即候选人）；候选人 /sit [名字]（落座，A1：落座署名是身体的行为，必须本人触发）。动词有向，各签各的：/bring 的签名落在 ADD 引荐收据上，/sit 的签名落在 0x11 自署行上。候选人主动想入座（拉模式）不需要新命令——1:1 里说『带我去那个圈』是社会信道手势，协议手势仍是引荐人的 /bring"
+    sit_name: "/sit 默认取候选人在这条线上已自报的 0x05 本人名（A1：你的名字是你已经说过的话）；可覆盖（『这桌叫我阿花』是她自己的嗓音）。多个待接看座邀约 → 按 /talk 歧义处理模式列候选"
+    expectation_gate: "/bring 带拟名时：0x11 回执的自署名与拟名匹配 → 自动完成（引荐人的手势已用 /bring 做完，剩下是机械收尾：泛洪 ADD + 递 0x12）；不匹配 → 响亮暂停，引荐人确认或中止——最可能的失败是候选人聚焦错了会话，自动放行=把陌生人签进圈（收据是她的签名，签名前她必须看见自己签的是什么）。物理等价：你说带 Alice 来，坐下的人自称 Bob——『我不是带你』。/bring 不带拟名 = 无门直接自动（她聚焦了这条线，她的直连感知就是她的验证，A2 允许）"
+    closed_circle_bring: "封桌时 /bring 客户端警告但照发——封桌的拒绝是全员本地响亮拒收（集体契约行为），不是发起人的自我审查；圈里看见这次尝试本身就是正确的信号。不引入表决"
     step_1_offer: "引荐人向候选人（1:1）发 0x10 看座：席位骨架（名字+pk，绝无 r——拒入者拿 r 即可算 K，P-09）"
     step_2_accept: "候选人自选 r（128bit+，碰撞可忽略）、生成嗓音钥、自签整行（0x11 落座署名）递回"
-    step_3_add: "引荐人泛洪 0x0B ADD（新人自署行 + 引荐收据）。封闭桌：本地拒收 + 响亮（席位契约，不是表决）；开放台：任何成员的 ADD 有效（引荐即背书）"
-    step_4_roster: "ADD 应用后，引荐人向新人（1:1）递 0x12 座次表（全表含 r）——新人由此计算群钥。座次表只递成员"
+    step_3_add: "引荐人泛洪 0x0B ADD（新人自署行 + 引荐人旋转后新行 + 引荐收据——布局见 rekey.topup.add_layout，P-13 旋转）。封闭桌：本地拒收 + 响亮（席位契约，不是表决）；开放台：任何成员的 ADD 有效（引荐即背书）"
+    step_4_roster: "ADD 应用后，引荐人向新人（1:1）递 0x12 座次表（全表含 r，每行可验——行旋转语义见 the_circle_object.row_rotation_semantics）——新人由此计算群钥。座次表只递成员"
     r_collision: "收端唯一性检查：r 与现有任何成员碰撞 → 响亮拒绝（P-12：r 碰撞若静默去重=无声驱逐；自选 r 下碰撞概率≈0，恶意碰撞被响亮拦截）"
     name_conflict: "同名到达 → 不再 first-seen-wins（那是抢注，A1+A2 违反）：先到暂定、直接对端的见证帧裁决、冲突响亮。见 theory.rulings"
     knows_vs_receipt: "知道了就是同意——签名是这张同意的收据。引荐发生在人类信道（你怎么知道这个圈的，是你的事）；入座发生在协议信道（谁签你进来的，是全桌的事）。系统遗忘、人类记忆——这次的记忆是问责线索，rekey 后连收据都忘掉"
 
-  sas:                                       # 对词（settled 2026-10-15：群 SAS + 1:1 SAS）
+  sas:                                       # 对词（settled 2026-10-15：群 SAS + 1:1 SAS；格式裁决 2026-10-16）
     what: "/word——1:1 聚焦时显示会话短词（Noise transcript hash 派生，双方各看各的屏幕）；在圈内时显示群短词（HKDF(K, \"circle-sas\") 派生）"
+    format: "12 位数字分 4 组（123 456 789 012，约 40bit）——电话念 12 位分组数字是数十年验证过的仪式（人类工程学）；与 ZRTP 20-30bit 相比更保守（安全性），且每次聚首新鲜、不累积不持久"
     why: "SAS 不是检测，是口头核对的密码学蒸馏（不对称表第 2 行）。MITM 把聚首劈成两半 ⇒ 两个 K ⇒ 两半短词不同 ⇒ 想核对的人对一遍词即察觉。无身份层、零持久化、可选仪式——完全活在 telephone model 里"
     theorem_prerequisite: "T5：无 SAS 则『抗窃听者机密性』无法陈述（MITM 拼两条线自投贡献直接入圈持钥）。SAS 存在，定理才有前提"
     no_persistence: "短词即时显示、永不落盘；不对账也没关系——它和暗号一样，是给愿意谨慎的人的工具"
@@ -440,6 +450,11 @@ settled_decisions:
     sas_both_levels: "2026-10-15：群 SAS（/word 群短词）+ 1:1 SAS（会话短词）——T5 定理前提；无身份、零持久化、可选仪式"
     seats_default: "2026-10-15：多人圈默认封桌；一人圈默认开台（舞台）；/circle 可覆盖"
     add_relay_not_ghostwrite: "2026-10-15：递话不代笔——ADD 携带新人自选 r 的自署行；pk 由新人自己签；引荐收据=问责线"
+    add_rotates_introducer_r: "2026-10-16（P-13 修正）：ADD 携带引荐人 fresh_r 旋转她自己的行——原『ADD 不需要 fresh_r』只论证了圈外窃听者，共谋入座者可回读历史；修正后密钥边界=成员边界（RM 封未来于离开者，ADD 封过去于进入者）。经 attack_precedents 机制裁决，非重提案"
+    topup_carries_resigned_row: "2026-10-16：RM/ADD 帧携带发起者重签的整行（~100B）——r 旋转后行失签，『每行自签』是公理级不变量（0x12 每行必须可验）；行结构三载体同构（座次表/ADD 新人行/topup 发起者行）"
+    seat_commands_directed_verbs: "2026-10-16：命令面 = /bring [拟名]（引荐人，期望门：0x11 自署名不匹配则响亮暂停）+ /sit [名字]（候选人，A1：落座署名必须本人触发；默认本人 0x05 名，可覆盖）。动词有向，各签各的——同一动词给两个角色用会把问责线搅浑"
+    presence_defense_wallclock: "2026-10-16：在场辩护『近期』= 本地挂钟 30 秒窗口（counter 水位语义废弃——不随沉默衰减，无法表达『最近还在说』）；判定输入 = 本地证据 ∪ 任何线到达的该成员近期已验签发言（泛洪补偿证据到达延迟）；已见署名告别 → 照常应用"
+    sas_word_format: "2026-10-16：SAS = 12 位数字分 4 组（~40bit）；1:1 transcript 派生、群 HKDF(K, circle-sas) 派生"
     knows_means_receipt: "『知道了就是同意——签名是这张同意的收据』：引荐在人类信道，入座在协议信道，rekey 后收据也遗忘"
     relay_circle: "flood circles are THE answer to >8 groups — connected-is-enough; the key schedule is kept unchanged"
     leave_rekeys: "departures MUST rekey — witness topup, not full re-gathering"
@@ -489,7 +504,7 @@ attack_precedents:
   P_04_introducer_ghostwrite:
     attack: "ADD 携带引荐人提供的 pk → 引荐人从此可冒充被引入者发言，直到 re-gather，被冒充者无自证手段"
     root_cause: "A1 违反——代笔；归因键由他人选"
-    fix: "递话不代笔：ADD 携带新人自署行（P3 slice-4）"
+    fix: "递话不代笔：ADD 携带新人自署行 + 引荐人旋转后新行（布局见 group_v3.rekey.topup.add_layout；P3 slice-4）"
     test: "引荐人伪造 (name, r, pk) 行 → contrib_sig 验证失败响亮"
   P_05_name_squatting:
     attack: "真 Alice 贡献到达前，攻击者注入 (name=Alice, pk=攻击者) → first-seen-wins → 攻击者署名的话被全圈当 Alice 的"
@@ -531,6 +546,11 @@ attack_precedents:
     root_cause: "A1——他人代选身份材料"
     fix: "r 永远自选 + 收端唯一性响亮检查（P3 slice-4）"
     test: "构造 r 碰撞的 ADD → 响亮拒绝，不静默"
+  P_13_newcomer_reads_history:
+    attack: "恶意茶馆存档全部密文（转发路径上天然可见）→ 共谋候选人受邀入座 → 0x12 座次表递给新人全体成员现行 r → 她排除自己的 r 即算出 K_old → 解密入座前全部历史。原『ADD 不需要 fresh_r』裁决只论证了圈外窃听者，漏了入座者本人"
+    root_cause: "密钥边界未对齐成员边界——RM 侧旋转了（见证人 fresh_r），ADD 侧不旋转 → 新旧 K 共享除新人外全部输入"
+    fix: "ADD 携带引荐人 fresh_r（旋转她自己的行）：新人拿到的表里引荐人 r 已旋转，K_old 缺一块无从推导。密钥边界=成员边界：RM 封未来于离开者，ADD 封过去于进入者（A3 两半合璧）——发现于 seat flow 命令面过堂（2026-10-16），走 attack_precedents 机制，非 settled 重提案"
+    test: "共谋场景：载体存档 + 新人入座 → 新人持 0x12 全表 + 存档密文无法解密入座前帧；同引荐人并发双 ADD → 后入座者对新话 mumble → 点名恢复（T2 相交变更落入 T1）"
 
 # ───────────────────────────────────────────────────────────────
 # KNOWN LIMITATIONS — honest edges; do NOT paper over in docs
@@ -543,7 +563,7 @@ known_limitations:
     carrier_metadata: "载体可见元数据（circle_id/流量/拓扑）——桌子的物理，茶馆继承"
     no_sas_no_theorem: "无 SAS 仪式则机密性定理无法陈述（T5）——对词是给愿意谨慎的人的工具，不对账是用户的自由"
   sleeping_member_false_rm: "沉睡成员可被伪证 RM 临时驱逐；回来发言即 mumble → 点名回归；入档不修（群钥固有+物理等价已论证）"
-  transitional_window: "RM/ADD 应用不一致期间滞后发言可被刚拿到名单者解密——走向桌子时听见话尾，物理等价，入档"
+  transitional_window: "RM/ADD 应用不一致期间滞后发言可被刚拿到名单者解密——走向桌子时听见话尾，物理等价，入档。注意边界：这是『应用期间』的秒级窗口；入座前的历史对新人不可读（P-13 旋转修复后成立——ADD 后引荐人 r 已旋转，K_old 无从推导），两者不可混淆"
   no_liveness_probes: "established conversations have no keepalive — a vanished peer hangs the line until /quit; under v3 a zombie member's contribution stays in the key until witness topup / roll call"
   seized_device_reads_on: "a seized in-circle device reads until its lines die + topup lands; old plaintext remains readable to old key holders (history, not a leak); the coercion answer is inherent: close the program"
   pcs_gap: "PCS（后妥协安全）缺口：被缴设备读过的不追索（A3：物理世界不存在『让他忘掉已听见的』）；MLS 有 PCS 我们没有——无持久化+无身份的价格，正面声明"
@@ -623,6 +643,8 @@ glossary:
   开台:      "genesis (0x0F) — 署名邀请名单 + 席位标志；名单=发起者感知快照（事实陈述，非权力凭证）"
   看座:      "seat offer (0x10) — 引荐人把席位骨架（无 r！）递给候选人"
   落座署名:  "seat accept (0x11) — 候选人自选 r、自签整行递回"
+  领座:      "/bring [拟名] — 引荐人的手势；带拟名则开期望门（0x11 自署名不匹配 → 响亮暂停）"
+  落座:      "/sit [名字] — 候选人的手势；A1：落座署名必须本人触发；默认本人 0x05 名，可覆盖"
   座次表:    "seat roster (0x12) — 全表（含 r）仅递已成成员"
   引荐收据:  "introducer signature on ADD — 问责线：出问题时『谁带来的人』有答案；rekey 后遗忘"
   封桌:      "closed seats — 多人圈默认；ADD 本地拒收（响亮）；换血=点名"
@@ -661,7 +683,10 @@ verify:
     - "P-07: full seat flow — newcomer decrypts + verifies after 0x10→0x11→ADD→0x12"
     - "P-08: MITM-spliced gathering yields DIFFERENT sas words on the two halves (deterministic)"
     - "P-09: declining candidate (holds skeleton + all sniffed frames) cannot derive K"
-    - "presence-defense: RM against a member with recent verified speech → topup withheld + loud conflict"
+    - "P-13: colluding carrier + newcomer seat → newcomer cannot decrypt pre-arrival frames despite holding full roster + archived ciphertext"
+    - "presence-defense: RM against a member with verified speech within 30s wallclock (incl. evidence arriving via OTHER lines' flood) → topup withheld + loud conflict"
+    - "presence-defense: RM against a member whose signed bye was seen → applied without conflict"
+    - "concurrent ADDs by same introducer (two newcomers) → later-arriving one mumbles on new speech → roll call recovers (T2 intersecting change falls into T1)"
     - "solo circle forms (open stage); joiner arrives via seat flow; closed circle rejects ADD loud"
     - "50-member flood circle gathers, speaks, and roll-calls within patience budget"
   agent_preflight: "read theory (axioms + decision_procedure) FULLY, then group_v3, then settled_decisions + attack_precedents BEFORE proposing any design change — most ideas you will have were already settled or rejected here; if an idea survives step_1-5, bring it to the owner with its axiom derivation"
