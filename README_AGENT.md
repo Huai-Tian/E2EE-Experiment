@@ -269,7 +269,7 @@ wire_protocol:
     join: "'JOIN <room>' — first frame from each arrival; rooms guest-chosen; same-number collisions = cross-wired pairs"
     paired: "'PAIRED R' to the first arrival, 'PAIRED I' to the second — roles for the noise handshake"
   introducer_and_punch:
-    introducer: "courier::serve_introducer — udp side of the teahouse port; INTRO1 tag / INTRO2 R|I peer; one-shot tags, ttl 90s, MAX_WAITING_TAGS 1024. P7: tag entropy MUST be 128-bit random (structural unguessability, replaces any backoff idea)"
+    introducer: "courier::serve_introducer — udp side of the teahouse port; INTRO1 tag / INTRO2 R|I peer; one-shot tags, ttl 90s, MAX_WAITING_TAGS 1024. P7 tag 三层规则：/punch 省略 TAG → 自动生成 128bit 随机标签并上屏供带外转告（建议 Crockford base32 分组，去混淆字符）；显式给出短标签 → 响亮警告但照用（降级自由，与暗号长短同理）；警告文案必须写明补偿关系（『短标签可被猜测劫持会合；若本次配对带暗号，则由暗号兜底』——tag 猜测只需介绍人在线、无需受害者在场，与 PAKE 的在场爆破模型不同构，不能靠在场感知兜底）。tag 防的是『无网络位置的廉价会合劫持』；带暗号时后果被 PAKE 层补偿，不带暗号时攻击者通过网络位置 MITM 本可达同样效果"
     punch: "register w/ retry (3s), connect to peer's public endpoint, exchange PUNCH frames (~150ms apart, 8s window); INTRO2 accepted ONLY from the introducer's own address"
     transport: "UdpPunch: one frame per datagram, punch-echo discarded, max frame 65507B; no liveness detection — a vanished peer hangs the line until /quit"
     fallback: "on punch failure the USER re-routes via /meet manually — no automatic fallback"
@@ -352,7 +352,9 @@ group_v3:
       trigger: "仅手动（再敲 /circle）。协议绝不自动建议点名——『建议』本身就是一个检测器，违反『协议不监视，人类做验证』（A2）。机器对已听见的失败（mumble）的响应仅限响亮呈现"
     topup:                                   # 补话（快速路径——人类也有捷径：有人离席，剩下的人不会重新自我介绍）
       rm_layout: "0x0B + circle_id ‖ 'RM' ‖ leaver_name ‖ 见证人新行(自签: name‖r‖pk‖contrib_sig, ~100B) ‖ witness_sig(64B, 签 circle_id‖RM‖离场者‖新行)。见证人换 r 后原 contrib_sig 失签——『每行自签』是公理级不变量（座次表 0x12 递给新人时每行必须可验），故帧携带重签整行"
-      rm_witness: "见证人=死线持有者（A2：离席只对死线持有者可观察），不再是 smallest-r 选举人——她自己供应 fresh_r 并署名。最小 r 占位攻击（P-06 前身）随选举机制整体死亡"
+      rm_witness: "见证人=离开的直接感知者（A2：离席只对直接信道可观察）——两条路径统一：crash 路径=死线持有者（直接感知线死）；自愿告退路径=署名 0x0C 的直接接收者（线的对端名字==告退者名，一跳，非转发；转发收到者只应用不发起——感知必须是一跳的，与 direct-lock 同构）。不再是 smallest-r 选举人——她自己供应 fresh_r 并署名。最小 r 占位攻击（P-06 前身）随选举机制整体死亡。自洽性：信念路由保证 0x0C 只走名单线 ⇒ 直接接收者必然是成员，不存在无人可发 RM 的死局；帧丢失 → 僵尸成员留在旧钥（no_liveness_probes 既有语义），直到谁的线死走 crash 路径"
+      rm_multiplicity: "多直连对端各自发 RM 是不相交变更（删同一人 + 各旋转各行，T2 可交换，先₁后₂=先₂后₁）。幂等应用语义（多见证人收敛的必要规约）：RM 应用 = 条件删除（告退者在则删，不在则跳过——不能因已删而整帧丢弃，否则后到见证人的行旋转丢失、K 收敛失败）+ 无条件行替换（见证人签名验证通过则替换她的行）。中间态（只收到一个 RM 的人）短暂 mumble——响亮、自愈"
+      rm_voluntary_vs_presence: "告别前发言与 presence_defense 的交互由既有例外覆盖：『已见其署名告别 → 视为一致照常应用』——Alice 说完『晚安』立刻 /bye，其 30 秒窗口内发言不阻止 RM 应用（该例外条款为两条路径共用）"
       rm_presence_defense: "在场辩护：RM 点名者在 30 秒挂钟窗口内有已验签发言（判定输入 = 本地证据 ∪ 任何线到达的该成员近期已验签发言——泛洪天然补偿证据到达延迟）且与 RM 矛盾 → 扣下 topup + 响亮冲突 + 人类裁决。已见其署名告别 → 视为一致照常应用。『还在说话即不可被判离开』。窗口起点=帧到达时刻本地记账（不落盘、不进协议）；counter 水位语义废弃（不随沉默衰减，无法表达『最近还在说』）"
       rm_false_witness_honesty: "沉睡成员可被伪证 RM（见证人撒谎『我的线死了』）→ 临时驱逐，成员回来发言即 mumble → 点名回归。物理等价：你离席接电话时有人散布你走了——桌子重排，你回来发现桌变了。响亮、可恢复、入 known_limitations"
       add_layout: "0x0B + circle_id ‖ 'ADD' ‖ 新人行(自签: name‖r‖pk‖contrib_sig) ‖ 引荐人新行(自签, 含旋转后 r) ‖ introducer_sig(64B, 签 circle_id‖ADD‖新人行)。布局与 RM 镜像对称"
@@ -365,7 +367,7 @@ group_v3:
   admission:                                 # 入席（seat flow：0x10 → 0x11 → 0x0B ADD → 0x12）
     commands: "引荐人 /bring [拟名]（向聚焦对端发 0x10——聚焦对端即候选人）；候选人 /sit [名字]（落座，A1：落座署名是身体的行为，必须本人触发）。动词有向，各签各的：/bring 的签名落在 ADD 引荐收据上，/sit 的签名落在 0x11 自署行上。候选人主动想入座（拉模式）不需要新命令——1:1 里说『带我去那个圈』是社会信道手势，协议手势仍是引荐人的 /bring"
     sit_name: "/sit 默认取候选人在这条线上已自报的 0x05 本人名（A1：你的名字是你已经说过的话）；可覆盖（『这桌叫我阿花』是她自己的嗓音）。多个待接看座邀约 → 按 /talk 歧义处理模式列候选"
-    expectation_gate: "/bring 带拟名时：0x11 回执的自署名与拟名匹配 → 自动完成（引荐人的手势已用 /bring 做完，剩下是机械收尾：泛洪 ADD + 递 0x12）；不匹配 → 响亮暂停，引荐人确认或中止——最可能的失败是候选人聚焦错了会话，自动放行=把陌生人签进圈（收据是她的签名，签名前她必须看见自己签的是什么）。物理等价：你说带 Alice 来，坐下的人自称 Bob——『我不是带你』。/bring 不带拟名 = 无门直接自动（她聚焦了这条线，她的直连感知就是她的验证，A2 允许）"
+    expectation_gate: "/bring 带拟名时：0x11 回执的自署名与拟名匹配 → 自动完成（引荐人的手势已用 /bring 做完，剩下是机械收尾：泛洪 ADD + 递 0x12）；不匹配 → CircleConflict 响亮事件 + 回执丢弃（不缓存不悬挂——每次手势的协议效果完整）+ 候选人待座状态保留。引荐人想放行就重跑 /bring（改拟名或不带拟名），候选人再 /sit 应新 0x10——不新增命令、不新增状态、动词有向不破。物理等价：你说带 Alice 来，坐下的人自称 Bob——你收回名片，重新说一次『我带 Bob』。/bring 不带拟名 = 无门直接自动（她聚焦了这条线，她的直连感知就是她的验证，A2 允许）"
     closed_circle_bring: "封桌时 /bring 客户端警告但照发——封桌的拒绝是全员本地响亮拒收（集体契约行为），不是发起人的自我审查；圈里看见这次尝试本身就是正确的信号。不引入表决"
     step_1_offer: "引荐人向候选人（1:1）发 0x10 看座：席位骨架（名字+pk，绝无 r——拒入者拿 r 即可算 K，P-09）"
     step_2_accept: "候选人自选 r（128bit+，碰撞可忽略）、生成嗓音钥、自签整行（0x11 落座署名）递回"
@@ -455,6 +457,9 @@ settled_decisions:
     seat_commands_directed_verbs: "2026-10-16：命令面 = /bring [拟名]（引荐人，期望门：0x11 自署名不匹配则响亮暂停）+ /sit [名字]（候选人，A1：落座署名必须本人触发；默认本人 0x05 名，可覆盖）。动词有向，各签各的——同一动词给两个角色用会把问责线搅浑"
     presence_defense_wallclock: "2026-10-16：在场辩护『近期』= 本地挂钟 30 秒窗口（counter 水位语义废弃——不随沉默衰减，无法表达『最近还在说』）；判定输入 = 本地证据 ∪ 任何线到达的该成员近期已验签发言（泛洪补偿证据到达延迟）；已见署名告别 → 照常应用"
     sas_word_format: "2026-10-16：SAS = 12 位数字分 4 组（~40bit）；1:1 transcript 派生、群 HKDF(K, circle-sas) 派生"
+    rm_witness_unified: "2026-10-16：见证人=离开的直接感知者，两条路径统一——crash=死线持有者，自愿告退=署名 0x0C 的直接接收者（一跳，非转发；转发者只应用不发起）；多直连对端各自发 RM（T2 不相交，幂等应用=条件删除+无条件行替换）；其余成员只应用不发起"
+    expectation_gate_discard: "2026-10-16：0x11 回执与拟名不匹配 → CircleConflict + 回执丢弃 + 待座状态保留；放行=重跑 /bring + 再 /sit——不新增命令、不缓存不悬挂（每次手势协议效果完整）"
+    punch_tag_tiered: "2026-10-16：tag 三层——省略→自动 128bit 上屏转告（Crockford base32）；显式短标签→响亮警告照用（降级自由）；警告写明 PAKE 补偿关系。与暗号自由的同构有一处修正：tag 猜测无需受害者在场（向介绍人枚举注册即可），与 PAKE 在场爆破模型不同构——故默认值必须强，降级必须知情"
     knows_means_receipt: "『知道了就是同意——签名是这张同意的收据』：引荐在人类信道，入座在协议信道，rekey 后收据也遗忘"
     relay_circle: "flood circles are THE answer to >8 groups — connected-is-enough; the key schedule is kept unchanged"
     leave_rekeys: "departures MUST rekey — witness topup, not full re-gathering"
@@ -603,7 +608,7 @@ pending_work:
     status: not-started
     depends: []
     parallelizable: true
-    scope: "PR_SET_DUMPABLE(0)（P-10，结构解）；punch tag 128-bit 熵（结构性不可猜）；padded_chat 分桶填充（P-11）；counter 去重=最高水位+有界乱序窗口（规约定死）"
+    scope: "PR_SET_DUMPABLE(0)（P-10，结构解）；punch tag 三层规则（省略 TAG→自动 128bit 上屏转告（Crockford base32 分组）；显式短标签→响亮警告照用，文案写明 PAKE 补偿关系）；padded_chat 分桶填充（P-11）；counter 去重=最高水位+有界乱序窗口（规约定死）"
 
   research_track:                            # 非代码轨——论文工作，不阻塞任何 P 项；细节另档
     note: "T1-T5 Tamarin 形式化（P3 落地后建模）；取证测量论文（Signal/Telegram/Briar/本系统 本地残留对比）；trilemma 以猜想形态入论文一。README 不承载研究细节。"
@@ -684,6 +689,10 @@ verify:
     - "P-08: MITM-spliced gathering yields DIFFERENT sas words on the two halves (deterministic)"
     - "P-09: declining candidate (holds skeleton + all sniffed frames) cannot derive K"
     - "P-13: colluding carrier + newcomer seat → newcomer cannot decrypt pre-arrival frames despite holding full roster + archived ciphertext"
+    - "voluntary-bye multi-witness: leaver with TWO direct links → both direct receivers issue RM, both applied in either order converge to same roster+key (idempotent semantics: conditional delete + unconditional row swap)"
+    - "voluntary-bye: forwarded-0x0C receivers NEVER issue RM (application only); direct receiver does"
+    - "expectation-gate: 0x11 self-name mismatches /bring 拟名 → CircleConflict event + receipt discarded + pending-seat preserved; retry flow (/bring again + /sit again) completes"
+    - "punch tag: omitted TAG → 128-bit auto-generated + displayed; explicit short tag → warning shown, punch proceeds"
     - "presence-defense: RM against a member with verified speech within 30s wallclock (incl. evidence arriving via OTHER lines' flood) → topup withheld + loud conflict"
     - "presence-defense: RM against a member whose signed bye was seen → applied without conflict"
     - "concurrent ADDs by same introducer (two newcomers) → later-arriving one mumbles on new speech → roll call recovers (T2 intersecting change falls into T1)"
