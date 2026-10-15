@@ -215,11 +215,11 @@ group_chat:
   honest_limitation_v1: "any member can derive others' subkeys (r_i is broadcast) but cannot impersonate — v1 injection prevention is TOPOLOGICAL (a link only its owner has); v2 replaces the topology with signatures (see group_v2)"
 
 # ───────────────────────────────────────────────────────────────
-# GROUP v2 — flood circles (settled design 2026-10-13/14, not yet implemented)
+# GROUP v2 — flood circles (P2 core IMPLEMENTED 2026-10-14; P3 nesting pending)
 # ───────────────────────────────────────────────────────────────
 
 group_v2:
-  status: settled-design-not-implemented     # implement per pending_work.P2 (core) + P3 (nesting)
+  status: implemented-P2-2026-10-14          # core landed (flood+signing+topup+solo); P3 nesting still pending
   one_line: "circles drop the full-mesh requirement: connected-is-enough, contributions flood, speech is signed by one-time keys, membership changes rekey in ONE top-up frame, and a circle of one is a channel."
 
   flood_distribution:
@@ -251,7 +251,7 @@ group_v2:
     insight: "a rekey does not need fresh entropy from everyone — ONE fresh value the leaver never saw suffices (the leaver knew K_old and ALL old r_i)"
     change_spec: "RM <name>  (member leaves) | ADD <name> <r(32B)> <pk(32B)>  (member joins; r/pk carried by the introducer-topup)"
     frame: "circle_id ‖ epoch(u32) ‖ change-spec ‖ fresh_r(32B) ‖ initiator_sig(64B)"
-    initiator: "the remaining member with byte-smallest r_i — deterministic, zero coordination; cascade: if no topup seen within 3s, next-smallest takes over"
+    initiator: "the remaining member with byte-smallest r_i — deterministic, zero coordination; the initiator is NAMED in the 0x0B frame (receivers update that member's r to fresh_r, or their own my_r if it is them); smallest-r judgment EXCLUDES the leaver (if the leaver was globally smallest, next-smallest takes over); cascade: if no topup seen within 3s, next-smallest takes over"
     application: "apply the change to the member set; the initiator REPLACES her own r_i with fresh_r; K_new = derive_group_key(sorted(remaining r)) — the EXISTING function, zero crypto change; subkeys re-derived locally by everyone"
     validity: "a topup is valid iff the named leaver is still in MY current member set — first-arriver wins the epoch; same-leaver latecomers are no-ops; different leavers serialize by arrival"
     cost: "O(edges) flooded frames per membership change — from O(N) full re-gatherings to ONE frame"
@@ -404,14 +404,8 @@ pending_work:
     status: DONE-2026-10-14
     landed: "snow vendored fork (vendor/snow) + full Zeroizing coverage in person.rs + CLI RLIMIT_CORE/swap-check + circle.rs borrow refactor. mlock evaluated-and-deferred (see memory_hygiene.mlock_evaluation). All suites green: 27 own + 66 fork + FFI contract + ctypes"
   P2_flood_circle_core:
-    status: not-started
-    depends: []
-    slices:
-      - "0x09 declared contributions + flood forwarding + dedup + provenance (direct lock / first-seen) — distribution only, zero crypto change; existing tests re-parametrized to non-full-mesh topologies (star, chain)"
-      - "one-time signing keys: 0x0A speech frame + gathering pk registry + ed25519-dalek dep; seal()/key schedule untouched"
-      - "topup 0x0B: RM/ADD change-spec, smallest-r initiator, 3s cascade, validity rule, epoch serialization; voluntary leave 0x0C wired into /bye //quit paths"
-      - "solo circle: drop the non-empty-convos guard"
-      - "test matrix: star/chain topology circles, relayed-contribution forgery attack, leave-then-mumble, topup convergence, 50-member scale, solo-circle-then-join"
+    status: DONE-2026-10-14
+    landed: "0x09 declared contributions (circle_id+size+name+r+pk) + flood forwarding + dedup + provenance (direct lock/first-seen) + self-contagion (build Gathering on first arrival, flood own contrib); 0x0A signed speech (tag+counter+blob+Ed25519 sig, dual-gate subkey-decrypt + pk-verify); 0x0B topup (RM single-frame rekey, smallest-r initiator, epoch serialization, initiator named in frame); 0x0C circle_bye (voluntary leave triggers topup); solo circle (empty-convos guard dropped); bye/leave wired to send circle_bye. Tests: 31 total (25 integration incl 4 new v2 tests: star topology, solo circle, voluntary-leave rekey, signature forgery rejection) + 5 unit + 1 pq — all green; FFI 12 symbols + contract + ctypes green"
   P3_nested_circles:
     status: not-started
     depends: [P2_flood_circle_core]

@@ -51,6 +51,12 @@ fn sender_tag(r: &[u8]) -> [u8; 4] {
     [h[0], h[1], h[2], h[3]]
 }
 
+/// sender_tag 的公开面：v2 泛洪圈的发言帧用它标注「谁说的」，
+/// 收方按标签在成员表里找说话人（子钥即署名的第一闸）。
+pub fn sender_tag_of(r: &[u8]) -> [u8; 4] {
+    sender_tag(r)
+}
+
 /// 用子钥加密一句话，返回可扇出的群密文：nonce ‖ AEAD。
 /// counter 由调用者递增，保证同一发送者 nonce 永不重复。
 pub fn seal(subkey: &[u8; 32], counter: u64, r: &[u8], text: &[u8]) -> Vec<u8> {

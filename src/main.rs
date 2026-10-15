@@ -451,6 +451,9 @@ fn render(ev: Event) {
         Event::CircleMumble { from } => {
             eprintln!("[{}] 说了句圈里解不开的话（密钥不合？密文被动过？）——通常该重新 /circle。", safe(&from));
         }
+        Event::CircleRekeyed { members, change } => {
+            eprintln!("圈子换了新钥匙（{change}），现在 {members} 人在座。");
+        }
         Event::FileArrived { name, data, .. } => {
             // 库永不落盘；CLI 是外层使用者，替人把东西放进 ./received/。
             // 名字过安检：控制字符中和、路径分隔剥掉、只剩点儿的当没名字、重名加序。

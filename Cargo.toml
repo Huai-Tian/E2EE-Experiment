@@ -36,6 +36,7 @@ chacha20poly1305 = "0.11.0"
 # 内存卫生（P1）：本库自持秘密（点火钥匙/暗号链/凑话/文件缓冲）的
 # 用后即焚包装；snow 侧密钥由 vendored fork 覆盖
 zeroize = "1"
+ed25519-dalek = { version = "2", default-features = false, features = ["fast", "zeroize"] }
 # CLI 进程级防护（RLIMIT_CORE=0）——库本体不碰进程策略
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
