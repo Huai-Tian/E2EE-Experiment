@@ -730,3 +730,79 @@ licensing:
     - telephone-model-no-identity-auth      # active-MITM risk is MITIGATED (not eliminated) by SAS; accepted by design
     - unaudited-experimental-code           # not for sensitive communications
     - no-warranty-liability-capped-by-law
+# ═══════════════════════════════════════════════════════════════
+# README_AGENT — machine-facing project brief
+#
+# FILE CLASS : machine-facing brief. Audience: LLM agents / coding copilots.
+# HUMANS     : stop here. Use README.md / README_ZH.md instead.
+# FORMAT     : yaml-dialect. indent=2; keys are stable IDs; `#` comments are
+#              NORMATIVE (constraints), not decoration. File body is pure YAML.
+#              STRUCTURAL INVARIANT: the whole file MUST parse as ONE valid
+#              YAML document.
+# SCOPE      : as-built facts describe HEAD (v3 slice-1/2/3 landed 2026-10-15,
+#              pre-3.0.0-release: seat flow + SAS still pending). group_v3,
+#              sas, seat_flow and pending_work carry OWNER-SETTLED DESIGNS not
+#              yet written — every such block is status-tagged. NEVER document
+#              planned work as built; NEVER re-propose anything listed in
+#              settled_decisions (rejected items = permanent rejection).
+#
+# THE ONE RULE ABOVE ALL RULES: 本项目的第一性原理是对人类社会物理对话的
+# 抽象（见 theory 四公理）。任何设计决策、任何代码变更、任何你（AI）想提的
+# 新特性，都必须能从公理推导出来；推导不出的，默认拒绝，交 owner 裁决。
+# ═══════════════════════════════════════════════════════════════
+
+project:
+  id: E2EE-Experiment
+  lang: rust
+  edition: "2024"
+  nature:
+    - p2p
+    - e2ee-chat
+    - single-binary
+    - serverless
+    - cli
+  core_metaphor: executable == person        # NOT marketing — drives every decision below
+  theory: conversation-physics               # NEW v3: see theory block — the project now HAS an explicit theory
+  maturity: early-development                 # post-P2 HEAD; v3 axiom rebuild settled, not yet implemented
+  ui_language: zh                            # user-facing strings are chinese; keep style
+  comment_language: zh-with-person-metaphors # see glossary at bottom
+
+doc_index:                                  # entry alignment across the 3 docs
+  zh: README_ZH.md
+  en: README.md
+  agent: README_AGENT.md                     # this file
+  rule: "README.md / README_ZH.md describe the P2 world and legitimately lag this file; they MUST be rewritten together with the 3.0.0 release (removals_3_0_0 + pending_work.P4)."
+
+doc_protocol:                               # how to maintain THIS file
+  update_triggers:
+    - new wire frame kind or changed frame layout
+    - owner ruling in review/conversation → append to settled_decisions with date
+    - a pending_work item lands → move its facts into as-built sections, drop it from the board
+    - a new falsified/rejected idea → append to settled_decisions.rejected
+    - a new attack discovered & adjudicated → append to attack_precedents with an ID (P-nn)
+    - an axiom-based ruling on any design question → record under theory.rulings
+  yaml_selfcheck: "python3 -c 'import yaml; yaml.safe_load(open(\"README_AGENT.md\"))' — MUST succeed"
+
+# ───────────────────────────────────────────────────────────────
+# THEORY — 对话物理学（v3 的第一因，2026-10-15 定稿）
+# 这是整个项目的宪法。机制可以死，公理不可以。
+# ───────────────────────────────────────────────────────────────
+
+theory:
+  origin: >-
+    人类社会几千年博弈没有推翻的对话机制，就是经过最长安全审计的协议。
+    本项目不做"发明"，做"翻译"：把物理对话的硬约束翻译成网络协议。
+    翻译必须忠实——网络世界比物理世界多出来的每一种能力，要么主动废除，
+    要么诚实声明为边界。这就是全部设计方法论。
+
+  axioms:                                   # 公理：从物理对话提炼的硬约束
+    A1_embodiment:                          # 公理 I：具身
+      statement: 人 = 身体。在场、发声、离席都是身体的行为。身体不可分身、不可复制、死后不可再发言。
+      network_translation: 人 = 进程实例。嗓音（署名钥）与生俱来、随进程死亡、一次性。
+      forbids: [跨圈持续身份, TOFU, 账号体系, 可转让的发言权]
+      generates: [一次性署名钥, 署名发言, 署名告别, 贡献自签（名单每行都是本人身体的印）]
+    A2_locality:                            # 公理 II：局部性
+      statement: 一切感知只来自直接物理信道。你能确认在场的人，就是你的感官够得着的人。不存在全球在场目录。
+      network_translation: 节点的一切知识来自直连线。路由表 = 世界观 = 同一张表（信念名单）。
+      forbids: [全局名册, epoch 共识, 官方成员表, 任何形式的"全局状态同步机"]
+      ge
