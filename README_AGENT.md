@@ -464,6 +464,7 @@ settled_decisions:
     expectation_gate_discard: "2026-10-16：0x11 回执与拟名不匹配 → CircleConflict + 回执丢弃 + 待座状态保留；放行=重跑 /bring + 再 /sit——不新增命令、不缓存不悬挂（每次手势协议效果完整）"
     punch_tag_tiered: "2026-10-16：tag 三层——省略→自动 128bit 上屏转告（Crockford base32）；显式短标签→响亮警告照用（降级自由）；警告写明 PAKE 补偿关系。与暗号自由的同构有一处修正：tag 猜测无需受害者在场（向介绍人枚举注册即可），与 PAKE 在场爆破模型不同构——故默认值必须强，降级必须知情"
     closed_table_fork_semantics: "2026-10-16：封桌 /bring = 引荐人本地照常应用（发送原子，与一切 topup 同构）+ 其余响亮拒收 + fork + 点名裁决。三条例子独立强制：P-13（旋转必须真实）/A1（签名即承诺）/A2（发送即应用，等批准=表决）。封桌是契约不是法律——协议让违约响亮，不使违约不可能；新人命运必然经引荐人（他人点名的快照里没有她）。连带边界入档：座次表是复印件不是活视图（newcomer_roster_is_copy）；封桌 DoS 面极小（closed_table_dos_surface）"
+    rogue_injection_feature_gated: "2026-10-16：测试注入面 = #[cfg(feature=\"rogue\")] pub mod rogue——默认构建编译期零注入符号（结构解）。doc(hidden) 被否，按本项目判例法：文档层遮掩+约定不调用 = 检测式编码（P-10 判例同族：PR_SET_DUMPABLE 优于 core_pattern 告警）；符号残留产物违反洁净交付纪律（Release 零日志同族）；『生产不调用』须为编译期事实而非君子协定。原语：rogue_frame（1:1）/rogue_flood（圈帧伪造走名单线泛洪=恶意成员真实路径）/circle_id()+roster_snapshot()（circle_id 非机密、随帧可见，正当 API）。注入经真实发送路径（每线 Noise 加密）——注入即恶意对端能力，T0 界外无攻击面增量。canary 测试：feature 缺失时恰一条测试响亮失败提示 --features rogue——静默跳过=罪。注意 #[cfg(test)] 不可用于此（integration tests 编译库时 cfg(test) 关闭）"
     knows_means_receipt: "『知道了就是同意——签名是这张同意的收据』：引荐在人类信道，入座在协议信道，rekey 后收据也遗忘"
     relay_circle: "flood circles are THE answer to >8 groups — connected-is-enough; the key schedule is kept unchanged"
     leave_rekeys: "departures MUST rekey — witness topup, not full re-gathering"
@@ -600,7 +601,7 @@ pending_work:
       - "[x] slice-3 点名：/circle 重敲=新 circle_id 重聚（与创世同构复用）；mumble 响亮呈现；无自动建议（Kills P-06 修复路径）"
       - "[x] slice-4 入席流（LANDED 2026-10-16）：0x10 看座（骨架无 r）/ 0x11 落座署名 / 0x0B ADD（自署行+引荐收据+P-13 旋转强制）/ 0x12 座次表（全表仅递成员）+ r 唯一性响亮检查 + 期望门（拟名不符→CircleConflict+回执丢弃+待座保留）+ 封桌 fork 语义（引荐人发送原子应用+其余响亮拒收）+ /circle 席位覆盖（form_circle_seats）+ 线别名（覆盖落座名的信念路由）+ RM/ADD 行内 sig_pk 与名单一致性检查（堵『名字行换钥』冒名洞——A1 推导，随 slice-4 落地）（Kills P-04/P-07/P-09/P-12）"
       - "slice-5 对词：/word 1:1 会话短词 + 群短词（K 派生）；即时显示零落盘（Kills P-08 的可检测性）"
-      - "slice-6 判例测试矩阵：attack_precedents 每条的 test 字段全部落为集成测试 + 交换代数断言（不相交变更序无关）+ 50 人规模 + 点名恢复全场景"
+      - "slice-6 判例测试矩阵：attack_precedents 每条的 test 字段全部落为集成测试 + 交换代数断言（不相交变更序无关）+ 50 人规模 + 点名恢复全场景。注入面 = #[cfg(feature=\"rogue\")] pub mod rogue（见 settled_decisions.rogue_injection_feature_gated）：rogue_frame(convo,kind,payload) 1:1 注入 / rogue_flood(kind,payload) 圈帧注入 / circle_id() + roster_snapshot() 只读获取器——全部经真实发送路径（每线 Noise 加密），注入即恶意对端能力的实验室化身，被测的正是收端验证"
   P4_removal_face_3_0_0:
     status: not-started
     depends: [P3_v3_axiom_rebuild]
@@ -680,7 +681,7 @@ glossary:
 
 verify:
   build: "cargo build --release"
-  test: "cargo test --release — 46 tests at HEAD (34 integration + 11 unit + 1 pq), ~seconds"
+  test: "cargo test --release --features rogue — slice-6 起判例注入测试需要 rogue feature（canary：缺 feature 时恰一条测试响亮失败，不静默跳过）；46 tests at HEAD (34 integration + 11 unit + 1 pq), ~seconds"
   ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so; verify: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 12)"
   ffi_contract_test: "gcc -O2 -Wall -I include ffi/ffi_test.c -o /tmp/ffi_test -L target/release -l:libe2ee.so -Wl,-rpath,$PWD/target/release && /tmp/ffi_test — expect 'FFI OK'; then python3 ffi/ctypes_test.py"
   static_build: "cargo build --release --target x86_64-unknown-linux-musl — static-pie ~1.3MB"
