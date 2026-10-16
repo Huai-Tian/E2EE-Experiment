@@ -115,6 +115,7 @@ theory:
     2026_10_16_topup_signature_payload: "topup 签名的载荷 = 变更 + 发起者自己的新行（RM：witness_sig 签 circle_id‖RM‖离场者‖新行；ADD：introducer_sig 签 circle_id‖ADD‖新人行）。行的当前有效签名 = 最初的落座署名，或最近一次旋转她的 topup 签名。没有任何机制旋转别人的 r——RM 转见证人自己的，ADD 转引荐人自己的，增删和旋转永远同签名者（A1）。"
     2026_10_16_presence_wallclock: "在场辩护的『近期』= 本地挂钟 30 秒窗口（帧无时间戳，counter 单调但无速率语义——水位不随沉默衰减，无法表达『最近还在说』）。到达时刻本地记账，不落盘、不进协议。判定输入 = 本地证据 ∪ 任何线到达的该成员近期已验签发言——泛洪天然把在场证明送上门，见证人可以不看她，挡不住别人的线把她的声音转过来（A2：证据的到达延迟由泛洪补偿）。已见其署名告别 → 视为一致照常应用。"
     2026_10_16_sas_format: "SAS 短词 = 12 位数字分 4 组（123 456 789 012，约 40bit）。人类工程学：电话念 12 位分组数字是数十年验证过的仪式；安全性：与 ZRTP 20-30bit 相比更保守，且每次聚首新鲜、不累积不持久。1:1 从 Noise transcript 哈希派生，群从 HKDF(K, \"circle-sas\") 派生。"
+    2026_10_17_left_voices_tombstone: "left_voices（圈内嗓音墓碑：名字→公钥；apply_rm 除名时写入；随圈生灭，点名重置，进程死亡）——A2 直接推导：我的信念记得她走过，墓碑是信念的一部分，与名单同族非新物种。用途：迟到直接告别帧的验签（RM 先到、名单已除名时，直接接收者经 members ∪ left_voices 取公钥验签后照常发见证 RM——幂等应用正是 rm_multiplicity 语义；转发接收者的提前跳过保留，旧闻无害）。四条精化随裁决钉死：① 名字复用优先级——members 优先于墓碑，ADD 应用时清除该名字的墓碑条目；② bye 去重键 = 签名而非裸名字（Ed25519 确定性（RFC 8032）⇒ sig 即事件 ID：同事件重放同 sig 被去重，重入后新钥新 sig 放行——裸名字键在『离场→重入→再离场』下吞掉第二次告别；flood_key 注释的『告别用名字』预留被本裁决取代）；去重在验签之后（集合只收有效签名，垃圾进不了集合）；③ 墓碑只存公钥非秘密——不 Zeroizing，RAM-only 零持久化不受影响；有界性：对抗 ADD/RM 循环可增长但每轮受 seat-flow 成本约束，接受为已知边界；④ 衍生检查项（未关闭，可能成 P-15）：1:1 新线自报名与圈成员名碰撞时信念路由的线→别名映射如何建立——若别名仅经圈协议（凑话到达/seat flow）建立则结构性无碰撞；若自报名可合并既有别名则存在别名劫持面（bye 去重只堵告别重放，0x09/0x0A 同类面不归它管）。编码模型必须回答此问题后方可关闭。crash 路径 witness_ctx 同步改 members ∪ left_voices。"
 
   decision_procedure:                       # 编码模型遇到任何设计问题时的裁决流程
     step_1: "找公理依据：提案的每个机制，问它由哪条公理生成。答不出 → 默认拒绝。"
@@ -358,6 +359,7 @@ group_v3:
       rm_witness: "见证人=离开的直接感知者（A2：离席只对直接信道可观察）——两条路径统一：crash 路径=死线持有者（直接感知线死）；自愿告退路径=署名 0x0C 的直接接收者（线的对端名字==告退者名，一跳，非转发；转发收到者只应用不发起——感知必须是一跳的，与 direct-lock 同构）。不再是 smallest-r 选举人——她自己供应 fresh_r 并署名。最小 r 占位攻击（P-06 前身）随选举机制整体死亡。自洽性：信念路由保证 0x0C 只走名单线 ⇒ 直接接收者必然是成员，不存在无人可发 RM 的死局；帧丢失 → 僵尸成员留在旧钥（no_liveness_probes 既有语义），直到谁的线死走 crash 路径"
       rm_multiplicity: "多直连对端各自发 RM 是不相交变更（删同一人 + 各旋转各行，T2 可交换，先₁后₂=先₂后₁）。幂等应用语义（多见证人收敛的必要规约）：RM 应用 = 条件删除（告退者在则删，不在则跳过——不能因已删而整帧丢弃，否则后到见证人的行旋转丢失、K 收敛失败）+ 无条件行替换（见证人签名验证通过则替换她的行）。中间态（只收到一个 RM 的人）短暂 mumble——响亮、自愈"
       rm_voluntary_vs_presence: "告别前发言与 presence_defense 的交互由既有例外覆盖：『已见其署名告别 → 视为一致照常应用』——Alice 说完『晚安』立刻 /bye，其 30 秒窗口内发言不阻止 RM 应用（该例外条款为两条路径共用）"
+      late_bye_witness_revival: "迟到告退的见证复活（2026-10-17 定罪竞态的修复）：Alice 的见证 RM 抢在 Carol 直接告别帧之前到达 Bob 时，Bob 的 bye 处理器不得因『已不在名单』提前返回——直接接收者经 members ∪ left_voices（嗓音墓碑，A2 推导，见 theory.rulings.2026_10_17）验签后照常发出自己的见证 RM（幂等：条件删除空转 + 自己行照换，正是 rm_multiplicity 语义）；提前跳过仅对非见证（转发）接收者保留。bye 去重键 = 签名（sig 即事件 ID）。crash 路径 witness_ctx 同款 union"
       rm_presence_defense: "在场辩护：RM 点名者在 30 秒挂钟窗口内有已验签发言（判定输入 = 本地证据 ∪ 任何线到达的该成员近期已验签发言——泛洪天然补偿证据到达延迟）且与 RM 矛盾 → 扣下 topup + 响亮冲突 + 人类裁决。已见其署名告别 → 视为一致照常应用。『还在说话即不可被判离开』。窗口起点=帧到达时刻本地记账（不落盘、不进协议）；counter 水位语义废弃（不随沉默衰减，无法表达『最近还在说』）"
       rm_false_witness_honesty: "沉睡成员可被伪证 RM（见证人撒谎『我的线死了』）→ 临时驱逐，成员回来发言即 mumble → 点名回归。物理等价：你离席接电话时有人散布你走了——桌子重排，你回来发现桌变了。响亮、可恢复、入 known_limitations"
       add_layout: "0x0B + circle_id ‖ 'ADD' ‖ 新人行(自签: name‖r‖pk‖contrib_sig) ‖ 引荐人新行(自签, 含旋转后 r) ‖ introducer_sig(64B, 签 circle_id‖ADD‖新人行)。布局与 RM 镜像对称"
@@ -594,7 +596,7 @@ pending_work:
     depends: []
     engineering_debt:                       # slice-4 期间发现的既有 flaky（上游 slice-2 遗留，非 slice-4 引入）
       teardown_lock_fix: "已修（随 slice-4）：ear 收摊曾在持有 Inner 锁期间 await（writer 锁+TCP shutdown）——阻塞窗口内一切等 Inner 锁的任务（RM 处理等）卡死，见证人 RM 帧到达却无人处理 → 双方都只应用自己的 RM → rekeyed 缺一份 → 测试超时。修复：锁内纯同步收尾，shutdown/witness 移到锁外"
-      residual_flaky: "残余 flaky（未根治，单跑难复现、全量偶现 ~20-40%，海森性：加打印即不复现）：点名/封桌类重拓扑测试在测试进程跑了 ~10s 后偶发 15s 事件超时；基线 5214bb6 单跑亦复现（2/6）——上游遗留。疑点集中在 ear/锁/调度的窄窗口交互。修复需专项诊断（不观测难复现 + 观测即改变），owner 裁决时机与优先级；不阻塞 slice-5/6"
+      residual_flaky: "已定罪（2026-10-17，8 轮压力复现 + 插桩 witness=true 与失败 100% 逐次对应）：协议级竞态，非调度玄学——Carol 署名告退时，Alice 的见证 RM 抢在 Carol 直接告别帧之前到达 Bob → Bob 的 bye 处理器撞『告退者已不在名单（RM 先到）→ 静默跳过』提前返回 → Bob 的见证 RM 永不发出 → 第二份 rekeyed 事件缺失 → 15s 超时。单跑难复现（单运行时直接告别帧通常先到）/加打印不复现（时序扰动）/封桌点名类重拓扑才触发（仅 bye→双 RM 级联有此窗口）均由此解释。安全复核（owner 独立重推）：自愿路径因果结构保证至少一位见证者的 RM 必然发出——RM 的存在以 bye 已被处理为前提，两见证全灭需因果环路，不可构造——非安全破洞，是 rm_multiplicity 已定稿语义（『不能因已删而整帧丢弃』）的发端实现偏差。修复裁决见 theory.rulings.2026_10_17_left_voices_tombstone；crash 路径 witness_ctx 同款偏差同步修。时机：slice-6 前必修（多见证收敛确定性断言正是其测试矩阵内容），可与 slice-5 并行"
     slices:
       - "[x] slice-1 名单即圈：roster 行结构（name‖r‖pk‖contrib_sig）+ 0x0F 创世（署名邀请名单+seats）+ 名字到齐完成 + 信念路由（ Kills P-02/P-03/P-05 主体）"
       - "[x] slice-2 告别与补话：署名 0x0C + 见证人 RM topup（无 epoch/无选举/无级联）+ 在场辩护（近期验签发言 vs RM 冲突→扣下+响亮）（Kills P-01/P-06 主体）"
@@ -701,6 +703,8 @@ verify:
     - "P-13: colluding carrier + newcomer seat → newcomer cannot decrypt pre-arrival frames despite holding full roster + archived ciphertext"
     - "voluntary-bye multi-witness: leaver with TWO direct links → both direct receivers issue RM, both applied in either order converge to same roster+key (idempotent semantics: conditional delete + unconditional row swap)"
     - "voluntary-bye: forwarded-0x0C receivers NEVER issue RM (application only); direct receiver does"
+    - "late-bye witness revival: RM₁ preempts leaver's direct bye at second witness → tombstone (members ∪ left_voices) verification still issues RM₂; both row rotations converge (rm_multiplicity semantics, the adjudicated flaky fix)"
+    - "depart → rejoin (seat flow) → re-depart: second bye NOT swallowed (sig-keyed dedup); ADD clears the name's tombstone; witness RM fires for the second departure"
     - "expectation-gate: 0x11 self-name mismatches /bring 拟名 → CircleConflict event + receipt discarded + pending-seat preserved; retry flow (/bring again + /sit again) completes"
     - "punch tag: omitted TAG → 128-bit auto-generated + displayed; explicit short tag → warning shown, punch proceeds"
     - "closed-table /bring full path: introducer+newcomer share new key and talk; rest stay on old key; BOTH directions mumble; roll call with introducer's line kept → re-accepts; roll call after bye-ing introducer's line → both excluded"
