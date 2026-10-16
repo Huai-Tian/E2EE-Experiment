@@ -40,6 +40,7 @@ enum {
     E2EE_EVENT_SECRET_CHAINED = 7, /* name = 与谁续上了暗号链 */
     E2EE_EVENT_CIRCLE_FORMED = 8,  /* members = 圈内人数 */
     E2EE_EVENT_CIRCLE_MUMBLE = 9,  /* name = 谁说了句解不开的话 */
+    E2EE_EVENT_SEAT_OFFERED = 10,  /* name = 引荐人, members = 桌上人数, text = 桌上名字（、分隔） */
 };
 
 /* 事件（布局冻结）：超容量的字符串被截断（name 63 字节、text 511 字节） */

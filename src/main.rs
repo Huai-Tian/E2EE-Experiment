@@ -52,9 +52,18 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   /list                看看在场的人
   /card                打印自己的名片（名字 + 各网卡地址）
   /shout               同屋喊一圈，看看谁在（局域网发现）
-  /circle              开台/围坐/点名：署名邀请名单=当前在场的人；名单上的
-                       名字自署到齐后铸群钥。在圈中重跑 = 点名重聚（修复路径）
+  /circle [封桌|开台]
+      开台/围坐/点名：署名邀请名单=当前在场的人；名单上的
+      名字自署到齐后铸群钥。在圈中重跑 = 点名重聚（修复路径）。
+      多人默认封桌、一人默认开台；可显式覆盖（开台是刻意的宣言）
   /gsay <话>           在圈内说一句（加密一次，人人同时收到）
+  /bring [拟名]        领人入座：向当前对话的人（候选人）递看座骨架。
+                       带拟名则开期望门（回执名字不符 → 响亮暂停）；
+                       不带 = 无门直接自动。封桌警告但照发——
+                       拒绝是全员契约行为，不是发起人的自我审查
+  /sit [名字]          落座：回应看座邀约（A1：落座署名必须本人触发）。
+                       默认用你在这条线上的自报名，可覆盖
+                       （「这桌叫我阿花」是自己的嗓音）
   /bye                 和当前对话的人道别
   /quit 或 Ctrl-D      和所有人道别，离场
   Ctrl-C               直接离场
@@ -354,13 +363,25 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
                 }
             }
         }
-        "circle" => match person.form_circle().await {
-            Ok(n) => eprintln!(
-                "开台了：邀请名单 {n} 人（名单上的名字自署到齐后自动开讲）。\
-                 在圈中重跑 = 点名重聚（新圈号重新围坐）。"
-            ),
-            Err(e) => eprintln!("{e}"),
-        },
+        "circle" => {
+            // /circle [封桌|开台]：席位可显式覆盖
+            let seats = match parts.next() {
+                Some("封桌" | "封" | "closed") => Some(e2ee::person::SEATS_CLOSED),
+                Some("开台" | "开" | "stage") => Some(e2ee::person::SEATS_OPEN),
+                Some(other) => {
+                    eprintln!("不认识的席位：{other}。可用：封桌 / 开台（不给就用默认）。");
+                    return Ok(false);
+                }
+                None => None,
+            };
+            match person.form_circle_seats(seats).await {
+                Ok(n) => eprintln!(
+                    "开台了：邀请名单 {n} 人（名单上的名字自署到齐后自动开讲）。\
+                     在圈中重跑 = 点名重聚（新圈号重新围坐）。"
+                ),
+                Err(e) => eprintln!("{e}"),
+            }
+        }
         "gsay" => {
             let text = cmd.strip_prefix("gsay").unwrap_or("").trim().to_string();
             if text.is_empty() {
@@ -369,6 +390,32 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
             }
             if let Err(e) = person.circle_speak(&text).await {
                 eprintln!("{e}");
+            }
+        }
+        "bring" => {
+            // /bring [拟名]：聚焦对端即候选人
+            let expected = parts.next().map(|s| s.to_string());
+            match person.bring(expected.as_deref()).await {
+                Ok(seats) => {
+                    if seats == e2ee::person::SEATS_CLOSED {
+                        eprintln!(
+                            "注意：这是封桌。看座照发，但圈子会响亮拒收这次入席\
+                             （席位契约）——你将与圈子分叉（互相 mumble），\
+                             直到点名重聚裁决。"
+                        );
+                    } else {
+                        eprintln!("看座递出去了——对方 /sit 后入座自动完成。");
+                    }
+                }
+                Err(e) => eprintln!("{e}"),
+            }
+        }
+        "sit" => {
+            // /sit [名字]：落座（默认本人自报名，可覆盖）
+            let name_override = parts.next().map(|s| s.to_string());
+            match person.sit(name_override.as_deref()).await {
+                Ok(()) => eprintln!("落座署名递回去了——等引荐人的座次表。"),
+                Err(e) => eprintln!("{e}"),
             }
         }
         "file" => {
@@ -467,6 +514,13 @@ fn render(ev: Event) {
         }
         Event::CircleConflict { detail } => {
             eprintln!("圈内有冲突（人类裁决）：{}", safe(&detail));
+        }
+        Event::SeatOffered { from, table } => {
+            eprintln!(
+                "[{}] 给你看座：桌上有 {}。想坐就 /sit（想用别的名字就 /sit 名字）。",
+                safe(&from),
+                table.iter().map(|n| safe(n).into_owned()).collect::<Vec<_>>().join("、")
+            );
         }
         Event::FileArrived { name, data, .. } => {
             // 库永不落盘；CLI 是外层使用者，替人把东西放进 ./received/。

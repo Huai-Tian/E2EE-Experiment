@@ -166,8 +166,10 @@ architecture:
     list:  { syntax: "/list", behavior: "enumerate live conversations, mark focused" }
     card:  { syntax: "/card", behavior: "print one 'name  ip:port' line per interface — SURVIVES removals (card only lists own addresses, touches no network)" }
     shout: { syntax: "/shout", behavior: "v1: udp-broadcast who-is-there on the lan — STILL IN CODE, REMOVED in 3.0.0 (removals_3_0_0)" }
-    circle: { syntax: "/circle", behavior: "P2 as-built: form a flood circle over ALL current conversations (counting-based completion — see attack_precedents P-03); v3: becomes 开台 (genesis, roster-based — see group_v3) and RE-RUNNING it = 点名 roll call" }
+    circle: { syntax: "/circle [封桌|开台]", behavior: "开台/围坐/点名：扫描发起者当前会话→署名邀请名单→0x0F 只走一跳。席位默认多人封桌/一人开台，可显式覆盖（开台是刻意的宣言）。重跑 = 点名 roll call（新 circle_id 重新聚首，A4）。库面 form_circle() / form_circle_seats(Option<u8>)" }
     gsay: { syntax: "/gsay TEXT", behavior: "speak in the circle (signed speech 0x0A); v3 gains a circle-target argument for nested circles" }
+    bring: { syntax: "/bring [拟名]", behavior: "领人入座（slice-4 已落地）：向聚焦对端（候选人）发 0x10 看座。带拟名 → 期望门（0x11 自署名不匹配 → CircleConflict 响亮暂停 + 回执丢弃 + 待座保留；放行=重跑 /bring）；不带 → 无门直接自动。封桌时 CLI 警告但照发（拒绝是全员契约行为）。库面 bring(Option<&str>) -> seats，外层据此警告" }
+    sit: { syntax: "/sit [名字]", behavior: "落座（slice-4 已落地）：候选人收到看座事件后触发——0x11 落座署名必须是候选人本人的手势（A1）。默认取本人 0x05 自报名，可覆盖（「这桌叫我阿花」）；多份邀约按 /talk 模式列候选（聚焦线优先→唯一→歧义响亮）。库面 sit(Option<&str>)" }
     file:  { syntax: "/file PATH", behavior: "hand a file to the focused conversation: 0x06 head + 0x07 chunks; lossless; 32MB cap both ways; received files auto-save to ./received/" }
     bye:   { syntax: "/bye", behavior: "offer next secret (chainable lines only), then circle_bye (0x0C) if in a circle, then empty-plaintext goodbye to focused conversation" }
     quit:  { syntax: "/quit | Ctrl-D", behavior: "circle_bye to all circles (chainable lines offer secrets), goodbye to all conversations, exit 0" }
@@ -182,7 +184,7 @@ architecture:
   api_style: "library NEVER prints nor reads stdin nor touches the fs; actions in = metaphor-verb methods; experiences out = Event stream (tokio mpsc); Event/LeaveReason/PersonError are non_exhaustive; errors carry semantics, CLI renders prose"
   modules:
     src/lib.rs:     "crate root: pub mod circle + courier + discover + person + punch + wire; re-exports Person/Events/Event/LeaveReason/PersonError/RosterEntry/Discovered"
-    src/person.rs:  "core person model; handshake<S> GENERIC over AsyncRead+AsyncWrite (tcp and UdpPunch alike); ear() dispatches on frame_kind; ZERO printing, ZERO stdin, ZERO fs. P2 adds: Gathering (voice keypair + members map + epoch), 0x09 self-contagion, 0x0A dual-gate verify (subkey decrypt + verify_strict), 0x0B apply_topup/issue_topup_rm, 0x0C unsigned bye, belief-free flood (all convos minus source — P-02 debt), counting completion (P-03 debt)"
+    src/person.rs:  "core person model; handshake<S> GENERIC over AsyncRead+AsyncWrite (tcp and UdpPunch alike); ear() dispatches on frame_kind; ZERO printing, ZERO stdin, ZERO fs. v3 adds (slice-1..4): Gathering (voice keypair + roster rows + seats + line-aliases), 0x09 self-certified rows, 0x0A dual-gate, 0x0B RM/ADD (witness/unified introducer, sig_pk-vs-roster consistency), 0x0C signed bye, 0x0F genesis/roll-call, seat flow 0x10/0x11/0x12 (bring/sit + expectation gate + closed-table fork), belief-routed flood with aliases, presence defense (30s wallclock)"
     src/punch.rs:   "introducer client + punch transport: UdpPunch (frame-per-datagram, echo swallowing); INTRO2 source-checked"
     src/circle.rs:  "group key schedule: derive_group_key (HKDF over byte-sorted contributions, takes &[&[u8]] borrows), derive_sender_subkey, seal/open (ChaCha20Poly1305, nonce = counter ‖ sender-tag); unit tests for order-independence and subkey isolation"
     src/courier.rs: "teahouse: serve() wires same-room arrivals, splices raw bytes; serve_introducer on the same udp port; JOIN frame bounded 10s"
@@ -191,7 +193,7 @@ architecture:
     src/main.rs:    "thin CLI renderer; safe() sanitizes ALL remote-controlled strings; harden_process() = RLIMIT_CORE=0 + swap warning (P7 adds PR_SET_DUMPABLE)"
     ffi/src/lib.rs: "cdylib gate: 12 exported e2ee_* symbols; per-handle tokio runtime"
     include/e2ee.h: "C header — MUST change together with ffi/src/lib.rs (frozen ABI)"
-    tests/conversation.rs: "25 integration tests, real persons on ephemeral ports (4 new in P2: star topology, solo circle, voluntary-leave rekey, signature forgery rejection)"
+    tests/conversation.rs: "34 integration tests, real persons on ephemeral ports (slice-4 adds 7: full seat flow, expectation-gate retry, seat-name override + line alias, closed-table fork + roll-call re-accept, closed-table repeated-bring DoS surface, same-introducer double-ADD ordered convergence, declining-candidate zero frames); expect() deadline 15s (parallel-run scheduler pressure)"
     tests/pq.rs:       "hybrid suite round-trip"
 
 # ───────────────────────────────────────────────────────────────
@@ -256,13 +258,13 @@ wire_protocol:
     # ── circle frames, P2 as-built ──
     contrib_v2: "0x09 + circle_id(8B) ‖ size ‖ name ‖ r(32B) ‖ sig_pk(32B) — declared contribution. v3 ADDS contrib_sig(64B) over (circle_id‖name‖r‖sig_pk): the row becomes SELF-CERTIFIED (P-05 fix); without it the row is unsigned debt"
     circle_signed: "0x0A + circle_id(8B) ‖ sender_tag(4B) ‖ counter(8B) ‖ group-AEAD ‖ sig(64B) — signed circle speech, dual-gate (subkey decrypt + verify_strict)"
-    topup: "0x0B — P2 as-built: circle_id ‖ epoch(u32) ‖ change-spec ‖ fresh_r(32B) ‖ initiator_sig(64B). v3 RESTRUCTURES (see group_v3.rekey.topup): epoch DIES, initiator election DIES; RM = witness 新行(自签)+witness_sig, ADD = 新人行+引荐人新行(自签,P-13 旋转)+introducer_sig — 布局镜像对称，行结构三载体同构"
+    topup: "0x0B — P2 as-built: circle_id ‖ epoch(u32) ‖ change-spec ‖ fresh_r(32B) ‖ initiator_sig(64B). v3 RESTRUCTURES (see group_v3.rekey.topup): epoch DIES, initiator election DIES; 变更字节 'R'=RM（离场者名 ‖ 见证人新行 ‖ witness_sig）/ 'A'=ADD（新人行 ‖ 引荐人新行 ‖ introducer_sig，签 circle_id‖'A'‖新人行）——布局镜像对称，行结构三载体同构。收端一致性检查（slice-4）：行内 sig_pk 必须与名单一致（A1：行名可伪、嗓音不可顶替）；ADD 非回声路径强制引荐人 r 已旋转（P-13）；去重键 = 帧签名者的新 r（RM 见证人/ADD 引荐人，镜像对称）"
     circle_bye: "0x0C + circle_id(8B) ‖ name — P2 as-built is UNSIGNED (forgeable, P-01). v3 ADDS bye_sig(64B) over (circle_id‖name)"
-    # ── v3 frame kinds (settled design, NOT implemented — see group_v3) ──
-    genesis: "0x0F + circle_id(8B) ‖ seats(u8: 0=closed 封桌 / 1=open 开台) ‖ count(u8) ‖ invited names ‖ creator_sig(64B) — 开台公告：署名的邀请名单=发起者感知快照（事实陈述，非权力凭证）。凑话完成条件=名单上的名字全部自署到场（计数死，P-03 fix）。点名=新 circle_id 的重新 0x0F，社会连续、密码学新鲜"
-    seat_offer: "0x10 + circle_id(8B) ‖ seats ‖ member names+pk pairs (NO r values!) — 看座：1:1 帧（非圈帧），引荐人把席位骨架递给候选人。红线：绝不携带任何 r——拒入者拿到 r 即可推导群钥（P-09）"
-    seat_accept: "0x11 + name ‖ r(32B) ‖ sig_pk(32B) ‖ contrib_sig(64B) — 落座署名：候选人自选 r、自签整行，经 1:1 递回引荐人。r 自选（128bit+ 碰撞概率可忽略）+ 收端唯一性响亮检查（P-12 fix）"
-    seat_roster: "0x12 + FULL member table (each row: name ‖ r ‖ sig_pk ‖ contrib_sig) — 座次表：1:1 帧，ADD 应用后引荐人把全表递给新人（新人由此持全部 r 计算群钥）。只递给已成成员的人"
+    # ── v3 frame kinds — slice-1..4 LANDED as-built ──
+    genesis: "0x0F + circle_id(8B) ‖ seats(u8: 0=closed 封桌 / 1=open 开台) ‖ 发起人(名长u8‖名字) ‖ count(u8) ‖ invited names ‖ creator_sig(64B) — 开台公告：署名的邀请名单=发起者感知快照（事实陈述，非权力凭证）。凑话完成条件=名单上的名字全部自署到场（计数死，P-03 fix）。点名=新 circle_id 的重新 0x0F，社会连续、密码学新鲜"
+    seat_offer: "0x10 + circle_id(8B) ‖ seats(u8) ‖ count(u8) ‖ (名长u8 ‖ 名字 ‖ 嗓音公钥32B)× — 看座（slice-4 已落地）：1:1 帧（非圈帧），引荐人把席位骨架递给候选人。红线：绝不携带任何 r——拒入者拿到 r 即可推导群钥（P-09）。同线新邀约覆盖旧的"
+    seat_accept: "0x11 + 行（名长u8 ‖ 名字 ‖ r(32B) ‖ sig_pk(32B) ‖ contrib_sig(64B)，与 0x09 行同构）— 落座署名（slice-4 已落地）：候选人自选 r、生成嗓音钥、自签整行，经 1:1 递回引荐人。r 自选（128bit+ 碰撞概率可忽略）+ 收端唯一性响亮检查（P-12 fix）"
+    seat_roster: "0x12 + circle_id(8B) ‖ seats(u8) ‖ count(u8) ‖ 全部名单行（每行同 0x09 布局，含 r）— 座次表（slice-4 已落地）：1:1 帧，ADD 应用后引荐人把全表递给新人（新人由此持全部 r 计算群钥，按本人嗓音公钥找到自己的座位）。只递已成成员。收端验每行自署 + 名字/r 唯一性"
     # 0x0D/0x0E 曾预留给见证/分叉通告——死于理论重建（同步机整体退役）；不得复活
   unknown_kinds: "silently skipped — forward compatibility (this is what makes the v3 additions rollout-safe for old peers)"
   hangup: "empty plaintext frame | tcp close"
@@ -318,7 +320,7 @@ group_v2_as_built:
 # ───────────────────────────────────────────────────────────────
 
 group_v3:
-  status: partially-implemented              # slice-1/2/3 LANDED 2026-10-15 (roster/0x0F genesis/信念路由/署名 0x0C/见证人 RM/在场辩护/点名)；seat flow (0x10-0x12) + SAS (/word) + 判例矩阵 pending — implement per pending_work.P3 slice-4/5/6; P4 removal face next; P6 nesting after
+  status: partially-implemented              # slice-1/2/3 LANDED 2026-10-15 (roster/0x0F genesis/信念路由/署名 0x0C/见证人 RM/在场辩护/点名)；slice-4 LANDED 2026-10-16 (入席流 0x10-0x12 + 期望门 + 封桌 fork 语义 + P-13 旋转强制)；SAS (/word) + 判例矩阵 pending — implement per pending_work.P3 slice-5/6; P4 removal face next; P6 nesting after
   one_line: >-
     圈不是对象，是 N 个局部信念的对齐。协议的职责不是维持一致（那是同步机，
     违反 A2），而是制造四种感知：听见（AEAD）、嗓音（签名）、在场（直连）、
@@ -587,13 +589,16 @@ known_limitations:
 
 pending_work:
   P3_v3_axiom_rebuild:                       # 核心：理论落地。slice 顺序=依赖顺序
-    status: in-progress                     # slice-1/2/3 LANDED 2026-10-15（39 测试全绿）；slice-4/5/6 pending
+    status: in-progress                     # slice-1/2/3 LANDED 2026-10-15（39 测试全绿）；slice-4 LANDED 2026-10-16（46 测试全绿：11 单元+34 集成+1 pq）；slice-5/6 pending
     depends: []
+    engineering_debt:                       # slice-4 期间发现的既有 flaky（上游 slice-2 遗留，非 slice-4 引入）
+      teardown_lock_fix: "已修（随 slice-4）：ear 收摊曾在持有 Inner 锁期间 await（writer 锁+TCP shutdown）——阻塞窗口内一切等 Inner 锁的任务（RM 处理等）卡死，见证人 RM 帧到达却无人处理 → 双方都只应用自己的 RM → rekeyed 缺一份 → 测试超时。修复：锁内纯同步收尾，shutdown/witness 移到锁外"
+      residual_flaky: "残余 flaky（未根治，单跑难复现、全量偶现 ~20-40%，海森性：加打印即不复现）：点名/封桌类重拓扑测试在测试进程跑了 ~10s 后偶发 15s 事件超时；基线 5214bb6 单跑亦复现（2/6）——上游遗留。疑点集中在 ear/锁/调度的窄窗口交互。修复需专项诊断（不观测难复现 + 观测即改变），owner 裁决时机与优先级；不阻塞 slice-5/6"
     slices:
       - "[x] slice-1 名单即圈：roster 行结构（name‖r‖pk‖contrib_sig）+ 0x0F 创世（署名邀请名单+seats）+ 名字到齐完成 + 信念路由（ Kills P-02/P-03/P-05 主体）"
       - "[x] slice-2 告别与补话：署名 0x0C + 见证人 RM topup（无 epoch/无选举/无级联）+ 在场辩护（近期验签发言 vs RM 冲突→扣下+响亮）（Kills P-01/P-06 主体）"
       - "[x] slice-3 点名：/circle 重敲=新 circle_id 重聚（与创世同构复用）；mumble 响亮呈现；无自动建议（Kills P-06 修复路径）"
-      - "slice-4 入席流：0x10 看座（骨架无 r）/ 0x11 落座署名 / 0x0B ADD（自署行+引荐收据）/ 0x12 座次表（全表仅递成员）+ r 唯一性响亮检查 + 同名见证裁决（Kills P-04/P-05/P-07/P-09/P-12）"
+      - "[x] slice-4 入席流（LANDED 2026-10-16）：0x10 看座（骨架无 r）/ 0x11 落座署名 / 0x0B ADD（自署行+引荐收据+P-13 旋转强制）/ 0x12 座次表（全表仅递成员）+ r 唯一性响亮检查 + 期望门（拟名不符→CircleConflict+回执丢弃+待座保留）+ 封桌 fork 语义（引荐人发送原子应用+其余响亮拒收）+ /circle 席位覆盖（form_circle_seats）+ 线别名（覆盖落座名的信念路由）+ RM/ADD 行内 sig_pk 与名单一致性检查（堵『名字行换钥』冒名洞——A1 推导，随 slice-4 落地）（Kills P-04/P-07/P-09/P-12）"
       - "slice-5 对词：/word 1:1 会话短词 + 群短词（K 派生）；即时显示零落盘（Kills P-08 的可检测性）"
       - "slice-6 判例测试矩阵：attack_precedents 每条的 test 字段全部落为集成测试 + 交换代数断言（不相交变更序无关）+ 50 人规模 + 点名恢复全场景"
   P4_removal_face_3_0_0:
@@ -675,7 +680,7 @@ glossary:
 
 verify:
   build: "cargo build --release"
-  test: "cargo test --release — 39 tests at HEAD (27 integration + 11 unit + 1 pq), ~seconds"
+  test: "cargo test --release — 46 tests at HEAD (34 integration + 11 unit + 1 pq), ~seconds"
   ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so; verify: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 12)"
   ffi_contract_test: "gcc -O2 -Wall -I include ffi/ffi_test.c -o /tmp/ffi_test -L target/release -l:libe2ee.so -Wl,-rpath,$PWD/target/release && /tmp/ffi_test — expect 'FFI OK'; then python3 ffi/ctypes_test.py"
   static_build: "cargo build --release --target x86_64-unknown-linux-musl — static-pie ~1.3MB"

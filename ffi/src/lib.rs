@@ -27,6 +27,7 @@ const EVENT_FOCUS_RETURNED: c_int = 6;
 const EVENT_SECRET_CHAINED: c_int = 7;
 const EVENT_CIRCLE_FORMED: c_int = 8;
 const EVENT_CIRCLE_MUMBLE: c_int = 9;
+const EVENT_SEAT_OFFERED: c_int = 10;
 
 /* ── 事件结构：与 e2ee.h 的 struct 一一对应（布局冻结） ── */
 /// 超出容量的字符串会被截断（name 63 字节、text 511 字节，UTF-8 可能截半——
@@ -446,6 +447,12 @@ fn to_c_event(ev: Event) -> E2eeEvent {
         Event::CircleMumble { from } => {
             e.tag = EVENT_CIRCLE_MUMBLE;
             copy_str(&mut e.name, &from);
+        }
+        Event::SeatOffered { from, table } => {
+            e.tag = EVENT_SEAT_OFFERED;
+            copy_str(&mut e.name, &from);
+            e.members = table.len() as c_int;
+            copy_str(&mut e.text, &table.join("、"));
         }
         _ => {} // 库将来新增的经历：tag 留 0，向前兼容
     }
