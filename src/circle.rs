@@ -244,6 +244,17 @@ fn sas_word(ikm: &[u8], label: &[u8]) -> String {
     format!("{} {} {} {}", &s[0..3], &s[3..6], &s[6..9], &s[9..12])
 }
 
+/// 线证明的签名载荷（P16，rulings.2026_10_17_p16_spec_approved）：
+/// circle_id ‖ 本线 transcript（8B‖32B 定长——定界无歧义）。per-line
+/// transcript 把证明绑死在这条线上：截获的证明在别的线验签必败
+///（transcript 不同 ⇒ 载荷不同），不可跨线重放（INV-P16-1）。
+pub fn proof_payload(circle_id: u64, transcript: &[u8; 32]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(8 + 32);
+    v.extend_from_slice(&circle_id.to_be_bytes());
+    v.extend_from_slice(transcript);
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

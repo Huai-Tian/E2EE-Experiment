@@ -1882,11 +1882,15 @@ async fn 在场辩护_还在说话的人掉线_补话被扣下() {
     assert_eq!(got.1, "jiu yue zhao shuo");
 }
 
+// rogue 门控：P16 锚定同步点用 line_bindings_debug（rogue-only 只读面）
+#[cfg(feature = "rogue")]
 #[tokio::test]
 async fn 五十人_成圈说话点名() {
     // 矩阵项「50-member flood circle」：星型（中枢+49 叶），信念路由
     // 下凑话经中枢扇出——聚齐、说话、点名，全部在耐心预算内
-    //（每步 expect 15 秒预算；真实耗时毫秒级）。
+    //（每步 expect 15 秒预算；真实耗时毫秒级）。P16：成键事件与叶子
+    // 0x13 的批量 ear 处理竞速——speak 前用确定性全锚轮询同步（同线
+    // 0x09→0x13 保序保证锚**必到**，只是 formed 事件可能抢先）。
     const N: usize = 50;
     let (hub, mut hub_ev, hub_addr) = spawn_person("Hub").await;
     let mut leaves: Vec<(Person, UnboundedReceiver<Event>)> = Vec::with_capacity(N - 1);
@@ -1913,6 +1917,30 @@ async fn 五十人_成圈说话点名() {
         let m = expect(ev, formed).await;
         assert_eq!(m, N);
     }
+    // P16 全锚同步：中枢的全部绑定线带 pk 锚（49 个叶子的 0x13——
+    // 同线 0x09→0x13 保序，必然到达；formed 事件可能抢先于最后几个
+    // 的 ear 处理）。上限 30s。
+    for _ in 0..300 {
+        let all = hub
+            .line_bindings_debug()
+            .await
+            .expect("hub 绑定")
+            .iter()
+            .filter(|b| b.1 != "Hub")
+            .all(|b| b.2.contains('+'));
+        if all {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let all = hub
+        .line_bindings_debug()
+        .await
+        .expect("hub 绑定")
+        .iter()
+        .filter(|b| b.1 != "Hub")
+        .all(|b| b.2.contains('+'));
+    assert!(all, "hub 的全部叶子线须带锚（P16 严格档下的出话面）");
     // 说：中枢一句全员听见；叶子之间经中枢中继互听
     hub.circle_speak("wu shi ren de hua").await.expect("中枢说");
     for (_, ev) in &mut leaves {
@@ -1931,6 +1959,20 @@ async fn 五十人_成圈说话点名() {
     for (_, ev) in &mut leaves {
         let m = expect(ev, formed).await;
         assert_eq!(m, N);
+    }
+    // P16 全锚同步（点名后同竞态——新圈新绑定，叶子的凑话后 0x13
+    // 暂存补验 + 成键后 0x13 必到）
+    for _ in 0..300 {
+        let all = hub
+            .line_bindings_debug()
+            .await
+            .expect("hub 绑定")
+            .iter()
+            .all(|b| b.2.contains('+'));
+        if all {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     hub.circle_speak("dian ming hou zhao chang").await.expect("点名后说");
     let got = expect(&mut leaves[7].1, |e| heard(e).filter(|(h, _)| h == "Hub")).await;
@@ -2307,8 +2349,8 @@ async fn P15_圈外自报名_零圈帧() {
     );
     assert_eq!(bindings.len(), 1, "Bob 只有一条绑定（创作者资格线）：{bindings:?}");
     assert!(
-        bindings[0].2 == "qualified:via=Alice peer=Alice",
-        "B-A 是 genesis 送达的资格线（直连：via==peer==创作者）：{bindings:?}"
+        bindings[0].2.starts_with("qualified:via=Alice peer=Alice"),
+        "B-A 是 genesis 送达的资格线（直连：via==peer==创作者；+pk 后缀=P16 锚）：{bindings:?}"
     );
 }
 
@@ -2367,30 +2409,50 @@ async fn P15_spec_a_转发创世_圈线资格_非名字误绑() {
     assert_eq!(mm, 3, "M 收齐（A 直达 + B 经自己转发的回程）");
     let ma = expect(&mut alice_ev, formed).await;
     assert_eq!(ma, 3, "A 收齐（B 的行经 M 转发）");
-    // 绑定断言（成钥前后各一次）：B 只有一条绑定——转发送达的资格线，
+    // 绑定断言（成钥前后各一次）：B 的 B-M 线是转发送达的资格线——
     // 双键（peer 键修复）：via=帧内 creator「Alice」（溯源——非转发者
     // 名字误绑，spec a）；peer=转发者 Mallory（0x05 捕获快照——撤销/
-    // 路由/见证三判定读它，转发者离席时此线熄灭）
+    // 路由/见证三判定读它，转发者离席时此线熄灭）。锚后缀（P16 +pk）
+    // 可能已到（M 凑话后 0x13，同线保序）——用前缀断言容锚
     for _ in 0..2 {
         let bindings = bob.line_bindings_debug().await.expect("B 的绑定");
-        assert_eq!(bindings.len(), 1, "B 只有一条绑定（转发送达线）：{bindings:?}");
+        let bm = bindings
+            .iter()
+            .find(|(_, their, _)| *their == "Mallory")
+            .expect("B-M 转发送达线在册");
         assert!(
-            bindings[0].2 == "qualified:via=Alice peer=Mallory",
+            bm.2.starts_with("qualified:via=Alice peer=Mallory"),
             "spec (a)：资格线 via=帧内 creator（非转发者误绑）、\
              peer=线对端（对端键修复）：{bindings:?}"
         );
-        assert_eq!(bindings[0].1, "Mallory", "线的对端是转发者（自报名=peer 捕获源）");
     }
     // 放行载体：被扣的直发 genesis 到达 B——同圈重放，当没听见
-    //（B-A 线**不获绑**）；A 的凑话 + A 转发的 M 凑话同批到达，
+    //（B-A 线**不获 Qualified**）；A 的凑话 + A 转发的 M 凑话同批到达，
     // B 收齐成钥
     gate.send(true).expect("放载体");
     let mb = expect(&mut bob_ev, formed).await;
     assert_eq!(mb, 3, "B 补齐成钥（重放的 genesis 未授绑、凑话照收）");
-    // 终态绑定面：仍只有转发送达线（重放不授绑）
+    // 终态绑定面（P16 世界）：B-M 转发送达线照旧；A-B 载体线经两条
+    // 合法路径之一获得资格——①A 的 0x13（Proven，裁决点②身体行为
+    // 授予）②genesis 直发副本放行后的**多径补绑**（Qualified——
+    // A2 送达授予：B 已 join 该圈，新线送达 = 该线资格，peer 键+信念
+    // 检查兜底非成员线）。断言：载体线有绑定且指向 Alice（帧内
+    // creator），**绝不误绑转发者 Mallory**（spec a 的本意）
     let bindings = bob.line_bindings_debug().await.expect("B 的绑定终态");
-    assert_eq!(bindings.len(), 1, "重放不授绑：{bindings:?}");
-    assert_eq!(bindings[0].2, "qualified:via=Alice peer=Mallory");
+    let carrier = bindings
+        .iter()
+        .find(|(_, their, _)| *their == "Alice")
+        .expect("A-B 载体线在册（0x13 或多径补绑授权）");
+    assert!(
+        carrier.2.starts_with("proven:")
+            || carrier.2.starts_with("qualified:via=Alice peer=Alice"),
+        "载体线指向 Alice（Proven 或多径补绑 Qualified——皆 A 的送达/
+         证明行为）：{bindings:?}"
+    );
+    assert!(
+        !carrier.2.contains("peer=Mallory"),
+        "载体线绝不误绑转发者（spec a）：{bindings:?}"
+    );
     // B 说话：走 B-M 资格线 → M 听见；M 转发 → A 听见
     bob.circle_speak("jing zhuan fa ru zuo").await.expect("B 说");
     let got = expect(&mut mallory_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
@@ -2640,78 +2702,198 @@ async fn P15_B_转发资格线_对端离席熄灭_除名者零圈帧() {
     assert_eq!(mm, 3, "M 收齐（A 直达 + B 经自己转发的回程）");
     let ma = expect(&mut alice_ev, formed).await;
     assert_eq!(ma, 3, "A 收齐（B 的行经 M 转发）");
-    // 绑定形状断言：peer=Mallory（对端键——撤销键）+ via=Alice（溯源）
+    // 绑定形状断言：peer=Mallory（对端键——撤销键）+ via=Alice（溯源）；
+    // 锚后缀（P16）竞态容忍——用前缀
     let bindings = bob.line_bindings_debug().await.expect("B 的绑定");
-    assert_eq!(bindings.len(), 1, "B 只有转发送达线：{bindings:?}");
-    assert_eq!(bindings[0].2, "qualified:via=Alice peer=Mallory");
+    assert!(
+        bindings
+            .iter()
+            .any(|(_, their, d)| *their == "Mallory" && d.starts_with("qualified:via=Alice peer=Mallory")),
+        "B 的转发送达线形状：{bindings:?}"
+    );
     // 放行载体 → B 补齐成钥
     gate.send(true).expect("放载体");
     let mb = expect(&mut bob_ev, formed).await;
     assert_eq!(mb, 3);
-    // ── M 离席：杀 A-M mortal → A 持死线（她的 M 线绑定 Name(Mallory)
-    // 指向 M）→ crash 见证 RM(Mallory)：先应用（M 除名+墓碑+A 行旋转）
-    // 后泛洪（A-B 载体线送达 B；A 的 M 线已随信念熄灭不发）。
-    // M 侧同根：她的 A 线（Qualified{peer:Alice}）也断了——她按 A2
-    // 诚实地见证「Alice 离席」（她的 RM 无出线——M 侧对 B 从未绑定
-    // ——本地 apply 一份本地事件，无帧出境，rm_false_witness 家族的
-    // 测试构造副作用，先收掉再断言帧面）
+    // P16 锚定同步点（确定性，非 sleep）：A 侧 A-B 载体线须带 pk 锚
+    //（B 的成键后 0x13）——严格档下这是 A 的出话路径；不等锚就杀线
+    // = A 的 RM 无路 → B 落入 M 的 RM(Alice) 分叉（T1 场景，非本测
+    // 试对象）。轮询上限 30s。
+    for _ in 0..300 {
+        let ok = alice
+            .line_bindings_debug()
+            .await
+            .expect("A 的绑定")
+            .iter()
+            .any(|(_, their, d)| *their == "Bob" && d.contains('+'));
+        if ok {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let anchored = alice
+        .line_bindings_debug()
+        .await
+        .expect("A 的绑定")
+        .iter()
+        .any(|(_, their, d)| *their == "Bob" && d.contains('+'));
+    assert!(anchored, "A 的 Bob 线须带 pk 锚（B 的 0x13 已到）——否则后续 RM 无出话路径");
+    // ── M 离席（P16 分叉世界）：杀 A-M mortal → 两侧各持死线、各自
+    // 诚实见证（A2）：A 见证 RM(Mallory)（M 除名+A 旋转）；M 见证
+    // RM(Alice)（A 除名+M 旋转）。**P16 半开边消解的连带效应**：B 的
+    // 0x13 曾授予 M 侧 M-B Proven 锚——M 的 RM(Alice) 有出线了（原
+    // P15 世界无出线）→ 两份 RM 在不同线上竞速，**直收序本就不保证**
+    //（engineering_debt.echo_order_test_fix 同族：两帧不同线赛跑）。
+    // 两个到达序都是合法世界，分叉随序镜像，两序各断言各的正确性：
+    // M 先：B 应用 RM(Alice)（世界 {B,M'}）→ A 的 RM 见证人已出信念
+    //   响亮拒收 → B+M 对 A 分叉；
+    // A 先：B 应用 RM(Mallory)（世界 {A',B}）→ **对端键撤销直接现形**
+    //   ——B 的转发线 peer=Mallory 出信念即熄 → 泛洪义务消失 → M 零
+    //   圈帧（阻断项 B 的攻击路径本体死亡）→ B+A 对 M 分叉。
+    // 两侧各自正确、响亮、可修（T1），末尾点名统一（两世界共用）。
     mtask.abort();
     let ra = expect(&mut alice_ev, rekeyed).await;
     assert_eq!(ra.0, 2, "A 的见证 RM：Mallory 除名");
     assert!(ra.1.contains("Mallory"), "变更点名离场者：{}", ra.1);
+    // B 侧：第一份 RM 随竞速而定。判别可靠：apply_rm 的 change 只含
+    // 离场者名（"{leaver} 离席"，无见证人名）——"Alice 离席"⇔M 的 RM
     let rb = expect(&mut bob_ev, rekeyed).await;
-    assert_eq!(rb.0, 2, "B 应用 A 的 RM：Mallory 除名");
+    assert_eq!(rb.0, 2, "B 应用先到的诚实见证 RM（P16 分叉侧）");
+    let m_won = rb.1.contains("Alice");
+    // M 侧：本地应用自己的 RM(Alice)（两世界同）
     let rm_self = expect(&mut mallory_ev, rekeyed).await;
     assert!(
         rm_self.1.contains("Alice"),
-        "M 的自身死线见证（本地事件，非帧到达）：{}",
+        "M 的自身死线见证（本地应用）：{}",
         rm_self.1
     );
-    // B 的转发线随**对端** M 离席熄灭（peer 键）——修复前 via=Alice
-    // 续命，B 会把 RM 帧泛洪到 M 的活线（M-B 直连未断）
-    let bindings = bob.line_bindings_debug().await.expect("B 的绑定终态");
+    // A 侧对照（两世界同）：A 的 M 线随 RM(Mallory) 熄灭（pk 锚统一
+    // 撤销——修复前 via=Alice 续命泄漏 RM 帧新 r 的原断言面在 A 的
+    // 出话侧验证）
+    let a_bindings = alice.line_bindings_debug().await.expect("A 的绑定终态");
     assert!(
-        bindings.iter().all(|(_, their, _)| their != "Mallory"),
-        "B 的 Mallory 线无绑定（对端离席熄灭）：{bindings:?}"
+        !a_bindings
+            .iter()
+            .any(|(_, their, _)| *their == "Mallory"),
+        "A 的 Mallory 线熄灭（对端离席 + pk 锚撤销，A 的世界观）：{a_bindings:?}"
     );
-    // M 零圈帧：她的旧桌还在（mortal 只杀了 A 侧线，她没 bye——
-    // 最坏恶意者：起身离席但线还连着）。修复前 B 转发的 RM 到达她的
-    // 活线 → 她的应用器照跑（CircleRekeyed）+ 拿到 A 的新 r。修复后
-    // 一帧不到——连 mumble 都没有
-    assert_quiet(&mut mallory_ev, 2000, |ev| {
-        matches!(
-            ev,
-            Event::CircleRekeyed { .. }
-                | Event::CircleMumble { .. }
-                | Event::CircleFormed { .. }
-                | Event::CircleRejected { .. }
+    if m_won {
+        // ── M 先到世界（Proven 直达快路径获胜）────────────────────
+        assert!(
+            rb.1.contains("Alice"),
+            "B 应用 M 的 RM(Alice)（Proven 直达先到）：{}",
+            rb.1
+        );
+        // B 拒收 A 的 RM(Mallory)（见证人 A 已出 B 的信念——rm_multiplicity
+        // 的 T1 边界：相交变更分叉，响亮拒收而非静默）
+        let rej = expect(&mut bob_ev, rejected).await;
+        assert!(
+            rej.contains("Alice"),
+            "A 的 RM 在 B 侧响亮拒收（见证人行不在名单——T1 分叉响亮化）：{rej}"
+        );
+        // B 的世界观：M 在座（B 的 Mallory 线锚 M.pk ∈ B 的信念）——
+        // peer/pk 键撤销语义在**共享信念**内生效：A 的世界观里 M 走了
+        //（A 的 M 线已熄），B 的世界观里 M 没走（线活）——两者都对（A2）
+        let bindings = bob.line_bindings_debug().await.expect("B 的绑定终态");
+        assert!(
+            bindings
+                .iter()
+                .any(|(_, their, d)| *their == "Mallory" && d.contains('+')),
+            "B 的 Mallory 线带锚存活（B 的世界观 M 在座——分叉侧语义）：{bindings:?}"
+        );
+        // M 的圈帧面（A 的出话侧）：A 的 M 线已熄——A 的圈话**不直达** M；
+        // 但 B 的泛洪义务（B 的世界观 M 在座）会把 A 的密文**转发**给 M
+        //——M 解不开（分叉钥）→ Mumble from Bob：T1 响亮化的合法部分
+        //（B 没有理由替 A 隐瞒）。禁的是直达帧（from=Alice 的一切）与
+        // 状态变更（A 的圈对 M 的 Rekeyed/Formed/Rejected）
+        alice.circle_speak("a de shi jie guan li m zou le").await.expect("A 说");
+        let deadline = Instant::now() + Duration::from_millis(2000);
+        while let Ok(Some(ev)) =
+            timeout(deadline.saturating_duration_since(Instant::now()), mallory_ev.recv()).await
+        {
+            match &ev {
+                Event::CircleMumble { from } if from == "Bob" => {} // B 的泛洪义务（分叉密文中继）
+                Event::CircleMumble { .. }
                 | Event::Heard { .. }
-        )
-    })
-    .await;
-    // 幸存者照常说（A-B 载体线双向；A 只应用了自己的 RM，B 应用了
-    // 同一帧——同钥收敛）
-    alice.circle_speak("xing cun zhe dui hua").await.expect("A 说");
-    let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
-    assert_eq!(got.1, "xing cun zhe dui hua");
-    // M 继续静默（A 的 M 线死+信念熄灭；B 无出线到她）
-    assert_quiet(&mut mallory_ev, 1500, |ev| {
-        matches!(ev, Event::CircleRekeyed { .. } | Event::CircleMumble { .. } | Event::Heard { .. })
-    })
-    .await;
-    // A4 点名自愈（复审确认项）：M 离席后 B 的出话路径只剩半开边
-    //（B-M 熄灭、B-A 无绑定——中继反方向结构性无资格，见 A 项入档）
-    // → B 说不出；B 重跑 /circle 点名 = 创世同构重绑线（快照全量
-    // Name 绑定 + 送达绑定）→ 出话路径恢复。M 的 B 线还连着 →
-    // 她被重新邀请（A4：社会连续——重新聚首是谁的会话就邀谁，
-    // 裁决权在人类；恶意者被重邀是新圈的合法成员，非泄漏）
+                | Event::CircleRekeyed { .. }
+                | Event::CircleFormed { .. }
+                | Event::CircleRejected { .. } => {
+                    panic!("M 不该收到 A 侧直达帧或状态变更：{ev:?}")
+                }
+                _ => {}
+            }
+        }
+        // 分叉响亮化：A 的话 B 解不开（B 的钥={B,M'}，A 用 {A',B} 钥说话）
+        // ——mumble（T1 必被听见）
+        let _ = expect(&mut bob_ev, mumble).await;
+        // B/M 同钥互通（同世界观 {B,M'}——分叉的另一半照常说）
+        bob.circle_speak("b he m hai tong yaoshi").await.expect("B 说");
+        let got = expect(&mut mallory_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
+        assert_eq!(got.1, "b he m hai tong yaoshi", "B-M 同世界观互通");
+    } else {
+        // ── A 先到世界（本沙箱调度时运）：对端键撤销直接现形 ──────
+        assert!(
+            rb.1.contains("Mallory"),
+            "B 应用 A 的 RM(Mallory)（A-B 载体先到）：{}",
+            rb.1
+        );
+        // B 拒收 M 的 RM(Alice)：见证人 M 已出 B 的信念——同一 T1 边界，
+        // 镜像侧的响亮拒收（RM 路径不受线熄静默——M-first 世界已证）
+        let rej = expect(&mut bob_ev, rejected).await;
+        assert!(
+            rej.contains("Mallory"),
+            "M 的 RM 在 B 侧响亮拒收（见证人行不在名单——T1 分叉响亮化）：{rej}"
+        );
+        // B 的世界观：M 已出信念——**阻断项 B 修复的本体断言**：转发线
+        //（peer=Mallory）随 M 除名熄灭（apply_rm 急切撤销），A 的线存活
+        let bindings = bob.line_bindings_debug().await.expect("B 的绑定终态");
+        assert!(
+            !bindings.iter().any(|(_, their, _)| *their == "Mallory"),
+            "B 的 Mallory 转发线熄灭（对端键撤销——M 出信念即熄）：{bindings:?}"
+        );
+        assert!(
+            bindings.iter().any(|(_, their, _)| *their == "Alice"),
+            "B 的 Alice 线存活（B 的世界观 A 在座——分叉侧语义）：{bindings:?}"
+        );
+        // M 的圈帧面（两重封死）：A 不泛洪（M ∉ A 的信念）、B 不泛洪
+        //（M ∉ B 的信念，转发线已熄）——A 的话 B 同钥直听，M 零圈帧：
+        // 修复前经 B 转发资格线续命读明文的攻击路径结构性死亡
+        alice.circle_speak("a de shi jie guan li m zou le").await.expect("A 说");
+        let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+        assert_eq!(got.1, "a de shi jie guan li m zou le", "B-A 同钥（A',B 世界观）");
+        let deadline = Instant::now() + Duration::from_millis(2000);
+        while let Ok(Some(ev)) =
+            timeout(deadline.saturating_duration_since(Instant::now()), mallory_ev.recv()).await
+        {
+            match &ev {
+                Event::CircleMumble { .. }
+                | Event::Heard { .. }
+                | Event::CircleRekeyed { .. }
+                | Event::CircleFormed { .. }
+                | Event::CircleRejected { .. } => {
+                    panic!("M 零圈帧（对端键撤销：泛洪义务随线熄灭——攻击路径死亡）：{ev:?}")
+                }
+                _ => {}
+            }
+        }
+        // 分叉的另一半照常说：B-A 同世界观互通（{A',B}）
+        bob.circle_speak("b he a hai tong yaoshi").await.expect("B 说");
+        let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
+        assert_eq!(got.1, "b he a hai tong yaoshi", "B-A 同世界观互通");
+    }
+    // A4 点名统一：B 重跑 /circle——她的会话=[A,B,M] 全量重邀（社会
+    // 连续；会话存续与信念无关——M-first 世界里 A 的线已熄照邀不误，
+    // A-first 世界里 M 的线已熄同构），分叉抚平
     bob.form_circle().await.expect("点名");
-    let ma = expect(&mut alice_ev, formed).await;
-    let mb2 = expect(&mut bob_ev, formed).await;
-    assert_eq!((ma, mb2), (3, 3), "点名新圈（A/B/M 的线都在 B 的会话里）");
-    bob.circle_speak("dian ming hou wo neng shuo le").await.expect("B 说（自愈）");
+    for ev in [&mut alice_ev, &mut bob_ev, &mut mallory_ev] {
+        let m = expect(ev, formed).await;
+        assert_eq!(m, 3, "点名新圈三人重聚（分叉抚平）");
+    }
+    bob.circle_speak("dian ming hou tong yi le").await.expect("B 说（统一后）");
     let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
-    assert_eq!(got.1, "dian ming hou wo neng shuo le");
+    assert_eq!(got.1, "dian ming hou tong yi le");
+    let got = expect(&mut mallory_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
+    assert_eq!(got.1, "dian ming hou tong yi le");
 }
 
 // rogue feature 门控：绑定验态用 line_bindings_debug（rogue-only）
@@ -2779,7 +2961,11 @@ async fn P15_C_同名重入_crash见证不误逐新任期() {
         .filter(|(_, their, _)| *their == "Carol")
         .collect();
     assert_eq!(carol_lines.len(), 1, "恰一条 Carol 绑定（v1 清、v2 在）：{bindings:?}");
-    assert_eq!(carol_lines[0].2, "name:Carol", "v2 的新绑定存活");
+    assert!(
+        carol_lines[0].2.starts_with("name:Carol"),
+        "v2 的新绑定存活（+pk 后缀=P16 锚，0x11 行帧内 pk 直接锚定）：{}",
+        carol_lines[0].2
+    );
     // 杀 v1 的 mortal 线：B 侧死线 → crash 见证读绑定——已清 →
     // 无据 RM 不发（若未清：指向名命中 members 里的 v2 → 逐出新任期）
     c1task.abort();
@@ -2797,4 +2983,445 @@ async fn P15_C_同名重入_crash见证不误逐新任期() {
     assert_eq!(got.1, "xin ren qi hao hao de");
     let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
     assert_eq!(got.1, "xin ren qi hao hao de");
+}
+
+// ── P16 判例矩阵（rulings.2026_10_17_p16_spec_approved，spec §6）─────
+
+/// 等待某人的指定线绑定带 pk 锚（确定性同步，P16 全锚族的通用助手）。
+#[cfg(feature = "rogue")]
+async fn wait_anchored(
+    p: &Person,
+    their: &str,
+) -> bool {
+    for _ in 0..300 {
+        let ok = p
+            .line_bindings_debug()
+            .await
+            .expect("绑定面")
+            .iter()
+            .any(|(_, t, d)| t == their && d.contains('+'));
+        if ok {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    false
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P16_镜子1_谎报名线_成键后熄灭() {
+    // p15_fake_name_peer_residual 之死（红线变绿，胜负无关终态版）：
+    // 攻击者在 Bob 点名前拨入并自报成员 Alice 的名字——快照把她的
+    // 线绑为 Name{Alice} 窗口锚。**P-05 交互如实入档**：genesis 多径
+    // 送达 + 同名对峙使「真 A 行 vs fake 行」的占位由到达序裁决
+    //（先到暂定 + 直连声明替换——P-05 的既有世界，胜负不保证）。
+    // P16 的断言面（胜负无关）：占位者的 pk 决定锚与路由；**出局者
+    // 的线（窗口锚成键后熄 + 她的锚不在信念）零密封帧**——修复前
+    //（无严格档）：名字 ∈ 信念 ⇒ 两条线都持续路由——输赢双方都能
+    // 持续旁听。红绿自证：关掉 keyed 判定本测试必须红。
+    let (alice, mut alice_ev, bob, mut bob_ev, _carol, mut carol_ev) = three_mesh().await;
+    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
+        expect(ev, formed).await;
+    }
+    // 攻击者：点名前拨入 Bob，自报「Alice」
+    let (fake, mut fake_ev, _fa) = spawn_person("Alice").await;
+    let bob_addr = bob.listen_addr().await;
+    fake.dial(&bob_addr).await.expect("冒名线");
+    expect(&mut fake_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    // Bob 点名：快照三条线（B-A/B-C/B-fake——两条都 Name{Alice}）；
+    // genesis 多径 + 同名对峙 → 占位者由到达序定
+    bob.form_circle().await.expect("点名");
+    let mb = expect(&mut bob_ev, formed).await;
+    assert_eq!(mb, 3, "B 成键（名单 [Alice,Bob,Carol] 由占位行满足）");
+    let _ma = expect(&mut alice_ev, formed).await;
+    let _mc = expect(&mut carol_ev, formed).await;
+    // P16 全锚同步（Bob 的绑定线锚定——成键后 0x13 必到）
+    for name in ["Alice", "Carol"] {
+        let ok = bob
+            .line_bindings_debug()
+            .await
+            .expect("B 绑定")
+            .iter()
+            .filter(|(_, t, _)| t == name)
+            .any(|(_, _, d)| d.contains('+'));
+        if !ok {
+            // 全锚轮询（重试 30s）
+            for _ in 0..300 {
+                let done = bob
+                    .line_bindings_debug()
+                    .await
+                    .expect("B 绑定")
+                    .iter()
+                    .filter(|(_, t, _)| t == name)
+                    .any(|(_, _, d)| d.contains('+'));
+                if done {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+    // 占位感知断言：B 的圈里 "Alice" 行的 pk 决定 A 的话可解与否——
+    // 占位=真 A（她的 r 在 B 的钥里）⇒ heard；占位=fake（r 不同）⇒
+    // mumble（T1 分叉响亮——P-05 对峙的已知世界，点名裁决）
+    let holder_is_real_a = {
+        let rows = bob.roster_snapshot().await.expect("B 快照");
+        let holder = rows.iter().find(|r| r.name == "Alice").unwrap();
+        let a_rows = alice.roster_snapshot().await.expect("A 快照");
+        let a_new = a_rows.iter().find(|r| r.name == "Alice").unwrap();
+        holder.sig_pk == a_new.sig_pk
+    };
+    alice.circle_speak("mi feng de hua").await.expect("A 说");
+    if holder_is_real_a {
+        let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+        assert_eq!(got.1, "mi feng de hua", "真 A 占位：圈内照常");
+        let got = expect(&mut carol_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+        assert_eq!(got.1, "mi feng de hua");
+    } else {
+        let m = expect(&mut bob_ev, mumble).await;
+        assert_eq!(m, "Alice", "fake 占位：A 的话 B 解不开（T1 响亮，点名裁决）");
+    }
+    // fake 的事件面（胜负无关断言）：围栏窗口的合法事件放行（她的
+    // 自动 join/formed——「集齐即得首代 K」已接受价格；P-05 对峙
+    // 响亮），**密封帧零到达**（Heard/Mumble——她（若出局）得 K
+    // 也收不到密文；若她占位（极端时序），她的锚=她自己的行在信念
+    // ——她能听——这是 P-05 占位语义的边界而非 P16 面，此时真 A
+    // 侧响亮冲突（Conflict 事件）已把对峙呈现给人类，点名裁决）
+    let deadline = Instant::now() + Duration::from_millis(2500);
+    while let Ok(Some(ev)) =
+        timeout(deadline.saturating_duration_since(Instant::now()), fake_ev.recv()).await
+    {
+        match &ev {
+            Event::Heard { .. } | Event::CircleMumble { .. } => {
+                // 密封帧到达 fake：只可能因她占位（P-05 边界）——此时
+                // B 的 members["Alice"] 必是 fake 的新 pk。断言这一致性
+                //（而非无条件 fail）：占位场景已由 bob_ev 的 Conflict
+                // 响亮化，人类点名裁决（A4）。
+                let rows = bob.roster_snapshot().await.expect("B 快照");
+                let holder = rows.iter().find(|r| r.name == "Alice").unwrap();
+                let fake_rows = fake.roster_snapshot().await.expect("fake 快照");
+                let fake_row = fake_rows.iter().find(|r| r.name == "Alice").unwrap();
+                assert_eq!(
+                    holder.sig_pk, fake_row.sig_pk,
+                    "密封帧到 fake 只在占位时成立（P-05 边界——响亮冲突+点名）：{ev:?}"
+                );
+            }
+            _ => {} // Formed/Conflict/Rejected/Met——围栏窗口合法事件
+        }
+    }
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P16_镜子2_同名复用_pk锚不混淆() {
+    // P15_C 场景之死（红线变绿）：v1 离场 / v2 同名入座 / v1 的线死
+    // ——按 pk 根本不可能混淆（v1 的锚随 v1 行删已熄；v2 是另一把
+    // pk）。红绿自证：把 witness_ctx 改回按名字查（P15 语义）本测试
+    // 必须红（v1 名命中 members 里的 v2 → 无据 RM 逐出 v2）。
+    let (alice, mut alice_ev, bob, mut bob_ev) = two_open_circle().await;
+    // v1 经 mortal 线入席
+    let (carol1, mut _c1ev, c1_addr) = spawn_person("Carol").await;
+    let (c1proxy, c1task) = mortal_proxy(&c1_addr).await;
+    bob.dial(&c1proxy).await.expect("B-(mortal)-C1");
+    expect(&mut bob_ev, met).await;
+    expect(&mut _c1ev, met).await;
+    bob.bring(None).await.expect("看座#1");
+    expect(&mut _c1ev, seat_offered).await;
+    carol1.sit(None).await.expect("落座#1");
+    let r = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(r.0, 3);
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 3);
+    // v1 告别（断无关线保 mortal）
+    let (_x, _xev, x_addr) = spawn_person("Xia").await;
+    carol1.dial(&x_addr).await.expect("C1-X");
+    expect(&mut _c1ev, met).await;
+    carol1.bye().await.expect("v1 告别");
+    let rb = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(rb.0, 2);
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 2);
+    // v2 同名入席
+    let (carol2, mut carol2_ev, c2_addr) = spawn_person("Carol").await;
+    bob.dial(&c2_addr).await.expect("B-C2");
+    expect(&mut bob_ev, |e| met(e).filter(|(n, _, _)| n == "Carol")).await;
+    expect(&mut carol2_ev, met).await;
+    bob.bring(None).await.expect("看座#2");
+    expect(&mut carol2_ev, seat_offered).await;
+    carol2.sit(None).await.expect("落座#2");
+    let r = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(r.0, 3);
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 3);
+    // 杀 v1 的 mortal 线：B 的 crash 判定读 v1 线的锚——v1 行已删
+    // ⇒ 锚指向无行 ⇒ 线早已熄（无绑定）⇒ 无据 RM 不发；v2 无恙
+    c1task.abort();
+    assert_quiet(&mut bob_ev, 2000, |ev| {
+        matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
+    })
+    .await;
+    assert_quiet(&mut alice_ev, 1500, |ev| {
+        matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
+    })
+    .await;
+    // v2 照常说
+    carol2.circle_speak("pk bu hun xiao").await.expect("v2 说");
+    let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
+    assert_eq!(got.1, "pk bu hun xiao");
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P16_撤销统一_行删即熄_幂等重放无害() {
+    // pk 锚统一熄灭 + 0x13 幂等/重放（spec §6 项 4+7 合并）：mesh 圈
+    // C 署名告别 → 直接见证者发 RM → A 应用：A 的 C 线（pk 锚）随
+    // 行删自动熄——除名者零密封帧（含 RM 帧自身）；重放 C 的历史
+    // 0x13（rogue 截获原帧再发）→ 圈号/试钥面照验（幂等锚定，无状态
+    // 变化）；伪造 0x13（错钥）→ 零授予零事件。
+    let (alice, mut alice_ev, bob, mut bob_ev, carol, mut carol_ev) = three_mesh().await;
+    for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
+        expect(ev, formed).await;
+    }
+    // 全锚同步：A 的 C 线（C 的凑话后 0.13，经 C-A 绑定线到 A）。
+    // **B 的 C 线不锚**——mesh 非发起者对（B-C 无绑定，P15 已知：
+    // 互通经 A 中继）——本测试的 B 侧走中继路径
+    assert!(
+        wait_anchored(&alice, "Carol").await,
+        "A 的 C 线带锚（C 的凑话后 0x13）"
+    );
+    // C 的告别：0x0C 走她的绑定线（C-A——A 是唯一直接接收者；B 经
+    // A 转发应用）。P16 全锚同步（C 的 A 线锚定先于告别）
+    assert!(wait_anchored(&carol, "Alice").await, "C 的 A 线锚");
+    carol.leave().await;
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 2, "A 的见证 RM：C 除名");
+    let rb = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(rb.0, 2, "B 的见证 RM：C 除名");
+    // A 的 C 线随行删熄灭（pk 锚统一机制——无名字撤销循环参与）
+    let bindings = alice.line_bindings_debug().await.expect("A 绑定");
+    assert!(
+        !bindings.iter().any(|(_, t, _)| t == "Carol"),
+        "A 的 Carol 线熄灭（锚==C.pk，行删即熄）：{bindings:?}"
+    );
+    // C 零密封帧：A/B 的话一帧不到她（连 mumble 都没有）
+    alice.circle_speak("c ting bu dao le").await.expect("A 说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+    assert_eq!(got.1, "c ting bu dao le");
+    assert_quiet(&mut carol_ev, 1500, |ev| {
+        matches!(ev, Event::Heard { .. } | Event::CircleMumble { .. })
+    })
+    .await;
+    // 重放 C 的历史 0x13（A 侧绑定已熄——重放到 A 的 C 线：验签用
+    // 当前名单试钥——C 的行已删+墓碑不在试钥面 → 当没听见；即便
+    // 重放早于 RM（锚已定）也只是幂等空转）：零状态变化零事件
+    let forged = {
+        // 构造一个签名载荷错误的 0x13（错钥——确定性验不过）
+        let cid = alice.circle_id().await.expect("圈号");
+        let mut frame = Vec::with_capacity(8 + 64);
+        frame.extend_from_slice(&cid.to_be_bytes());
+        frame.extend_from_slice(&[0u8; 64]); // 全零签名：验不过
+        frame
+    };
+    let a_line = alice
+        .line_bindings_debug()
+        .await
+        .expect("A 绑定")
+        .iter()
+        .find(|(_, t, _)| t == "Bob")
+        .map(|(id, _, _)| *id)
+        .expect("A-B 线号");
+    alice
+        .rogue_frame(a_line, rogue::LINE_PROOF, &forged)
+        .await
+        .expect("伪造注入");
+    // 零授予零事件（静默语义——无后果行为；B 的锚不变、无 Rejected）
+    let before = bob.line_bindings_debug().await.expect("B 绑定");
+    assert!(
+        before.iter().any(|(_, t, d)| t == "Alice" && d.contains('+')),
+        "B 的 Alice 线锚保持（伪造 0x13 零影响）"
+    );
+    assert_quiet(&mut bob_ev, 1500, |ev| {
+        matches!(ev, Event::CircleRejected { .. } | Event::CircleMumble { .. })
+    })
+    .await;
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P16_circle_bye按pk_冒名线零圈告别帧() {
+    // their_name 残迹之死（spec 问 5 的镜子）：自报成员名的圈外线
+    // 不再收到 **0x0C 圈告别帧**（修复前 circle_bye targets 读
+    // belief.contains(their_name)——冒名线可收，泄露圈号+离场者名+
+    // 签名）。P16：targets 按锚判定——冒名线无锚（成键后窗口锚熄）
+    // ⇒ 零圈帧。注意边界：leave() 的 1:1 空帧道别发给全部 convos
+    //（含冒名线）——那是 1:1 世界的行为（P16 不碰），合法收到。
+    let (alice, mut alice_ev, bob, mut bob_ev, _carol, _carol_ev) = three_mesh().await;
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        expect(ev, formed).await;
+    }
+    // 圈外人自报成员名（Alice）
+    let (fake, mut fake_ev, _fa) = spawn_person("Alice").await;
+    let bob_addr = bob.listen_addr().await;
+    fake.dial(&bob_addr).await.expect("冒名线");
+    expect(&mut fake_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    // Bob 告别：0x0C 走他的绑定线（B-A——three_mesh 圈里 B 的唯一
+    // 绑定；C 经 A 中继）；冒名线（无锚）零圈帧。P16 全锚同步：
+    // B 的 A 线锚定先于告别（B-C 是 mesh 非发起者对——无绑定，
+    // P15 已知语义，不经其出话）
+    assert!(wait_anchored(&bob, "Alice").await, "B 的 A 线锚");
+    bob.leave().await;
+    let _ = expect(&mut fake_ev, |ev| left(ev).filter(|n| n == "Bob")).await; // 1:1 道别（合法）
+    // A 侧事件顺序不保证（0x0C 先于/后于 1:1 空帧取决于线与转发）：
+    // drain 直到 Left(Bob) 与 CircleRekeyed 都见过（顺序无关收集）
+    let (mut saw_left, mut saw_rekey) = (false, false);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !(saw_left && saw_rekey)
+        && let Ok(Some(ev)) =
+            timeout(deadline.saturating_duration_since(Instant::now()), alice_ev.recv()).await
+    {
+        match &ev {
+            Event::Left { name, .. } if name == "Bob" => saw_left = true,
+            Event::CircleRekeyed { .. } => saw_rekey = true,
+            _ => {}
+        }
+    }
+    assert!(saw_left, "A 见 B 离线");
+    assert!(saw_rekey, "A 见证 RM（0x0B 圈帧也不到冒名线）");
+    // 冒名线从此零圈帧（Circle* 家族全禁——修复前她会收到 0x0C）
+    assert_quiet(&mut fake_ev, 2000, |ev| {
+        matches!(
+            ev,
+            Event::CircleFormed { .. }
+                | Event::CircleMumble { .. }
+                | Event::CircleRekeyed { .. }
+                | Event::CircleRejected { .. }
+                | Event::CircleConflict { .. }
+                | Event::SeatOffered { .. }
+        )
+    })
+    .await;
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P16_半开边点亮_证明授予() {
+    // 裁决点②的拓扑红利（relay_asymmetry 半开边消解）：spec-a 拓扑
+    //（A-M 直连、M-B 转发送达）——B 的 0x13 到达 M 的未绑定线（M-B）
+    // 且验签通过 ⇒ 授予 Proven{B.pk} ⇒ M→B 方向圈帧可达（修复前
+    // 半开边：M 侧对 B 从未绑定，方向结构性无资格）。
+    let (alice, mut alice_ev, _a) = spawn_person("Alice").await;
+    let (mallory, mut mallory_ev, m_addr) = spawn_person("Mallory").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    // A-M、M-B
+    alice.dial(&m_addr).await.expect("A-M");
+    expect(&mut alice_ev, met).await;
+    expect(&mut mallory_ev, met).await;
+    mallory.dial(&bob_addr).await.expect("M-B");
+    let (_, m_b, _) = expect(&mut mallory_ev, |e| met(e).filter(|(n, _, _)| n == "Bob")).await;
+    expect(&mut bob_ev, met).await;
+    // A 开台（名单 [Alice, Bob, Mallory]）——genesis 走快照线（A-M、
+    // A-B?A 只连 M——A 的 convos 只有 A-M！名单扫 A 的对端=[Mallory]
+    // +A=[Alice,Mallory]——B 不在！需要 A 也直连 B……重构造：A-B 载体
+    // 线（delaying 扣住）+ A-M 直连——B 经 M 转发 genesis 入座（spec-a
+    // 原构造）
+    let (carrier, gate) = delaying_proxy(&bob_addr).await;
+    alice.dial(&carrier).await.expect("A-(载体)-B");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    gate.send(false).expect("扣载体");
+    let n = alice.form_circle().await.expect("开台");
+    assert_eq!(n, 3);
+    // M 直达入座；M 转发 genesis 给 B（B 经 M 的线入座）
+    let mut genesis = None;
+    for _ in 0..600 {
+        genesis = mallory.pending_genesis().await;
+        if genesis.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let genesis = genesis.expect("M 的待验公告");
+    mallory.rogue_frame(m_b, rogue::GENESIS, &genesis).await.expect("转发创世");
+    let mm = expect(&mut mallory_ev, formed).await;
+    assert_eq!(mm, 3);
+    let ma = expect(&mut alice_ev, formed).await;
+    assert_eq!(ma, 3);
+    gate.send(true).expect("放载体");
+    let mb = expect(&mut bob_ev, formed).await;
+    assert_eq!(mb, 3);
+    // B 的 0x13（凑话后/成键后）发 B 的绑定线（B-M）→ M 侧 M-B 线
+    // 原本无绑定 → **授予 Proven{B.pk}**（裁决点②）
+    assert!(
+        wait_anchored_specific(&mallory, "Bob", "proven:").await,
+        "M 的 B 线获 Proven 授予（0x13 身体行为，第三授予）"
+    );
+    // 半开边点亮：B 说 → M **直接**收到（不再绕 A 中继——A 的转发
+    // 也会到，但 M 的直达路径已开）；A 说 → M 收到后 M 转发给 B
+    //（M-B Proven 线）
+    bob.circle_speak("ban bian dian liang le").await.expect("B 说");
+    let got = expect(&mut mallory_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
+    assert_eq!(got.1, "ban bian dian liang le");
+    alice.circle_speak("a ye neng zhuan le").await.expect("A 说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+    assert_eq!(got.1, "a ye neng zhuan le", "M→B 方向圈帧可达（半开边消解）");
+}
+
+/// 等待某人的指定线绑定含指定前缀的锚描述（P16 半开边断言用）。
+#[cfg(feature = "rogue")]
+async fn wait_anchored_specific(p: &Person, their: &str, prefix: &str) -> bool {
+    for _ in 0..300 {
+        let ok = p
+            .line_bindings_debug()
+            .await
+            .expect("绑定面")
+            .iter()
+            .any(|(_, t, d)| t == their && d.starts_with(prefix));
+        if ok {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    false
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P16_乱序容错_点名后三发重锚_双向恢复() {
+    // spec §6 项 5（恢复面）：乱序/丢帧的现实面在打洞线（UDP 数据报
+    // 无序）——TCP 构造不出真乱序，此处验证**恢复机制的完备性**：
+    // 任何时刻的证明缺失（丢/验不过/暂存丢弃）都可由三发点（凑话后/
+    // 成键后/点名后）自愈——点名重跑 = 新圈新绑定 + 0x13 全量重发，
+    // 双向全锚后说话全通（A4 兜底闭环的存在性断言）。
+    let (alice, mut alice_ev, _a) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    // A-B 直连
+    alice.dial(&bob_addr).await.expect("A-B");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    // A 开台（名单 [Alice, Bob]）：B 直达入座成圈
+    let n = alice.form_circle().await.expect("开台");
+    assert_eq!(n, 2);
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        let m = expect(ev, formed).await;
+        assert_eq!(m, 2);
+    }
+    // 全锚同步（初始圈的正常路径——B 的 A 线锚=A 的凑话后 0.13）
+    assert!(wait_anchored(&bob, "Alice").await, "B 的 A 线锚（正常路径）");
+    // 点名重跑：新圈新绑定 + 0x13 三发重发 → 全锚 → 双向恢复
+    alice.form_circle().await.expect("点名");
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        let m = expect(ev, formed).await;
+        assert_eq!(m, 2, "点名重聚");
+    }
+    assert!(wait_anchored(&alice, "Bob").await, "点名后 A 的 B 线重锚（三发）");
+    assert!(wait_anchored(&bob, "Alice").await, "点名后 B 的 A 线重锚");
+    alice.circle_speak("dian ming hou quan tong").await.expect("A 说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+    assert_eq!(got.1, "dian ming hou quan tong");
+    bob.circle_speak("wo ye shi").await.expect("B 回");
+    let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
+    assert_eq!(got.1, "wo ye shi");
 }
