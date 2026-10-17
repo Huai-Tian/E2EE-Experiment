@@ -289,25 +289,35 @@ enum LineBinding {
     /// 绑定本身长存于圈——迟到告别的见证判定靠它
     ///（binding==Name(离场者)），apply_add 同名重入时清除（新任期新线）。
     Name(String),
-    /// 圈线资格（spec a）：0x0F/0x10/0x12 送达授予——名字不进路由
-    /// 判定，资格即路由。via=帧内可验的授予者（genesis 的 creator
-    /// 〔签名验证来自帧内，非线〕/ seat flow 的引荐人〔0x12 无整帧
-    /// 签名，取 0x10 到达线的自报名为 hint，残余入档〕）。
-    /// 仅两个用途：RM(via) 时急切撤销（P-04：资格不随除名续命——
-    /// RM 载荷携带见证人新 r，除名者续收即得新 K）；via==离场者时的
-    /// 见证判定（创作者星形离场=多见证，rm_multiplicity 活体）。
-    /// 不用于身份断言——转发送达时线的对端不是 creator（链式场景），
-    /// 绑成名字即结构性误绑（spec a）。
-    Qualified { via: String },
+    /// 圈线资格（spec a）：0x0F/0x10/0x12 送达授予。双键（2026-10-17
+    /// 复审阻断项 B 修复，rulings.2026_10_17_p15_peer_keyed_revocation）：
+    /// - via：帧内可验的授予者（genesis 的 creator〔签名验证来自帧内，
+    ///   非线〕/ seat flow 的引荐人〔0x12 无整帧签名，取 0x10 到达线的
+    ///   自报名为 hint，残余入档〕）——纯溯源，不进任何判定。它是我
+    ///   **入圈的凭证**，不是线对端的身份（转发送达时对端≠creator，
+    ///   spec a 裁决本就禁止把资格当 creator 名字绑定）。
+    /// - peer：授予时刻送达线对端的 0x05 自报名**捕获快照**（每线
+    ///   终身不变——握手后首帧定名，ear 不再更新）。这是撤销键/
+    ///   路由键/见证键：A3（RM 封存未来）的作用对象是**离席者=
+    ///   线对端**，不是授予者——撤销键错位在 via 上，转发线
+    ///  （via=creator、对端=转发者）就在转发者离席时续命，RM 帧自身
+    ///   携带的见证人新 r 即泄漏新 K（A3 回归）。peer 是 A2 认可的
+    ///   唯一线对端感知源（她在这条线上亲口报的名），只用于**熄灭**
+    ///   判定（路由=peer 在信念；RM(peer) 撤；ADD 同名清；见证=
+    ///   points_to(peer)），永不用于授予。
+    Qualified { via: String, peer: String },
 }
 
 impl LineBinding {
     /// 该绑定是否把线指向这名成员（P-05 直连声明 / bye/crash 见证判定：
-    /// 名字绑定对名字，资格线对授予者——两条路都成立时她是直接感知者）。
+    /// 名字绑定对名字，资格线对**线对端**——peer 键修复后资格线的
+    /// 见证读对端而非授予者：转发线的对端是转发者，转发者的告别由
+    /// 我见证；创作者经别线转达的告别我不是直接接收者，不越权见证
+    /// 〔感知必须是一跳的〕）。
     fn points_to(&self, name: &str) -> bool {
         match self {
             LineBinding::Name(n) => n == name,
-            LineBinding::Qualified { via } => via == name,
+            LineBinding::Qualified { peer, .. } => peer == name,
         }
     }
 }
@@ -438,12 +448,18 @@ impl Gathering {
         if let Some(row) = removed_row {
             self.left_voices.insert(leaver.to_string(), row.sig_pk);
         }
-        // P-15：资格线急切撤销（P-04）——Qualified{via:leaver} 的线随
-        // 除名熄灭。RM 载荷携带见证人新 r，除名者续收任何圈帧即凑齐
-        // 新 K 的全部输入。Name 绑定不撤（信念检查在路由时把它熄灭；
-        // 绑定本身留给迟到告别的见证判定——binding.points_to(离场者)）。
+        // P-15（peer 键修复）：资格线急切撤销——Qualified{peer:leaver}
+        // 的线随除名熄灭。撤销键是**线对端**（A3 封存的作用对象），
+        // 不是授予者 via：转发线（via=creator、对端=转发者）在转发者
+        // 离席时必须熄灭——RM 载荷携带见证人新 r，除名者续收任何圈帧
+        // 即凑齐新 K 的全部输入（A3 回归，复审阻断项 B）。via=creator
+        // 的直连线（via==peer）同效熄灭；通往仍在席转发者的线
+        // （via=creator、peer=转发者）不再被牵连——创作者离席不再
+        // 过度撤销中继线（原 over-revocation 面随键修正消失）。
+        // Name 绑定不撤（信念检查在路由时把它熄灭；绑定本身留给迟到
+        // 告别的见证判定——binding.points_to(离场者)）。
         self.line_bindings
-            .retain(|_, b| !matches!(b, LineBinding::Qualified { via } if via == leaver));
+            .retain(|_, b| !matches!(b, LineBinding::Qualified { peer, .. } if peer == leaver));
         // 无条件行替换（见证人 != 离场者；== 我自己则更新 my_row）
         if witness_row.name != leaver {
             if witness_row.name == self.my_row.name {
@@ -486,11 +502,20 @@ impl Gathering {
         self.left_voices.remove(&newcomer.name);
         self.witnessed_departs.remove(&newcomer.name);
         self.seen_bye.remove(&newcomer.name);
-        // P-15：同名重入清账——旧任期的 Name(她) 绑定全部熄灭（旧身体
-        // 的线不得因新身体入座而复明；引荐人的新绑定在 apply_add 之后
-        // 写入，不受影响）。Qualified 线无名字语义，不涉。
-        self.line_bindings
-            .retain(|_, b| !matches!(b, LineBinding::Name(n) if n == &newcomer.name));
+        // P-15：同名重入清账（作用域 = 该名的一切绑定，先于引荐人写入
+        // 新绑定——complete_bring 在 apply_add 之后 insert，顺序由调用
+        // 结构保证）——旧任期的 Name(她) 与 Qualified{peer:她} 绑定全部
+        // 熄灭：旧身体的线不得因新身体入座而复明（复审收尾项 C 的真
+        // 风险轴：v1 线死时 crash 见证若还能读到旧绑定指向名、又在
+        // members 命中 v2 → 无据 RM 逐出新任期——绑定清除是判定之前
+        // 的门，members-only 与 union 两变体都被这道门挡住）。新成员
+        // 自己的新绑定不受影响（引荐人线是 complete_bring 写的
+        // Name(新行名)——在清除之后；她自己的出线 Qualified{peer:引荐
+        // 人}——peer 键是引荐人名，不在清除之列）。
+        self.line_bindings.retain(|_, b| {
+            !matches!(b, LineBinding::Name(n) if n == &newcomer.name)
+                && !matches!(b, LineBinding::Qualified { peer, .. } if peer == &newcomer.name)
+        });
         self.members.insert(newcomer.name.clone(), newcomer.clone());
         if introducer_row.name != newcomer.name {
             if introducer_row.name == self.my_row.name {
@@ -1497,16 +1522,19 @@ async fn belief_flood(
             return; // 不是我信念里的圈：一句都不转发
         }
         let belief = g.belief_names();
-        // P-15：线资格只认绑定——Name 绑定须名字在信念名单（RM 后
-        // 熄灭，P-04）；Qualified 资格线即路由（spec a）。their_name
-        // 不再进入判定（自报名=纯显示）。
+        // P-15（peer 键修复）：线资格只认绑定，两种绑定同一语义——
+        // 「这条线的对端在我信念里在座」：Name 绑定对行名，Qualified
+        // 对端键 peer（RM 后随名字/对端出信念熄灭，P-04；转发送达的
+        // 资格线在**转发者**离席时熄灭——阻断项 B：原无条件放行让
+        // 除名者续收 RM 帧自身的见证人新 r，A3 封存破）。their_name
+        // 不进入授予判定（自报名=纯显示）；peer 只用于熄灭。
         p.convos
             .iter()
             .filter(|(id, _)| {
                 Some(**id) != exclude
                     && match g.line_bindings.get(id) {
                         Some(LineBinding::Name(n)) => belief.contains(n),
-                        Some(LineBinding::Qualified { .. }) => true,
+                        Some(LineBinding::Qualified { peer, .. }) => belief.contains(peer),
                         None => false,
                     }
             })
@@ -1899,7 +1927,8 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
         line_bindings: HashMap::from([(
             line,
             LineBinding::Qualified {
-                via: introducer_hint,
+                via: introducer_hint.clone(),
+                peer: introducer_hint,
             },
         )]),
     });
@@ -1950,15 +1979,25 @@ async fn join_genesis(
             seen_bye: std::collections::HashSet::new(),
             left_voices: HashMap::new(),
             witnessed_departs: std::collections::HashSet::new(),
-            // P-15 spec a：送达线获得圈线资格（via=帧内 creator——签名
-            // 补验走 genesis_payload；这条线**不是**「creator 的线」，
-            // 转发送达时对端是中继者，资格语义不误绑）
-            line_bindings: HashMap::from([(
-                src_line,
-                LineBinding::Qualified {
-                    via: creator.clone(),
-                },
-            )]),
+            // P-15 spec a：送达线获得圈线资格。双键：via=帧内 creator
+            //（签名补验走 genesis_payload；这条线**不是**「creator 的
+            // 线」，转发送达时对端是中继者，资格语义不误绑）；peer=
+            // 送达线对端的 0x05 自报名捕获快照（A2 认可的唯一线对端
+            // 感知源）——撤销/路由/见证三判定都读它（阻断项 B 修复）
+            line_bindings: {
+                let peer = p
+                    .convos
+                    .get(&src_line)
+                    .map(|c| c.their_name.clone())
+                    .unwrap_or_default();
+                HashMap::from([(
+                    src_line,
+                    LineBinding::Qualified {
+                        via: creator.clone(),
+                        peer,
+                    },
+                )])
+            },
         });
         let mut frame = Vec::with_capacity(8 + 130 + my_name.len());
         frame.extend_from_slice(&circle_id.to_be_bytes());
@@ -3272,7 +3311,10 @@ async fn ear(
                     .get(&id)
                     .and_then(|b| match b {
                         LineBinding::Name(n) => Some(n.clone()),
-                        LineBinding::Qualified { via } => Some(via.clone()),
+                        // peer 键修复：资格线读**线对端**（不是授予者
+                        // via）——死线断的是我与对端的连接，见证的
+                        // 离席者是对端本人
+                        LineBinding::Qualified { peer, .. } => Some(peer.clone()),
                     })
                     .filter(|n| {
                         g.members.contains_key(n) || g.left_voices.contains_key(n)
@@ -3641,7 +3683,9 @@ pub mod rogue {
                 if let Some(b) = g.line_bindings.get(id) {
                     let desc = match b {
                         LineBinding::Name(n) => format!("name:{n}"),
-                        LineBinding::Qualified { via } => format!("qualified:{via}"),
+                        LineBinding::Qualified { via, peer } => {
+                            format!("qualified:via={via} peer={peer}")
+                        }
                     };
                     v.push((*id, c.their_name.clone(), desc));
                 }
@@ -3814,21 +3858,54 @@ mod tests {
     }
 
     #[test]
-    fn 线绑定_生死周期_资格随除名熄灭_名字绑定留见证() {
-        // P-15：Qualified{via:X} 随 RM(X) 急切撤销（P-04——RM 载荷携带
-        // 见证人新 r，资格续命=除名者凑齐新 K）；Name(X) 不撤（路由由
-        // 信念检查熄灭，绑定保留给迟到告别的见证判定 points_to(X)）；
-        // apply_add 同名重入清 Name(X)（旧身体的线不得复明）。
+    fn 线绑定_生死周期_对端键熄灭_授予键留溯源() {
+        // P-15（peer 键修复，阻断项 B）：撤销键=线对端 peer，不是授予者
+        // via——转发线（via=creator、peer=转发者）随**转发者**离席熄灭
+        //（RM 载荷携带见证人新 r，资格续命=除名者凑齐新 K）；创作者
+        // 离席只撤 peer==creator 的线（直连线），通往仍在席转发者的
+        // 中继线不再被过度撤销。Name(X) 不撤（路由由信念检查熄灭，
+        // 绑定保留给迟到告别的见证判定 points_to(X)）；apply_add
+        // 同名重入清 Name(X) 与 Qualified{peer:X}（旧身体的线不得复明
+        // ——收尾项 C：crash 见证不得经旧绑定+新 members 误逐新任期）。
         let cid = 0x0E2E_u64;
         let mut g = four_person_gathering();
-        // 装上三条线：1→Name(Carol)，2→Qualified{via:Carol}，
-        // 3→Qualified{via:Dave}（对照组）
+        // 装上五条线：1→Name(Carol)；2→Qualified{via:Carol, peer:Carol}
+        //（Carol 的直连星形送达线）；3→Qualified{via:Alice, peer:Carol}
+        //（转发线：Carol 转发的 genesis 送达——via=创作者 Alice）；
+        // 4→Qualified{via:Alice, peer:Dave}（Dave 的直连线，对照组）；
+        // 5→Qualified{via:Dave, peer:Carol}（Carol 转发线，对照二）
         g.line_bindings.insert(1, LineBinding::Name("Carol".into()));
-        g.line_bindings
-            .insert(2, LineBinding::Qualified { via: "Carol".into() });
-        g.line_bindings
-            .insert(3, LineBinding::Qualified { via: "Dave".into() });
-        // Carol 离席（见证人 Bob 旋转）
+        g.line_bindings.insert(
+            2,
+            LineBinding::Qualified {
+                via: "Carol".into(),
+                peer: "Carol".into(),
+            },
+        );
+        g.line_bindings.insert(
+            3,
+            LineBinding::Qualified {
+                via: "Alice".into(),
+                peer: "Carol".into(),
+            },
+        );
+        g.line_bindings.insert(
+            4,
+            LineBinding::Qualified {
+                via: "Alice".into(),
+                peer: "Dave".into(),
+            },
+        );
+        g.line_bindings.insert(
+            5,
+            LineBinding::Qualified {
+                via: "Dave".into(),
+                peer: "Carol".into(),
+            },
+        );
+        // Carol 离席（见证人 Bob 旋转）：一切 peer==Carol 的线熄灭
+        //（直连星形线 2 + 转发线 3/5——阻断项 B 的三个面）；
+        // peer==Dave 的线 4 不受牵连（幸存者收敛）
         let mut bob_row = g.members.get("Bob").unwrap().clone();
         bob_row.rotate_and_resign(cid, &seeded_key(2));
         g.apply_rm("Carol", &bob_row);
@@ -3838,16 +3915,35 @@ mod tests {
         );
         assert!(
             g.line_bindings.get(&2).is_none(),
-            "Qualified{{via:Carol}} 随 RM(Carol) 急切撤销（P-04）"
+            "直连星形线（via==peer==Carol）随 RM(Carol) 熄灭（P-04）"
         );
         assert!(
-            g.line_bindings.get(&3).is_some(),
-            "Qualified{{via:Dave}} 不受 RM(Carol) 牵连（幸存者收敛）"
+            g.line_bindings.get(&3).is_none(),
+            "转发线（via=Alice、peer=Carol）随**对端** Carol 离席熄灭——\
+             阻断项 B：撤销键在 via 时此线续命，RM 帧自身的见证人新 r \
+             即泄漏新 K（A3 回归）"
         );
-        // 路由面：Name(Carol) 熄灭靠信念（Carol 已出名单）
+        assert!(
+            g.line_bindings.get(&5).is_none(),
+            "第二转发面（via=Dave、peer=Carol）同熄"
+        );
+        assert!(
+            g.line_bindings.get(&4).is_some(),
+            "Qualified{{via:Alice, peer:Dave}} 不受 RM(Carol) 牵连（幸存者收敛）"
+        );
+        // 路由面：Name(Carol) 熄灭靠信念（Carol 已出名单）；
+        // 线 4 的路由靠 peer=Dave ∈ 信念
         let belief = g.belief_names();
         assert!(!belief.contains("Carol"), "Carol 已出信念");
-        // 同名重入：Name(Carol) 清账（新任期新线），Dave 的资格线不动
+        assert!(belief.contains("Dave"), "Dave 仍在信念");
+        // 见证键读 peer：线 4（via=Alice、peer=Dave）指向 Dave——
+        // Dave 的告别由此线持有者见证，Alice 的（经此线转达的）不
+        let b4 = g.line_bindings.get(&4).unwrap();
+        assert!(b4.points_to("Dave"), "见证判定读对端 peer");
+        assert!(!b4.points_to("Alice"), "不越权见证授予者（转达非感知）");
+        // 同名重入：Name(Carol) 与 Qualified{peer:Carol} 全清（新任期
+        // 新线——此刻 3/5 已随 RM 熄灭，此处再验 Name 面），Dave 的
+        // 资格线不动
         let carol_new = fixed_row("Carol", 33, 0x0C);
         let mut bob_row2 = g.members.get("Bob").unwrap().clone();
         bob_row2.rotate_and_resign(cid, &seeded_key(2));
@@ -3856,7 +3952,24 @@ mod tests {
             g.line_bindings.get(&1).is_none(),
             "重入清旧任期 Name 绑定"
         );
-        assert!(g.line_bindings.get(&3).is_some(), "重入不牵连他人资格线");
+        assert!(g.line_bindings.get(&4).is_some(), "重入不牵连他人资格线");
+        // 过度撤销消失面（原 via 键行为）：创作者 Alice 离席时，她的
+        // 直连线（peer==Alice）熄灭，但通往仍在席转发者的中继线
+        // （via==Alice、peer=转发者）保留——星心中继不再随创作者
+        // 离席断路
+        let mut bob_row3 = g.members.get("Bob").unwrap().clone();
+        bob_row3.rotate_and_resign(cid, &seeded_key(2));
+        g.apply_rm("Alice", &bob_row3);
+        assert!(
+            g.line_bindings.get(&4).is_some(),
+            "RM(Alice) 不牵连 via==Alice、peer==Dave 的中继线\
+             （过度撤销面随 peer 键消失）"
+        );
+        // 对照：Dave 自己离席 → 线 4 熄灭（对端键生效）
+        let mut bob_row4 = g.members.get("Bob").unwrap().clone();
+        bob_row4.rotate_and_resign(cid, &seeded_key(2));
+        g.apply_rm("Dave", &bob_row4);
+        assert!(g.line_bindings.get(&4).is_none(), "RM(Dave) 熄灭对端线");
     }
 
     #[test]

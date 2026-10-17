@@ -2105,6 +2105,10 @@ async fn delaying_proxy(target_addr: &str) -> (String, tokio::sync::watch::Sende
     (proxy_addr, gate_tx)
 }
 
+// rogue feature 门控：末尾的名单验态用 roster_snapshot（rogue-only
+// 只读获取器）——canary 契约（settled_decisions.rogue_injection_feature_gated）
+// 要求缺 feature 时恰一条测试响亮失败，编译期符号缺失违约（曾漏门控）
+#[cfg(feature = "rogue")]
 #[tokio::test]
 async fn 迟到告别_墓碑验签_义务守卫幂等() {
     // 2026-10-17 定罪竞态的确定性复现 × P-15 适配。双线分工（确定性
@@ -2236,8 +2240,8 @@ async fn P15_圈外自报名_零圈帧() {
     );
     assert_eq!(bindings.len(), 1, "Bob 只有一条绑定（创作者资格线）：{bindings:?}");
     assert!(
-        bindings[0].2.starts_with("qualified:Alice"),
-        "B-A 是 genesis 送达的资格线：{bindings:?}"
+        bindings[0].2 == "qualified:via=Alice peer=Alice",
+        "B-A 是 genesis 送达的资格线（直连：via==peer==创作者）：{bindings:?}"
     );
 }
 
@@ -2297,15 +2301,18 @@ async fn P15_spec_a_转发创世_圈线资格_非名字误绑() {
     let ma = expect(&mut alice_ev, formed).await;
     assert_eq!(ma, 3, "A 收齐（B 的行经 M 转发）");
     // 绑定断言（成钥前后各一次）：B 只有一条绑定——转发送达的资格线，
-    // via=帧内 creator「Alice」，不是转发者 Mallory 的名字（spec a）
+    // 双键（peer 键修复）：via=帧内 creator「Alice」（溯源——非转发者
+    // 名字误绑，spec a）；peer=转发者 Mallory（0x05 捕获快照——撤销/
+    // 路由/见证三判定读它，转发者离席时此线熄灭）
     for _ in 0..2 {
         let bindings = bob.line_bindings_debug().await.expect("B 的绑定");
         assert_eq!(bindings.len(), 1, "B 只有一条绑定（转发送达线）：{bindings:?}");
         assert!(
-            bindings[0].2 == "qualified:Alice",
-            "spec (a)：资格线 via=帧内 creator，非转发者名字误绑：{bindings:?}"
+            bindings[0].2 == "qualified:via=Alice peer=Mallory",
+            "spec (a)：资格线 via=帧内 creator（非转发者误绑）、\
+             peer=线对端（对端键修复）：{bindings:?}"
         );
-        assert_eq!(bindings[0].1, "Mallory", "线的对端是转发者（自报名仅显示）");
+        assert_eq!(bindings[0].1, "Mallory", "线的对端是转发者（自报名=peer 捕获源）");
     }
     // 放行载体：被扣的直发 genesis 到达 B——同圈重放，当没听见
     //（B-A 线**不获绑**）；A 的凑话 + A 转发的 M 凑话同批到达，
@@ -2316,7 +2323,7 @@ async fn P15_spec_a_转发创世_圈线资格_非名字误绑() {
     // 终态绑定面：仍只有转发送达线（重放不授绑）
     let bindings = bob.line_bindings_debug().await.expect("B 的绑定终态");
     assert_eq!(bindings.len(), 1, "重放不授绑：{bindings:?}");
-    assert_eq!(bindings[0].2, "qualified:Alice");
+    assert_eq!(bindings[0].2, "qualified:via=Alice peer=Mallory");
     // B 说话：走 B-M 资格线 → M 听见；M 转发 → A 听见
     bob.circle_speak("jing zhuan fa ru zuo").await.expect("B 说");
     let got = expect(&mut mallory_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
@@ -2511,4 +2518,216 @@ async fn 离场重入再离场_第二次告别不被吞() {
     bob.circle_speak("wo ye shi").await.expect("B 回");
     let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
     assert_eq!(got.1, "wo ye shi");
+}
+
+// ── P-15 复审阻断项 B / 收尾项 C（2026-10-17 landing audit）─────────
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P15_B_转发资格线_对端离席熄灭_除名者零圈帧() {
+    // 阻断项 B 回归（rulings.2026_10_17_p15_peer_keyed_revocation）：
+    // spec-a 合法化了转发送达——B 经转发者 M 的线入座，绑定
+    // Qualified{via:Alice, peer:Mallory}。撤销键在 via 时：M 离席
+    //（A 的死线见证 RM(Mallory)）→ apply_rm 只撤 via==Mallory →
+    // B 的转发线（via=Alice）续命 → B 把 RM 帧自身（携带见证人 A 的
+    // 旋转新行）泛洪给 M → M 持任期内全部 r 补此一枚即导出新 K →
+    // 永久读后续明文（A3 封存破）。peer 键修复：撤销/路由/见证三判定
+    // 读线对端 peer——M 离席时 B 的转发线熄灭，M 一帧也收不到。
+    // 构造：A(创作者)-M 经 mortal（可杀=A 的死线见证通道）、M-B 直连
+    //（转发通道）、A-B 经 delaying 载体（扣直发 genesis，逼 B 走
+    // M 的转发送达——spec-a 同款确定性构造）。
+    let (alice, mut alice_ev, _a_addr) = spawn_person("Alice").await;
+    let (mallory, mut mallory_ev, mallory_addr) = spawn_person("Mallory").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    // A-M 经 mortal（A 的快照线 Name(Mallory)；abort 即 A 侧死线）
+    let (mproxy, mtask) = mortal_proxy(&mallory_addr).await;
+    alice.dial(&mproxy).await.expect("A-(mortal)-M");
+    expect(&mut alice_ev, met).await;
+    expect(&mut mallory_ev, met).await;
+    // M-B 直连——记 M 侧线号（rogue_frame 的注入通道）
+    mallory.dial(&bob_addr).await.expect("M-B");
+    let (_, m_b, _) = expect(&mut mallory_ev, |e| met(e).filter(|(nm, _, _)| nm == "Bob")).await;
+    expect(&mut bob_ev, met).await;
+    // A-B 经 delaying 载体，扣 A→B 方向
+    let (carrier, gate) = delaying_proxy(&bob_addr).await;
+    alice.dial(&carrier).await.expect("A-(载体)-B");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    gate.send(false).expect("扣载体");
+    // A 开台（名单 [Alice, Bob, Mallory]）→ M 直达入座，B 被扣
+    let n = alice.form_circle().await.expect("开台");
+    assert_eq!(n, 3);
+    // M 转发创世给 B（rogue：转发送达——T0 固有能力的实验室化身）
+    let mut genesis = None;
+    for _ in 0..600 {
+        genesis = mallory.pending_genesis().await;
+        if genesis.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let genesis = genesis.expect("M 的待验公告");
+    mallory.rogue_frame(m_b, rogue::GENESIS, &genesis).await.expect("转发创世");
+    // B 经 M 的线入座（Qualified{via:Alice, peer:Mallory}）；A/M 成钥
+    let mm = expect(&mut mallory_ev, formed).await;
+    assert_eq!(mm, 3, "M 收齐（A 直达 + B 经自己转发的回程）");
+    let ma = expect(&mut alice_ev, formed).await;
+    assert_eq!(ma, 3, "A 收齐（B 的行经 M 转发）");
+    // 绑定形状断言：peer=Mallory（对端键——撤销键）+ via=Alice（溯源）
+    let bindings = bob.line_bindings_debug().await.expect("B 的绑定");
+    assert_eq!(bindings.len(), 1, "B 只有转发送达线：{bindings:?}");
+    assert_eq!(bindings[0].2, "qualified:via=Alice peer=Mallory");
+    // 放行载体 → B 补齐成钥
+    gate.send(true).expect("放载体");
+    let mb = expect(&mut bob_ev, formed).await;
+    assert_eq!(mb, 3);
+    // ── M 离席：杀 A-M mortal → A 持死线（她的 M 线绑定 Name(Mallory)
+    // 指向 M）→ crash 见证 RM(Mallory)：先应用（M 除名+墓碑+A 行旋转）
+    // 后泛洪（A-B 载体线送达 B；A 的 M 线已随信念熄灭不发）。
+    // M 侧同根：她的 A 线（Qualified{peer:Alice}）也断了——她按 A2
+    // 诚实地见证「Alice 离席」（她的 RM 无出线——M 侧对 B 从未绑定
+    // ——本地 apply 一份本地事件，无帧出境，rm_false_witness 家族的
+    // 测试构造副作用，先收掉再断言帧面）
+    mtask.abort();
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 2, "A 的见证 RM：Mallory 除名");
+    assert!(ra.1.contains("Mallory"), "变更点名离场者：{}", ra.1);
+    let rb = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(rb.0, 2, "B 应用 A 的 RM：Mallory 除名");
+    let rm_self = expect(&mut mallory_ev, rekeyed).await;
+    assert!(
+        rm_self.1.contains("Alice"),
+        "M 的自身死线见证（本地事件，非帧到达）：{}",
+        rm_self.1
+    );
+    // B 的转发线随**对端** M 离席熄灭（peer 键）——修复前 via=Alice
+    // 续命，B 会把 RM 帧泛洪到 M 的活线（M-B 直连未断）
+    let bindings = bob.line_bindings_debug().await.expect("B 的绑定终态");
+    assert!(
+        bindings.iter().all(|(_, their, _)| their != "Mallory"),
+        "B 的 Mallory 线无绑定（对端离席熄灭）：{bindings:?}"
+    );
+    // M 零圈帧：她的旧桌还在（mortal 只杀了 A 侧线，她没 bye——
+    // 最坏恶意者：起身离席但线还连着）。修复前 B 转发的 RM 到达她的
+    // 活线 → 她的应用器照跑（CircleRekeyed）+ 拿到 A 的新 r。修复后
+    // 一帧不到——连 mumble 都没有
+    assert_quiet(&mut mallory_ev, 2000, |ev| {
+        matches!(
+            ev,
+            Event::CircleRekeyed { .. }
+                | Event::CircleMumble { .. }
+                | Event::CircleFormed { .. }
+                | Event::CircleRejected { .. }
+                | Event::Heard { .. }
+        )
+    })
+    .await;
+    // 幸存者照常说（A-B 载体线双向；A 只应用了自己的 RM，B 应用了
+    // 同一帧——同钥收敛）
+    alice.circle_speak("xing cun zhe dui hua").await.expect("A 说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+    assert_eq!(got.1, "xing cun zhe dui hua");
+    // M 继续静默（A 的 M 线死+信念熄灭；B 无出线到她）
+    assert_quiet(&mut mallory_ev, 1500, |ev| {
+        matches!(ev, Event::CircleRekeyed { .. } | Event::CircleMumble { .. } | Event::Heard { .. })
+    })
+    .await;
+    // A4 点名自愈（复审确认项）：M 离席后 B 的出话路径只剩半开边
+    //（B-M 熄灭、B-A 无绑定——中继反方向结构性无资格，见 A 项入档）
+    // → B 说不出；B 重跑 /circle 点名 = 创世同构重绑线（快照全量
+    // Name 绑定 + 送达绑定）→ 出话路径恢复。M 的 B 线还连着 →
+    // 她被重新邀请（A4：社会连续——重新聚首是谁的会话就邀谁，
+    // 裁决权在人类；恶意者被重邀是新圈的合法成员，非泄漏）
+    bob.form_circle().await.expect("点名");
+    let ma = expect(&mut alice_ev, formed).await;
+    let mb2 = expect(&mut bob_ev, formed).await;
+    assert_eq!((ma, mb2), (3, 3), "点名新圈（A/B/M 的线都在 B 的会话里）");
+    bob.circle_speak("dian ming hou wo neng shuo le").await.expect("B 说（自愈）");
+    let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
+    assert_eq!(got.1, "dian ming hou wo neng shuo le");
+}
+
+// rogue feature 门控：绑定验态用 line_bindings_debug（rogue-only）
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P15_C_同名重入_crash见证不误逐新任期() {
+    // 收尾项 C（audit 裁定的真风险轴）：v1 离席（B 的 v1 线 Name(Carol)
+    // 绑定按迟到告别设计**保留**）→ v2 同名新钥经 seat flow 重入
+    //（apply_add 清账：Name(Carol) 与 Qualified{peer:Carol} 全清——
+    // 旧身体的线不得因新身体入座而复明）→ v1 的线死 → crash 见证
+    // 读死线绑定——**已清** → 无据 RM 不发。若绑定未清：指向名
+    // Carol 在 members 命中 v2（members-only 与 union 两变体都经
+    // members 分支暴露）→ 无据 RM 逐出 v2。作用域：清除发生在
+    // apply_add 内，先于引荐人 complete_bring 写入 v2 的新绑定
+    //（调用结构保证）；v2 自己的新绑定（引荐人线 Name(Carol)）在
+    // 清除后存活。
+    let (alice, mut alice_ev, bob, mut bob_ev) = two_open_circle().await;
+    // v1 经 mortal 线入席（杀线不杀进程——线死时点可控）
+    let (carol1, mut _carol1_ev, carol1_addr) = spawn_person("Carol").await;
+    let (c1proxy, c1task) = mortal_proxy(&carol1_addr).await;
+    bob.dial(&c1proxy).await.expect("B-(mortal)-C1");
+    expect(&mut bob_ev, met).await;
+    expect(&mut _carol1_ev, met).await;
+    bob.bring(None).await.expect("看座#1");
+    expect(&mut _carol1_ev, seat_offered).await;
+    carol1.sit(None).await.expect("落座#1");
+    let r = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(r.0, 3);
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 3);
+    let m1 = expect(&mut _carol1_ev, formed).await;
+    assert_eq!(m1, 3);
+    // v1 圈离席但 mortal 线保留：她拨无关者 X 并聚焦 → bye() 断的是
+    // X 线（圈告别走 mortal 线〔their_name=Bob ∈ 信念〕，1:1 空帧
+    // 道别只发聚焦的 X 线）
+    let (_x, _x_ev, x_addr) = spawn_person("Xia").await;
+    carol1.dial(&x_addr).await.expect("C1-X（bye 吸引线）");
+    expect(&mut _carol1_ev, met).await;
+    carol1.bye().await.expect("v1 告别（断 X 线，保 mortal 线）");
+    // B 直接接收（v1 线 Name(Carol) points_to ✓）→ 见证 RM₁；
+    // A 经 B 转发应用。B 的 v1 线绑定 Name(Carol) 保留（迟到告别）
+    let rb = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(rb.0, 2, "RM₁：v1 除名（墓碑写入）");
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 2);
+    // v2 同名入席（新进程、新嗓音钥、新 r）
+    let (carol2, mut carol2_ev, carol2_addr) = spawn_person("Carol").await;
+    bob.dial(&carol2_addr).await.expect("B-C2");
+    expect(&mut bob_ev, |e| met(e).filter(|(nm, _, _)| nm == "Carol")).await;
+    expect(&mut carol2_ev, met).await;
+    bob.bring(None).await.expect("看座#2");
+    expect(&mut carol2_ev, seat_offered).await;
+    carol2.sit(None).await.expect("落座#2（新任期）");
+    let r = expect(&mut bob_ev, rekeyed).await;
+    assert_eq!(r.0, 3, "重入 ADD（清账+新行）");
+    let ra = expect(&mut alice_ev, rekeyed).await;
+    assert_eq!(ra.0, 3);
+    let m = expect(&mut carol2_ev, formed).await;
+    assert_eq!(m, 3);
+    // 绑定验态：B 的 name:Carl 绑定恰一条——v2 的新线（v1 的 mortal
+    // 线绑定已被 apply_add 清除；v2 线在清除后写入）
+    let bindings = bob.line_bindings_debug().await.expect("B 的绑定");
+    let carol_lines: Vec<_> = bindings
+        .iter()
+        .filter(|(_, their, _)| *their == "Carol")
+        .collect();
+    assert_eq!(carol_lines.len(), 1, "恰一条 Carol 绑定（v1 清、v2 在）：{bindings:?}");
+    assert_eq!(carol_lines[0].2, "name:Carol", "v2 的新绑定存活");
+    // 杀 v1 的 mortal 线：B 侧死线 → crash 见证读绑定——已清 →
+    // 无据 RM 不发（若未清：指向名命中 members 里的 v2 → 逐出新任期）
+    c1task.abort();
+    assert_quiet(&mut bob_ev, 2000, |ev| {
+        matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
+    })
+    .await;
+    assert_quiet(&mut alice_ev, 1500, |ev| {
+        matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
+    })
+    .await;
+    // v2 无恙：照常说，A 听见（名单里她的行还在）
+    carol2.circle_speak("xin ren qi hao hao de").await.expect("v2 说");
+    let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
+    assert_eq!(got.1, "xin ren qi hao hao de");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
+    assert_eq!(got.1, "xin ren qi hao hao de");
 }

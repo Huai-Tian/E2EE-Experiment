@@ -7,13 +7,14 @@
 #              NORMATIVE (constraints), not decoration. File body is pure YAML.
 #              STRUCTURAL INVARIANT: the whole file MUST parse as ONE valid
 #              YAML document.
-# SCOPE      : as-built facts describe HEAD (v3 slice-1..6 landed 2026-10-15/16 —
-#              P3 complete: roster/genesis/seat flow/SAS/判例矩阵; pre-3.0.0-release:
-#              P4 removal face + P5 android + P6 nesting pending). group_v3.nested_circles
-#              and pending_work carry OWNER-SETTLED DESIGNS not yet written — every
-#              such block is status-tagged. NEVER document planned work as built;
-#              NEVER re-propose anything listed in settled_decisions (rejected
-#              items = permanent rejection).
+# SCOPE      : as-built facts describe HEAD (v3 slice-1..6 landed 2026-10-15/16,
+#              P15 landed + landing-audit closed 2026-10-17 —
+#              P3 complete: roster/genesis/seat flow/SAS/判例矩阵 + 线绑定（peer 键撤销）;
+#              pre-3.0.0-release: P4 removal face + P5 android + P6 nesting pending).
+#              group_v3.nested_circles and pending_work carry OWNER-SETTLED DESIGNS
+#              not yet written — every such block is status-tagged. NEVER document
+#              planned work as built; NEVER re-propose anything listed in
+#              settled_decisions (rejected items = permanent rejection).
 #
 # THE ONE RULE ABOVE ALL RULES: 本项目的第一性原理是对人类社会物理对话的
 # 抽象（见 theory 四公理）。任何设计决策、任何代码变更、任何你（AI）想提的
@@ -118,6 +119,8 @@ theory:
     2026_10_16_sas_format: "SAS 短词 = 12 位数字分 4 组（123 456 789 012，约 40bit）。人类工程学：电话念 12 位分组数字是数十年验证过的仪式；安全性：与 ZRTP 20-30bit 相比更保守，且每次聚首新鲜、不累积不持久。1:1 从 Noise transcript 哈希派生，群从 HKDF(K, \"circle-sas\") 派生。"
     2026_10_17_left_voices_tombstone: "left_voices（圈内嗓音墓碑：名字→公钥；apply_rm 除名时写入；随圈生灭，点名重置，进程死亡）——A2 直接推导：我的信念记得她走过，墓碑是信念的一部分，与名单同族非新物种。用途：迟到直接告别帧的验签（RM 先到、名单已除名时，直接接收者经 members ∪ left_voices 取公钥验签后照常发见证 RM——幂等应用正是 rm_multiplicity 语义；转发接收者的提前跳过保留，旧闻无害）。四条精化随裁决钉死：① 名字复用优先级——members 优先于墓碑，ADD 应用时清除该名字的墓碑条目；② bye 去重键 = 签名而非裸名字（Ed25519 确定性（RFC 8032）⇒ sig 即事件 ID：同事件重放同 sig 被去重，重入后新钥新 sig 放行——裸名字键在『离场→重入→再离场』下吞掉第二次告别；flood_key 注释的『告别用名字』预留被本裁决取代）；去重在验签之后（集合只收有效签名，垃圾进不了集合）；③ 墓碑只存公钥非秘密——不 Zeroizing，RAM-only 零持久化不受影响；有界性：对抗 ADD/RM 循环可增长但每轮受 seat-flow 成本约束，接受为已知边界；④ 衍生检查项（已回答 2026-10-17，升级立案 P-15）：别名映射本身结构性无碰撞（仅 seat flow 写入、按对话编号键控，无自报名合并路径）；但基础路由第一判定 their_name（0x05 密文内自报、无验证）构成 P-02 重生面——自报名即入路由 → 圈帧送入攻击者 Noise 会话 → 收齐 r 得 K → 静默旁听。已立案 P-15 判例（方向 a 线绑定），规格裁决见 theory.rulings.2026_10_17_p15_line_binding_spec。crash 路径 witness_ctx 同步改 members ∪ left_voices。"
     2026_10_17_p15_line_binding_spec: "P-15 方向 a 规格裁决（owner 复核编码模型立案，追认五条精化 + 两处 spec 钉死 + 实现授权）。五条精化全部追认：① 三种线绑定行为（form_circle 发起者快照=创世名单裁决复用——名单本就扫自她自己的线，自洽感知宣誓；0x0F 送达绑定；seat flow 双侧绑定=封桌裁决『新人命运必然经引荐人』的必然后果——0x10/0x12 是 1:1 直发帧，到达绑定无转发歧义）② 两个负结果入档（0x09 凑话到达不绑线——泛洪帧署名者≠线的对端、转发与直达不可区分，绑它=用别人的嗓音给自己的线授权，且捕获合法 0x09 重放即得圈线资格；『验签发言绑线』死码拒绝——信念路由决定发言只从已绑线发出，机制永不可达=投机机器）③ genesis direct-lock 退役（creator==their_name 本身就是一处 their_name 检查=P-15 攻击面在创世处的实例，退役是同一修复的完成而非新裁决；幻影圈等价 1:1、/word 群词可检，走 P-08/T5 既有模型）④ P-05/见证判定连带迁移（必要非清理：crash 路径见证判定读 their_name + 攻击者自报成员名 → 其线被当成员线 → 杀线触发伪证 RM 逐出真成员，全程无需伪造任何签名；顶替场景『直连声明取代』退为『响亮冲突+点名』——两个身体同名是两个身体（A1）、自报不是感知（A2）、裁决权在人类（A4），是修正不是退化）⑤ 已知代价诚实入档（发起者中继瓶颈、/circle 全量重绑；瓶颈死亡场景退化为 mumble→点名，A4 完整保留）。方向 a 凭证枚举勘误：owner 原枚举含『凑话到达』，编码模型剪枝正确，追认。两处 spec 钉死：(a) 0x0F 送达绑定的语义 = 圈线资格（该线获得此圈的路由资格），非 creator 名字绑定——链式拓扑下 0x0F 经成员转发到达，线的对端不是 creator；creator 身份来自帧内签名而非线，绑定若写成名字绑定则链式成员误绑转发者为 creator，结构性错误。(b) 0x12 重放面显式断言：前成员重放历史自签 0x12（行级 contrib_sig 用旧公钥永远可验——A1 一次性嗓音但公钥不撤销）→ 若到达绑定授予线资格 → 安全性依赖『每次离席必旋转一行（见证人 fresh r）』不变量：离席者必缺 ≥1 枚现行 r，无 K；其名单外发言被 P-03 响亮拒，最坏流量黑洞、点名恢复。此安全性不得靠 incidental 成立——不变量钉为测试断言，任何未来改动若允许无旋转离席，0x12 重放面即静默失效。簿记三项：P-14 补录（slice-4 落地的行内 sig_pk 与名单一致性检查追溯占号）；P-15 立项带『slice-6 前必修』标注（测试矩阵 P-02 条目在恶意自报变体下不成立，无依赖≠次序自由）；判例 8 条断言与矩阵条目映射核对（防并入遗漏）。实现授权：P15_line_binding_routing 开工——绑定结构、四个改写点（genesis 快照 / 0x0F 送达 / seat flow 双侧 / P-05+见证判定迁移）、测试矩阵按本裁决修正后执行。"
+    2026_10_17_p15_landing_audit: "P-15 落地复审（owner，2026-10-17）：主体全部接受（绑定结构、四个改写点、spec-a/spec-b 测试构造）；三个附带修复逐项追认（0x0F 同圈重放闸=incidental 守卫显式化正是 spec-b 纪律；ADD 契约类拒收照转/伪造类终止=星型下拒收者不得当全局守门人；早到凑话去重键时序定罪）。裁量（members ∪ left_voices）接受但同构论证修正：bye 验签的 union 是验签的必要条件，crash 判定的 union 不产生新证据、只是幂等冗余见证——witnessed_departs 守卫兜住，无害。三项裁决：阻断项 B（via 键撤销在中继拓扑下是 A3 回归——泄漏论证只在 via==线对端时成立，spec-a 合法化的转发送达使 via≠对端成为合法状态；pre-P15 的 their_name 查名单结构性封住此面，P-15 引入的是回归不是可声明边界）→ 修复见 rulings.2026_10_17_p15_peer_keyed_revocation；收尾项 A（中继反方向路由机制未入档——M→B 方向在三种绑定行为下无一路取得资格，要求第四行为/路由规则入档 + A2 推导 + 与负结果①②对账）→ 见 group_v3.routing.relay_asymmetry；收尾项 C（名字复用 × crash 见证缺测试——真风险轴是 ADD 同名清除作用域：v1 线死时 crash 见证读旧绑定指向名、在 members 命中 v2 → 无据 RM 逐出新任期，members-only 与 union 两变体都经 members 分支暴露）→ 作用域钉死（清该名全部绑定=Name+Qualified{peer}，先于引荐人写新绑定）+ 集成测试落地。反向错位（creator 离席过度撤销 via==creator 线含通往在席转发者的线）随 peer 键修复消失——过度撤销面不再存在，点名自愈（A4 创世同构重绑线）钉为测试。关闭条件全部达成：B 修复落地（回归测试自证：修复前红/修复后绿）+ A 入档对账 + C 作用域+测试。slice-6 次序不变。连带定罪：canary 契约曾被违约（迟到告别测试未门控 rogue API → 无 feature 时集成测试编译失败——『恰一条响亮失败』被编译期符号缺失取代），随本轮修复。"
+    2026_10_17_p15_peer_keyed_revocation: "阻断项 B 修复裁决（对端键撤销）：Qualified 绑定升为双键 Qualified{via, peer}——via=帧内可验的授予者（genesis creator/seat flow 引荐人 hint），纯溯源不进任何判定；peer=授予时刻送达线对端的 0x05 自报名捕获快照（每线终身不变——握手后首帧定名），成为撤销键/路由键/见证键三判定的唯一读点。公理推导：A3（RM 封存未来）的作用对象是离席者=线对端，不是授予者——撤销键错位在 via 上，转发送达线（via=creator、对端=转发者）就在转发者离席时续命，RM 帧自身携带的见证人新 r 经此线泄漏新 K（先应用后泛洪的时序只保住发起者自己的出线，转发链上每跳的出线由各跳的撤销决定）；A2 认可 peer 为唯一线对端感知源（她在这条线上亲口报的名）——P-15 的功绩是把 their_name 从授予判定退役（自报名不得给予资格），本裁决把它放回熄灭判定（资格的存续以对端在信念为条件）：授予=协议行为（帧内可验），熄灭=信念检查（对端出信念即熄）。四种判定迁移：路由 Qualified{peer}∈belief（原无条件放行=回归根源）；apply_rm 撤 Qualified{peer:离场者}（原 via 键）；apply_add 同名清账扩到 Qualified{peer:重入名}（C 项作用域）；points_to/witness_ctx 见证读 peer（原 via——顺带修正：转发线的对端是转发者，转发者的告别由此线持有者见证，创作者经别线转达的告别不越权见证，感知必须是一跳的）。正向红利：creator 离席不再过度撤销通往在席转发者的中继线（over-revocation 面随键修正消失）。残余面诚实入档（pre-P15 同等暴露、非回归，pk 锚定前不修）：对端 0x05 谎报成员名的资格线在被谎报名离席前持续路由（名字≠身份的既定边界）；谎报名 ∉ 信念的送达线永不路由（fail-closed，转发送达的入座半途而废——pre-P15 同构）。结构性修复方向（提案待 owner 裁决，暂不实现）：线有密码学验证的对端身份锚定——注意本套件 Noise_NN 无 remote static（NN 模式不传静态钥），owner 提示的『Noise remote static』在 NN 下不存在；可行同构是嗓音钥线证明（成员以圈嗓音钥签 circle_id‖线 transcript 哈希，收端按名单行 pk 验证并锚定绑定到 pk——撤销/见证按 pk 而非名字，名字复用与谎报面同时消失），属新协议元素（新帧或送达包装），走 decision_procedure 另案。"
 
   decision_procedure:                       # 编码模型遇到任何设计问题时的裁决流程
     step_1: "找公理依据：提案的每个机制，问它由哪条公理生成。答不出 → 默认拒绝。"
@@ -185,7 +188,7 @@ architecture:
   api_style: "library NEVER prints nor reads stdin nor touches the fs; actions in = metaphor-verb methods; experiences out = Event stream (tokio mpsc); Event/LeaveReason/PersonError are non_exhaustive; errors carry semantics, CLI renders prose"
   modules:
     src/lib.rs:     "crate root: pub mod circle + courier + discover + person + punch + wire; re-exports Person/Events/Event/LeaveReason/PersonError/RosterEntry/Discovered/SasReport; cfg(rogue) re-exports person::rogue"
-    src/person.rs:  "core person model; handshake<S> GENERIC over AsyncRead+AsyncWrite (tcp and UdpPunch alike); ear() dispatches on frame_kind; ZERO printing, ZERO stdin, ZERO fs. v3 adds (slice-1..4): Gathering (voice keypair + roster rows + seats + line-aliases), 0x09 self-certified rows, 0x0A dual-gate, 0x0B RM/ADD (witness/unified introducer, sig_pk-vs-roster consistency), 0x0C signed bye, 0x0F genesis/roll-call, seat flow 0x10/0x11/0x12 (bring/sit + expectation gate + closed-table fork), belief-routed flood with aliases, presence defense (30s wallclock); slice-5: per-convo Noise transcript capture (noise_stage) + sas_word() -> SasReport (NoSasChannel); slice-6: #[cfg(feature=\"rogue\")] pub mod rogue — rogue_frame/rogue_flood/circle_id/roster_snapshot/forge_row, injection via REAL send paths; 2026-10-17 fix: Gathering.left_voices 嗓音墓碑 + witnessed_departs 义务幂等 + bye sig 键去重（验签后）+ 迟到直接告退见证复活（members ∪ left_voices）+ crash 路径 witness_ctx union；P-15: enum LineBinding{Name,Qualified{via}} + Gathering.line_bindings（取代 aliases）——belief_flood 只认绑定 / form_circle 快照 / 0x0F 送达（direct-lock 退役+同圈重放闸）/ seat flow 双侧 / P-05+bye+crash 判定迁移 / ADD 契约类拒收照转"
+    src/person.rs:  "core person model; handshake<S> GENERIC over AsyncRead+AsyncWrite (tcp and UdpPunch alike); ear() dispatches on frame_kind; ZERO printing, ZERO stdin, ZERO fs. v3 adds (slice-1..4): Gathering (voice keypair + roster rows + seats + line-aliases), 0x09 self-certified rows, 0x0A dual-gate, 0x0B RM/ADD (witness/unified introducer, sig_pk-vs-roster consistency), 0x0C signed bye, 0x0F genesis/roll-call, seat flow 0x10/0x11/0x12 (bring/sit + expectation gate + closed-table fork), belief-routed flood with aliases, presence defense (30s wallclock); slice-5: per-convo Noise transcript capture (noise_stage) + sas_word() -> SasReport (NoSasChannel); slice-6: #[cfg(feature=\"rogue\")] pub mod rogue — rogue_frame/rogue_flood/circle_id/roster_snapshot/forge_row, injection via REAL send paths; 2026-10-17 fix: Gathering.left_voices 嗓音墓碑 + witnessed_departs 义务幂等 + bye sig 键去重（验签后）+ 迟到直接告退见证复活（members ∪ left_voices）+ crash 路径 witness_ctx union；P-15: enum LineBinding{Name,Qualified{via,peer}} + Gathering.line_bindings（取代 aliases）——belief_flood 只认绑定（授予=协议行为，熄灭=对端键 peer 过信念检查）/ form_circle 快照 / 0x0F 送达（direct-lock 退役+同圈重放闸）/ seat flow 双侧 / P-05+bye+crash 判定迁移（读 points_to=peer）/ apply_rm 撤 Qualified{peer:leaver} + apply_add 同名清账 Name+Qualified{peer} / ADD 契约类拒收照转"
     src/punch.rs:   "introducer client + punch transport: UdpPunch (frame-per-datagram, echo swallowing); INTRO2 source-checked"
     src/circle.rs:  "group key schedule: derive_group_key (HKDF over byte-sorted contributions, takes &[&[u8]] borrows), derive_sender_subkey, seal/open (ChaCha20Poly1305, nonce = counter ‖ sender-tag); slice-5: sas_word_from_transcript (HKDF(p2p-sas)) / sas_word_from_group_key (HKDF(circle-sas)), 12-digit 4-group format; cfg(rogue): RosterRow::seat_with_r (P-12 injection material); unit tests for order-independence, subkey isolation, SAS derivation, P-13 rotation-seals-history"
     src/courier.rs: "teahouse: serve() wires same-room arrivals, splices raw bytes; serve_introducer on the same udp port; JOIN frame bounded 10s"
@@ -344,9 +347,17 @@ group_v3:
     counter_semantics: "per-sender 单调 counter，跨聚首不重置；去重=最高水位+有界乱序窗口（规约定死，不留实现自由度）；防重放由 counter 承担（epoch 死后这是唯一时间性来源，A1）"
 
   routing:                                   # 信念路由——转发按名单，不按会话集（P-15 已落地：只认线绑定）
-    rule: "圈帧只走圈协议建立的线绑定 − 来源线 − 除名者的线（P-15 方向 a，LANDED 2026-10-17）：Name 绑定（form_circle 快照/complete_bring）须名字在信念名单（RM 后熄灭=断递，P-04）；Qualified 资格线（0x0F/0x10/0x12 送达，spec a：资格即路由，via 不进路由判定）随 RM(via) 急切撤销（P-04：RM 载荷携带见证人新 r，资格续命即泄漏新 K）。their_name（0x05 自报名）降为纯显示，不进入任何路由/裁决/见证判定"
-    kills: "P-02（圈外旁听：成员的圈外 1:1 线再也收不到任何圈帧，连 circle_id 都看不见）；P-04 补话断递（除名者连 topup 都收不到，fresh_r 无从获取）；P-15（自报名路由：冒名线零圈帧，收不齐 r 无 K）"
-    topology_constraint: "连通性收紧为『成员导出子图连通』（创世时发起者的星形天然满足；星心离场=断连=点名重建——现状同样脆，现在写成显式约束）"
+    rule: "圈帧只走圈协议建立的线绑定 − 来源线（P-15 方向 a LANDED 2026-10-17 + 复审 peer 键修复 rulings.2026_10_17_p15_peer_keyed_revocation）：两种绑定同一语义『这条线的对端在我信念里在座』——Name 绑定（form_circle 快照/complete_bring）对行名过信念检查；Qualified 资格线（0x0F/0x10/0x12 送达）对线对端键 peer 过信念检查（peer=授予时刻送达线对端 0x05 自报名捕获快照——A3 封存的作用对象是离席者=线对端，撤销键在授予者 via 上是回归：转发线在转发者离席时续命，RM 帧自身的见证人新 r 经此线泄漏新 K）。授予=协议行为（帧内可验），熄灭=信念检查（对端出信念即熄）；apply_rm 急切撤 Qualified{peer:离场者}（发送路径先应用后泛洪，RM 帧不漏给除名者）；apply_add 同名清账 Name+Qualified{peer}（旧身体的线不得因新身体入座复明）。their_name（0x05 自报名）不进授予判定；peer 捕获快照只用于熄灭/撤销/见证"
+    kills: "P-02（圈外旁听：成员的圈外 1:1 线再也收不到任何圈帧，连 circle_id 都看不见）；P-04 补话断递（除名者连 topup 都收不到，fresh_r 无从获取——含转发送达线在转发者离席时熄灭）；P-15（自报名路由：冒名线零圈帧，收不齐 r 无 K）"
+    topology_constraint: "连通性收紧为『成员导出子图连通』且**强连通**（每方向独立取得资格，见 relay_asymmetry——半开边只承载单向）；创世时发起者的星形天然满足；星心离场=断连=点名重建——现状同样脆，现在写成显式约束"
+    relay_asymmetry:                         # 中继反方向路由机制（复审收尾项 A 入档，2026-10-17）
+      mechanism: "M→B 方向（转发者→经转发送达的入座者）在三种绑定行为下**无一路取得资格**——结构性不存在：M 的线到 B 只能由 M 自己的协议行为绑定（快照=她是 creator、seat flow=她是引荐人、送达=B 递给她 0x0F/0x10/0x12），B 经 M 转发的 genesis 入座只绑定 **B 侧**的 B-M 线（出向），不绑定 M 侧（入向）。转发送达的入座因此是**半开边**：B 的凑话/发言出得去（B→M 资格线），A 的凑话/圈话进不来（M→B 无绑定）——B 的成钥必须经她自己的**另一条**被对端绑定的线（spec-a 测试：A-B 直达线放行后 B 补收凑话成钥；『凑话照收』的是 B 的行照收进 A/M 的名单〔出向工作〕，不是 M→B 承载了任何帧）。B 侧的 A-B 线接收不依赖 B 的绑定（路由是发送方判定）——接收面完整、发送面半开"
+      a2_derivation: "A2：感知只来自直连。M 对『B 在圈里』的知识来自 B 的凑话到达（A2 合法）；但 M 向 B 发圈帧的资格只能来自 M 自己被授予的绑定——**别人的入座不构成我对她线的资格**（B 经 M 的线入座是 B 的感知宣誓，不是 M 的）。半开边是 A2 的诚实推论，不是缺陷：M 想点亮 M→B 只有两条正路——B 对 M 发起 seat flow（complete_bring 绑 M 侧），或点名（B 的快照全量重绑自己的线 + 新 0x0F 送达绑 M 侧，A4 创世同构自愈）"
+      negative_results_reconciliation:      # 与 spec 裁决两个负结果的对账
+        unbound_line_carries: "未获资格的线（发送方无绑定）**零圈帧出向**——belief_flood 在发送侧拒绝，含 r 的帧（0x09 凑话/0x12 座次表）只走发送方已绑定的线。接收方处理到达帧不需要自己的绑定（路由是发送方判定）——到达 ≠ 资格，到达不授予任何东西"
+        contrib_replay: "负结果①对账：捕获合法 0x09 重放给受害者 → 行照收（若名在信念）但转发**排除来源线**（攻击者线一帧也拿不回）且 0x09 到达不绑线（无资格面）——①要防的『重放即得圈线资格』不成立。r 帧流向圈外线的唯一路径=持有 0x0F/0x12 送达帧的伪造递送（成员泄帧/载体 MITM（P-08，SAS 可检）/共谋（成员本有 K）——皆文档化边界，非①回归）；peer 键修复后此面进一步收紧：伪造递送线在谎报名（或真名）出信念时熄灭"
+        speech_binding: "负结果②对账：『验签发言绑线』仍为死码——发言只从发送方已绑线发出，未绑线永远收不到发言，绑它=永不可达的投机机器（spec 裁决原文，peer 键不改变此结论）"
+      their_name_residuals: "发送侧 their_name 残留面清单（P-15 范围外、无 r 泄漏、入档待后续裁决）：circle_bye_frames 的告别 targets 筛选读 belief.contains(their_name)——自报成员名的圈外线可收到 0x0C 告别帧（泄露面=圈号+离场者名+签名，元数据级；0x0C 无 r 无密文，不在 P-02 红线内）"
     carrier_visibility: "茶馆转发的是密文，但 circle_id 是明文（路由需要）——载体知道圈的存在/流量/拓扑。这是桌子的物理（不对称表第 4 行），诚实入档，不修"
 
   rekey:                                     # 换气——点名为真理，补话为捷径
@@ -572,8 +583,8 @@ attack_precedents:
   P_15_self_reported_name_routing:
     attack: "圈外攻击者与任一在座成员建 1:1、在 0x05 自报该成员的名字（自报名密文内、无验证——telephone model 本义允许）→ belief_flood 线资格第一判定 belief.contains(their_name) 直接放行这条线 → 全部圈帧路由进攻击者自己的 Noise 会话：0x09 携带每个成员的 r，收齐即 K=HKDF(sorted r) → 静默旁听整圈（读权限全拿）直到下次换气。P-02 的重生面——P-02 修复的威胁模型隐含假设『圈外对端诚实自报名』。连带同根面（同一 their_name 依赖）：① P-05 直连声明裁决（line_peer==row.name）——自报成员名 + 自署新行即构成『直连声明』顶替暂定行，现行裁决机制可被操纵；② bye/crash 见证人判定（their_name==leaver / their_name∈members）——冒名线可冒领见证、对在座者发伪证 RM（无特权踢人复活）。发现于 2026-10-17 flaky 修复的④号检查项过堂：aliases 取证证明别名机制本身结构无碰撞（complete_bring 是唯一写点），真洞在基础路由第一判定条件"
     root_cause: "A2 违反（映射变体）：线→名字的资格映射从未经圈协议建立——their_name（0x05 自报名）直接充当路由、裁决、见证三类依据。物理世界不存在『自称某人即获得该人的桌位感知与作证资格』：感知只能来自亲手见证（她署名的公告、她被引荐的手续），不能来自自称"
-    fix: "方向 A（owner 裁决 2026-10-17，LANDED 同日）：路由/裁决/见证只认圈协议建立的线绑定（line→名），their_name 降为纯显示。绑定只有三种写入行为，全部是协议行为、无一以自报名为资格：① form_circle 发起者快照——邀请名单本就扫描自发起者自己的线（自洽的感知宣誓，与署名 genesis 同责），快照随成圈写全她的线；② 0x0F 送达——把署名公告递到这条线的人绑为 creator（转发天然良性：受邀者经第二路径入座、同圈号同名单同材料同 K，同圈重放保护既有；伪造 genesis = 幻影圈——join 替换旧桌故无真圈泄漏、二人圈机密性等价 1:1、与真圈 /word 群词必不同，telephone model 边界内）；③ seat flow 双侧——complete_bring 绑引荐人侧候选人线（既有），0x10/0x12 到达绑候选人侧引荐人线（新人的出话路径）。负结果入档（防再提案）：0x09 凑话到达**不**绑线（转发与本人直达在收端不可区分，绑它即开抢注面——新鲜自署行+自报名即可顶替）；发言到达也**不**需要绑线（发言只从发送方已绑的线发出，永远不会落到未绑线上——推演中提出的『验签发言绑线』是惰性机制，已弃）。连带迁移（同根修复，随 slice 落地）：genesis direct-lock（creator==their_name）退役——递署名公告是协议行为，自称不是，0x0F 送达绑定取代之；P-05 直连声明判定与 bye/crash 见证人判定从 their_name 改读线绑定（未绑线 = 非直连声明/非见证——比现行更诚实：自报名从来不该是裁决依据；代价：顶替场景从『直连声明取代』退为『响亮冲突 + 点名』，本来的裁决就可被攻击者操纵，这是修正不是退化）。已知代价（入档 known_limitations.mesh_direct_pair_relay）：发起者之外的 mesh 直连对（双方都不是 creator、也不是 seat-flow 对端）在下次点名前只经发起者中继（双方线未绑，发言只走各自已绑线）；任一成员 /circle 即全量重绑（快照绑一方 + genesis 送达绑另一方）——A4 完整保留，mesh 冗余的恢复路径就是点名。方向 B（自报名撞名响亮冲突）被否：只堵路由面、检测式补丁家族，且不覆盖 P-05/见证连带面。落地形状（实现细节，rulings 2026_10_17_p15_line_binding_spec 两处钉死全遵照）：LineBinding 两形态——Name(String)（快照/bring 写入；路由过信念检查，RM 后随信念熄灭但保留供迟到告别见证判定 points_to；apply_add 同名重入清除）/ Qualified{via}（0x0F/0x10/0x12 送达授予；spec a：名字不进路由判定，资格即路由；via 仅用于 RM 急切撤销与创作者星形离场的见证判定）；apply_rm 急切撤销 Qualified{via:离场者}；ADD 处理器的契约类拒收（名字冲突/r 碰撞/封桌——签名已验过的合法帧）照转（星型路由下静默丢弃会让下游成员看不见违约尝试，违反『让违约响亮』；伪造类拒收仍到此为止）；同圈创世重放检查显式补上（direct-lock 退役后的唯一重放闸，先于绑定——重放不得授绑）"
-    test: "圈外线自报成员名 → 零圈帧到达（路由不看 their_name）；已除名者重放凑话/发言 → 线不获绑（P-04 断递保持）；星型成圈说话点名全通（快照+送达绑定全覆盖）；链式经逐跳已绑线中继；mesh 直连对：点名前经发起者中继互通、任一方点名后直达恢复；伪造 genesis → 加入者与伪造者成二人圈且与真圈 /word 群词不同（确定性断言）；冒名+自署行顶替（P-05 迁移面）→ 未绑线非直连声明 → 响亮冲突不静默顶替；冒名线断开 → 不冒领见证（无伪证 RM）"
+    fix: "方向 A（owner 裁决 2026-10-17，LANDED 同日）：路由/裁决/见证只认圈协议建立的线绑定（line→名），their_name 降为纯显示。绑定只有三种写入行为，全部是协议行为、无一以自报名为资格：① form_circle 发起者快照——邀请名单本就扫描自发起者自己的线（自洽的感知宣誓，与署名 genesis 同责），快照随成圈写全她的线；② 0x0F 送达——把署名公告递到这条线的人绑为 creator（转发天然良性：受邀者经第二路径入座、同圈号同名单同材料同 K，同圈重放保护既有；伪造 genesis = 幻影圈——join 替换旧桌故无真圈泄漏、二人圈机密性等价 1:1、与真圈 /word 群词必不同，telephone model 边界内）；③ seat flow 双侧——complete_bring 绑引荐人侧候选人线（既有），0x10/0x12 到达绑候选人侧引荐人线（新人的出话路径）。负结果入档（防再提案）：0x09 凑话到达**不**绑线（转发与本人直达在收端不可区分，绑它即开抢注面——新鲜自署行+自报名即可顶替）；发言到达也**不**需要绑线（发言只从发送方已绑的线发出，永远不会落到未绑线上——推演中提出的『验签发言绑线』是惰性机制，已弃）。连带迁移（同根修复，随 slice 落地）：genesis direct-lock（creator==their_name）退役——递署名公告是协议行为，自称不是，0x0F 送达绑定取代之；P-05 直连声明判定与 bye/crash 见证人判定从 their_name 改读线绑定（未绑线 = 非直连声明/非见证——比现行更诚实：自报名从来不该是裁决依据；代价：顶替场景从『直连声明取代』退为『响亮冲突 + 点名』，本来的裁决就可被攻击者操纵，这是修正不是退化）。已知代价（入档 known_limitations.mesh_direct_pair_relay / relay_half_open_edge）：发起者之外的 mesh 直连对（双方都不是 creator、也不是 seat-flow 对端）在下次点名前只经发起者中继（双方线未绑，发言只走各自已绑线）；任一成员 /circle 即全量重绑（快照绑一方 + genesis 送达绑另一方）——A4 完整保留，mesh 冗余的恢复路径就是点名。方向 B（自报名撞名响亮冲突）被否：只堵路由面、检测式补丁家族，且不覆盖 P-05/见证连带面。落地形状（实现细节，rulings 2026_10_17_p15_line_binding_spec 两处钉死全遵照）：LineBinding 两形态——Name(String)（快照/bring 写入；路由过信念检查，RM 后随信念熄灭但保留供迟到告别见证判定 points_to；apply_add 同名重入清除）/ Qualified{via, peer}（0x0F/0x10/0x12 送达授予；spec a：名字不进路由判定；**peer 键修复（复审阻断项 B，rulings.2026_10_17_p15_peer_keyed_revocation）**：via=帧内授予者纯溯源，peer=授予时刻线对端 0x05 捕获快照——路由 Qualified{peer}∈belief、apply_rm 撤 Qualified{peer:离场者}、apply_add 同名清账含 Qualified{peer}、见证 points_to 读 peer；撤销键曾错位在 via 上=转发送达线在转发者离席时续命泄漏 RM 帧新 r，A3 回归，回归测试自证修复前红/修复后绿）；ADD 处理器的契约类拒收（名字冲突/r 碰撞/封桌——签名已验过的合法帧）照转（星型路由下静默丢弃会让下游成员看不见违约尝试，违反『让违约响亮』；伪造类拒收仍到此为止）；同圈创世重放检查显式补上（direct-lock 退役后的唯一重放闸，先于绑定——重放不得授绑）"
+    test: "圈外线自报成员名 → 零圈帧到达（路由不看 their_name）；已除名者重放凑话/发言 → 线不获绑（P-04 断递保持）；星型成圈说话点名全通（快照+送达绑定全覆盖）；链式经逐跳已绑线中继；mesh 直连对：点名前经发起者中继互通、任一方点名后直达恢复；伪造 genesis → 加入者与伪造者成二人圈且与真圈 /word 群词不同（确定性断言）；冒名+自署行顶替（P-05 迁移面）→ 未绑线非直连声明 → 响亮冲突不静默顶替；冒名线断开 → 不冒领见证（无伪证 RM）。复审追加（2026-10-17 landing audit）：阻断项 B 回归——转发送达线（via=creator、peer=转发者）在转发者离席时熄灭 + 除名者零圈帧（含 RM 帧自身）+ 幸存者同钥对话 + 点名自愈重绑出话路径（P15_B_转发资格线_对端离席熄灭_除名者零圈帧，修复前红/修复后绿自证）；收尾项 C——v1 离场后 v2 同名入席，v1 线死时 crash 见证读已清绑定 → 无据 RM 不发、v2 无恙、v2 新绑定在清除后存活（P15_C_同名重入_crash见证不误逐新任期）；单元——对端键熄灭/授予键留溯源/过度撤销消失/同名清账（线绑定_生死周期_对端键熄灭_授予键留溯源）"
 
 # ───────────────────────────────────────────────────────────────
 # KNOWN LIMITATIONS — honest edges; do NOT paper over in docs
@@ -587,7 +598,9 @@ known_limitations:
     no_sas_no_theorem: "无 SAS 仪式则机密性定理无法陈述（T5）——对词是给愿意谨慎的人的工具，不对账是用户的自由"
   left_voices_growth: "嗓音墓碑随离席累积（对抗 ADD/RM 循环可增长）——每轮受 seat-flow 成本约束，随圈生灭（点名重置、进程死亡），RAM-only 零持久化；接受为已知边界（rulings 2026_10_17_left_voices_tombstone ③）"
   mesh_direct_pair_relay: "P-15 线绑定代价：发起者之外的 mesh 直连对（双方都不是 creator、也不是 seat-flow 对端）在下次点名前只经发起者中继（双方线未绑，发言只走各自已绑线）；创作者星心离场=分叉静默（两幸存者的 RM 无路互达，各自单旋转不同钥）——mumble/T1 语义，点名即全量重绑恢复。A4 完整保留：mesh 冗余的恢复路径就是点名（rulings 2026_10_17_p15_line_binding_spec ⑤）"
-  p15_seat_flow_via_hint: "P-15 残余：候选人侧 0x12 建圈的 Qualified{via} 取 0x10 到达线的自报名为 hint（0x12 无整帧签名）——via 仅用于该线 RM 急切撤销与见证判定，非身份断言（spec a）；引荐人自报名错误的代价：她离席时新人的这条线不熄灭/不触发见证——新人侧感知损失，无泄漏面（她的 r 不在任何 K 里当且仅当她真离席旋转了）。可随未来 0x12 整帧签名升级消除，暂入档不修"
+  relay_half_open_edge: "转发送达的入座是半开边（复审收尾项 A 入档，见 group_v3.routing.relay_asymmetry）：B 经 M 转发的 genesis 入座只取得 B→M 出向资格，M→B 入向结构性无资格（M 侧三种绑定行为无一覆盖）——B 的成钥依赖她自己另一条被对端绑定的线；中继者离席后 B 的出向亦熄灭（peer 键）→ 发送面归零=听见不了=响亮（A4 点名重绑自愈，测试钉死）。同族：中继者若中途诚实点亮反向（对 B 发起 seat flow）则边转全通——机制已存在，无需新协议元素"
+  p15_fake_name_peer_residual: "peer 键修复的残余面（pre-P15 同等暴露、非回归，pk 锚定前不修）：资格线对端 0x05 谎报成员名 → 该线在被谎报名离席前持续路由（名字≠身份既定边界——谎报者须先持 0x0F/0x12 送达帧，成员泄帧/MITM(P-08)/共谋皆文档化边界）；谎报名 ∉ 信念的送达线永不路由（fail-closed，入座半途而废——pre-P15 同构）。结构性修复=嗓音钥线证明锚定 pk（提案见 rulings.2026_10_17_p15_peer_keyed_revocation 尾段，待 owner 裁决）"
+  p15_seat_flow_via_hint: "P-15 残余：候选人侧 0x12 建圈的 Qualified 取 0x10 到达线的自报名为 hint（0x12 无整帧签名）——peer 键修复后 hint 同时落 via（溯源）与 peer（撤销/路由/见证键）：引荐人自报名=她的行名（常态）时三判定全对；自报名≠行名（引荐人本人覆盖落座名的罕见合成）时该线 fail-closed（peer ∉ 信念 → 永不路由）——pre-P15 同构的 liveness 边角，点名自愈，无泄漏面。可随未来 0x12 整帧签名升级消除，暂入档不修"
   sleeping_member_false_rm: "沉睡成员可被伪证 RM 临时驱逐；回来发言即 mumble → 点名回归；入档不修（群钥固有+物理等价已论证）"
   newcomer_roster_is_copy: "封桌被拒的新人（或任何刚拿到 0x12 的人）手里的座次表是引荐人信念的复印件，不是活视图——她看到五个名字却只听见引荐人说话时，可能不知道自己被拒了，除非引荐人告诉她。物理对应：朋友拿到一张座次表，但那只是引荐人的说法。不修——修法是『拒绝通告帧』，那是同步机 creeping back；A2 推到极致：连你手里的座次表都只是别人的直连感知"
   closed_table_dos_surface: "恶意成员在封桌圈反复 /bring 的 DoS 面极小：第一次 fork 后，后续 /bring 都作用于她自己已分叉的信念（她的信念里已有 N₁，第二次加 N₂……），其余成员的对话完全不受影响，代价只是响亮事件和与她的 mumble。成员间对 open/closed 信念不一致时同理：各自应用/不应用——同一部机器（T1 fork → mumble → 点名），无需新机制"
@@ -637,10 +650,11 @@ pending_work:
     depends: []
     parallelizable: true
     scope: "PR_SET_DUMPABLE(0)（P-10，结构解）；punch tag 三层规则（省略 TAG→自动 128bit 上屏转告（Crockford base32 分组）；显式短标签→响亮警告照用，文案写明 PAKE 补偿关系）；padded_chat 分桶填充（P-11）；counter 去重=最高水位+有界乱序窗口（规约定死）"
-  P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17）
-    status: complete-2026-10-17             # LANDED 同日：LineBinding 两形态（Name/Qualified{via}）+ 三写入行为 + 四判定迁移 + 契约类拒收照转 + 同圈创世重放闸 + 判例矩阵全绿（69 测试：16 单元 + 52 集成 + 1 pq）
+  P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17；落地复审 2026-10-17 闭环）
+    status: complete-2026-10-17             # LANDED 同日：LineBinding 两形态 + 三写入行为 + 四判定迁移 + 契约类拒收照转 + 同圈创世重放闸 + 判例矩阵全绿；复审（rulings.2026_10_17_p15_landing_audit）三项裁决同日闭环：B=peer 键撤销修复（Qualified{via,peer}，回归测试自证）+ A=中继半开边入档（routing.relay_asymmetry + 负结果对账）+ C=同名重入作用域钉死+测试；canary 违约（迟到告别漏门控）连带修复。71 测试：16 单元 + 54 集成 + 1 pq
     depends: []
-    landed: "person.rs：enum LineBinding{Name,Qualified{via}}（points_to 归一判定）+ Gathering.line_bindings（取代 aliases）；belief_flood 只认绑定；form_circle 快照全量绑定；GENESIS 处理器 direct-lock 退役 + 同圈重放闸（先于一切）+ join_genesis(src_line) 送达绑定 Qualified{via:帧内 creator}；handle_contribution 签名改 src_line（暂存保线号）+ P-05 直连声明读 Name 绑定；complete_bring 绑 Name(0x11 行名)；handle_seat_roster 绑 Qualified{via:引荐人 hint}；bye/crash 见证判定读 points_to；apply_rm 急切撤 Qualified{via:leaver} + apply_add 清 Name(同名)；ADD 契约类拒收照转。测试：单元（绑定生死周期）+ P15_圈外自报名_零圈帧 + P15_spec_a_转发创世（确定性载体构造：直发被扣→转发送达→放行重放不授绑）+ P15_spec_b_前成员重放（mortal proxy 杀线不杀进程：僵尸桌 bring 幻影圈 + 旋转不变量断言 + 旧材料无钥 + P-03 拒收）+ 既有测试按新拓扑语义重写（署名告别→创作者离场双见证/点名点亮 B-C；在场辩护→唯一绑定线见证；点名→单 RM 收敛；迟到告别→双代理线确定性构造）"
+    landed: "person.rs：enum LineBinding{Name,Qualified{via,peer}}（points_to 归一判定——Qualified 读 peer）+ Gathering.line_bindings（取代 aliases）；belief_flood 只认绑定（Name 过行名信念检查；Qualified 过对端键 peer 信念检查——授予=协议行为，熄灭=信念检查）；form_circle 快照全量绑定；GENESIS 处理器 direct-lock 退役 + 同圈重放闸（先于一切）+ join_genesis(src_line) 送达绑定 Qualified{via:帧内 creator, peer:送达线 0x05 捕获}；handle_contribution 签名改 src_line（暂存保线号——P-05 直连声明判定与转发排除读它，非逆向路径学习）+ P-05 直连声明读 Name 绑定；complete_bring 绑 Name(0x11 行名)；handle_seat_roster 绑 Qualified{via:引荐人 hint, peer:hint}；bye/crash 见证判定读 points_to（peer）；apply_rm 急切撤 Qualified{peer:leaver} + apply_add 同名清账 Name+Qualified{peer}（先于引荐人写新绑定）；ADD 契约类拒收照转。测试：单元（线绑定_生死周期_对端键熄灭_授予键留溯源——含过度撤销消失断言）+ P15_圈外自报名_零圈帧 + P15_spec_a_转发创世（确定性载体构造：直发被扣→转发送达→放行重放不授绑）+ P15_spec_b_前成员重放（mortal proxy 杀线不杀进程：僵尸桌 bring 幻影圈 + 旋转不变量断言 + 旧材料无钥 + P-03 拒收）+ P15_B_转发资格线_对端离席熄灭_除名者零圈帧（复审阻断项 B 回归：转发者离席熄灭+RM 帧不泄漏+幸存者同钥+点名自愈）+ P15_C_同名重入_crash见证不误逐新任期（复审收尾项 C：v1 线死无据 RM、v2 新绑定存活）+ 既有测试按新拓扑语义重写（署名告别→创作者离场双见证/点名点亮 B-C；在场辩护→唯一绑定线见证；点名→单 RM 收敛；迟到告别→双代理线确定性构造）"
+    landing_audit_2026_10_17: "owner 复审：主体接受、三附带修复追认、union 同构论证修正（crash 的 union=幂等冗余见证，义务守卫兜住）；阻断项 B（via 键撤销=A3 回归）+ 收尾项 A（中继反向未入档）+ 收尾项 C（名字复用×crash 见证缺测试）三项裁决，关闭条件全达成（B 修复落地自证 + A 入档对账 routing.relay_asymmetry + C 作用域+测试）；残余面（谎报 peer 名、pk 锚定提案）入档 known_limitations.p15_fake_name_peer_residual 与 rulings 尾段，待 owner 另案裁决"
 
   research_track:                            # 非代码轨——论文工作，不阻塞任何 P 项；细节另档
     note: "T1-T5 Tamarin 形式化（P3 落地后建模）；取证测量论文（Signal/Telegram/Briar/本系统 本地残留对比）；trilemma 以猜想形态入论文一。README 不承载研究细节。"
@@ -703,7 +717,7 @@ glossary:
 
 verify:
   build: "cargo build --release"
-  test: "cargo test --release --features rogue — slice-6 起判例注入测试需要 rogue feature（canary：缺 feature 时恰一条测试响亮失败，不静默跳过）；69 tests at HEAD (52 integration + 16 unit + 1 pq), ~seconds"
+  test: "cargo test --release --features rogue — slice-6 起判例注入测试需要 rogue feature（canary：缺 feature 时恰一条测试响亮失败，不静默跳过——曾因 rogue API 漏门控违约为编译失败，2026-10-17 复审连带修复）；71 tests at HEAD (54 integration + 16 unit + 1 pq), ~seconds"
   ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so; verify: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 12)"
   ffi_contract_test: "gcc -O2 -Wall -I include ffi/ffi_test.c -o /tmp/ffi_test -L target/release -l:libe2ee.so -Wl,-rpath,$PWD/target/release && /tmp/ffi_test — expect 'FFI OK'; then python3 ffi/ctypes_test.py"
   static_build: "cargo build --release --target x86_64-unknown-linux-musl — static-pie ~1.3MB"
@@ -741,6 +755,8 @@ verify:
     - "50-member flood circle gathers, speaks, and roll-calls within patience budget"
     - "P-15 spec (a): chain topology — 0x0F arriving via member forward grants the line circle-line QUALIFICATION (routing eligibility), never a creator-name binding; forwarding member's line not misbound as creator; creator identity comes from the frame's signature"
     - "P-15 spec (b): ex-member replays her historical self-signed 0x12 → even if arrival binding grants line qualification, she lacks the departed-row rotation r → cannot derive K; her off-roster speech rejected loud (P-03); the every-departure-rotates-a-row invariant itself is asserted (guards against future rotation-free departure silently reopening this surface)"
+    - "P-15 audit B (peer-keyed revocation, LANDED 2026-10-17): forwarded-delivery line (via=creator, peer=forwarder) extinguishes when the FORWARDER departs (RM peer-keyed) → departing forwarder receives ZERO circle frames incl. the RM frame itself (witness's fresh r never leaks; A3 seal restored); creator departure no longer over-revokes relay lines to still-seated forwarders; survivors converge on same key; roll call re-binds the half-open edge (B regains an outbound path) — P15_B_转发资格线_对端离席熄灭_除名者零圈帧 (self-certified: red pre-fix / green post-fix)"
+    - "P-15 audit C (name-reuse × crash witness, LANDED 2026-10-17): v1 departs (Name binding retained per late-bye design) → v2 same-name re-enters via seat flow (apply_add clears Name AND Qualified{peer} of the reused name, before the introducer writes v2's new binding) → v1's line dying triggers NO witness RM (binding already cleared — the gate before both members-only and union variants); v2 not evicted, speaks and is heard; v2's own new binding survives the clearing — P15_C_同名重入_crash见证不误逐新任期"
   agent_preflight: "read theory (axioms + decision_procedure) FULLY, then group_v3, then settled_decisions + attack_precedents BEFORE proposing any design change — most ideas you will have were already settled or rejected here; if an idea survives step_1-5, bring it to the owner with its axiom derivation"
 
 licensing:
@@ -754,79 +770,3 @@ licensing:
     - telephone-model-no-identity-auth      # active-MITM risk is MITIGATED (not eliminated) by SAS; accepted by design
     - unaudited-experimental-code           # not for sensitive communications
     - no-warranty-liability-capped-by-law
-# ═══════════════════════════════════════════════════════════════
-# README_AGENT — machine-facing project brief
-#
-# FILE CLASS : machine-facing brief. Audience: LLM agents / coding copilots.
-# HUMANS     : stop here. Use README.md / README_ZH.md instead.
-# FORMAT     : yaml-dialect. indent=2; keys are stable IDs; `#` comments are
-#              NORMATIVE (constraints), not decoration. File body is pure YAML.
-#              STRUCTURAL INVARIANT: the whole file MUST parse as ONE valid
-#              YAML document.
-# SCOPE      : as-built facts describe HEAD (v3 slice-1/2/3 landed 2026-10-15,
-#              pre-3.0.0-release: seat flow + SAS still pending). group_v3,
-#              sas, seat_flow and pending_work carry OWNER-SETTLED DESIGNS not
-#              yet written — every such block is status-tagged. NEVER document
-#              planned work as built; NEVER re-propose anything listed in
-#              settled_decisions (rejected items = permanent rejection).
-#
-# THE ONE RULE ABOVE ALL RULES: 本项目的第一性原理是对人类社会物理对话的
-# 抽象（见 theory 四公理）。任何设计决策、任何代码变更、任何你（AI）想提的
-# 新特性，都必须能从公理推导出来；推导不出的，默认拒绝，交 owner 裁决。
-# ═══════════════════════════════════════════════════════════════
-
-project:
-  id: E2EE-Experiment
-  lang: rust
-  edition: "2024"
-  nature:
-    - p2p
-    - e2ee-chat
-    - single-binary
-    - serverless
-    - cli
-  core_metaphor: executable == person        # NOT marketing — drives every decision below
-  theory: conversation-physics               # NEW v3: see theory block — the project now HAS an explicit theory
-  maturity: early-development                 # post-P2 HEAD; v3 axiom rebuild settled, not yet implemented
-  ui_language: zh                            # user-facing strings are chinese; keep style
-  comment_language: zh-with-person-metaphors # see glossary at bottom
-
-doc_index:                                  # entry alignment across the 3 docs
-  zh: README_ZH.md
-  en: README.md
-  agent: README_AGENT.md                     # this file
-  rule: "README.md / README_ZH.md describe the P2 world and legitimately lag this file; they MUST be rewritten together with the 3.0.0 release (removals_3_0_0 + pending_work.P4)."
-
-doc_protocol:                               # how to maintain THIS file
-  update_triggers:
-    - new wire frame kind or changed frame layout
-    - owner ruling in review/conversation → append to settled_decisions with date
-    - a pending_work item lands → move its facts into as-built sections, drop it from the board
-    - a new falsified/rejected idea → append to settled_decisions.rejected
-    - a new attack discovered & adjudicated → append to attack_precedents with an ID (P-nn)
-    - an axiom-based ruling on any design question → record under theory.rulings
-  yaml_selfcheck: "python3 -c 'import yaml; yaml.safe_load(open(\"README_AGENT.md\"))' — MUST succeed"
-
-# ───────────────────────────────────────────────────────────────
-# THEORY — 对话物理学（v3 的第一因，2026-10-15 定稿）
-# 这是整个项目的宪法。机制可以死，公理不可以。
-# ───────────────────────────────────────────────────────────────
-
-theory:
-  origin: >-
-    人类社会几千年博弈没有推翻的对话机制，就是经过最长安全审计的协议。
-    本项目不做"发明"，做"翻译"：把物理对话的硬约束翻译成网络协议。
-    翻译必须忠实——网络世界比物理世界多出来的每一种能力，要么主动废除，
-    要么诚实声明为边界。这就是全部设计方法论。
-
-  axioms:                                   # 公理：从物理对话提炼的硬约束
-    A1_embodiment:                          # 公理 I：具身
-      statement: 人 = 身体。在场、发声、离席都是身体的行为。身体不可分身、不可复制、死后不可再发言。
-      network_translation: 人 = 进程实例。嗓音（署名钥）与生俱来、随进程死亡、一次性。
-      forbids: [跨圈持续身份, TOFU, 账号体系, 可转让的发言权]
-      generates: [一次性署名钥, 署名发言, 署名告别, 贡献自签（名单每行都是本人身体的印）]
-    A2_locality:                            # 公理 II：局部性
-      statement: 一切感知只来自直接物理信道。你能确认在场的人，就是你的感官够得着的人。不存在全球在场目录。
-      network_translation: 节点的一切知识来自直连线。路由表 = 世界观 = 同一张表（信念名单）。
-      forbids: [全局名册, epoch 共识, 官方成员表, 任何形式的"全局状态同步机"]
-      ge
