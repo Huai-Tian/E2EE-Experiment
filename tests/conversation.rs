@@ -3824,3 +3824,63 @@ async fn P6_pk锚按圈_圈间独立() {
         "B 外圈绑定全锚：{b_outer:?}"
     );
 }
+/// P6 矩阵 10（共线中继 + 连通性自愈）：外圈 [A,B,C] 经中继——C 的
+/// 唯一线是 B—(代理)—C；内圈 [B,C] 共享同一条代理线。断言：两圈帧
+/// 经中继互达（各圈说话各圈听见）；A—B 直连段断开（A 告退）→ 仅
+/// 外圈出 RM（内圈 [B,C] 无感——与多锚圈间独立的撤销面互为镜像）；
+/// B 空参点名重聚 → 外圈恢复。
+#[tokio::test]
+async fn P6_共线中继_两圈经一继_连通性自愈() {
+    let (alice, mut alice_ev, _) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    // B—(代理)—C：C 的唯一线（两圈共享的中继段）
+    let (cproxy, ctask) = mortal_proxy(&carol_addr).await;
+    bob.dial(&cproxy).await.expect("B-(代理)-C");
+    expect(&mut bob_ev, met).await;
+    expect(&mut carol_ev, met).await;
+    alice.dial(&bob_addr).await.expect("A-B 直连");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    // 外圈 [A,B,C]：开桌人=B（她的会话面含 A 直连与 C 中继）
+    let n = bob.form_circle().await.expect("外圈");
+    assert_eq!(n, 3);
+    let (outer, _) = expect(&mut bob_ev, formed_c).await;
+    expect(&mut alice_ev, formed).await;
+    expect(&mut carol_ev, formed).await;
+    // 内圈 [B,C]：subset 共享中继线（A 不请——镜像撤销面的一半）
+    let n = bob
+        .form_circle_subset(&["Carol".to_string()], None)
+        .await
+        .expect("内圈");
+    assert_eq!(n, 2);
+    let (inner, _) = expect(&mut bob_ev, formed_c).await;
+    expect(&mut carol_ev, formed).await;
+    assert_ne!(outer, inner);
+    // 两圈帧经中继互达：外圈 A 说 → B、C（经 B 中继）都听见
+    alice.circle_speak_in(outer, "wai quan jing zhong ji").await.expect("外圈说");
+    expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    // 内圈 B 说 → C 听见（共享中继线承载）
+    bob.circle_speak_in(inner, "nei quan gong xian").await.expect("内圈说");
+    expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Bob")).await;
+    // A—B 段断开（A 告退）：仅外圈出 RM(Alice)——内圈 [B,C] 无感
+    alice.bye().await.expect("A 离外圈");
+    let (cid, m, ch) = expect(&mut bob_ev, rekeyed_c).await;
+    assert_eq!((cid, m), (outer, 2), "外圈 RM：{ch}");
+    assert!(ch.contains("Alice"));
+    expect(&mut carol_ev, rekeyed).await;
+    // 内圈不受波及：B 内圈说话 C 照常听见（零内圈 Rekeyed——无此事件
+    // 即无波及，说话通即证绑定存活）
+    bob.circle_speak_in(inner, "nei quan reng ran huo zhe").await.expect("内圈照常说");
+    expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Bob")).await;
+    // 点名重聚：B 空参重开（她的会话面=[C 中继线]）→ 外圈恢复 [B,C]
+    bob.form_circle().await.expect("点名重聚");
+    let (new_outer, m) = expect(&mut bob_ev, formed_c).await;
+    assert_eq!(m, 2);
+    expect(&mut carol_ev, formed).await;
+    assert_ne!(new_outer, outer, "点名=新圈号");
+    bob.circle_speak_in(new_outer, "chong ju hui fu").await.expect("重聚后说");
+    expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Bob")).await;
+    ctask.abort();
+}
