@@ -3,7 +3,7 @@
 //! 本 crate 既是命令行程序，也是库（crate 名 `e2ee`）：
 //! - 内核在这里：**不打印任何东西、不读任何输入**——
 //!   动作从方法进（`Person::born` / `dial` / `speak` / `talk_to` / `card` /
-//!   `shout` / `bye` / `leave`），经历从事件出（[`Event`] 流）；
+//!   `bye` / `leave`），经历从事件出（[`Event`] 流）；
 //! - `src/main.rs` 只是第一号使用者：把事件渲染成终端文字。
 //!
 //! 供其他程序接入（Windows / Linux 均可）：
@@ -21,7 +21,6 @@ pub mod person;
 pub mod punch;
 pub mod wire;
 
-pub use discover::Discovered;
 pub use person::{Event, Events, LeaveReason, Person, PersonError, RosterEntry, SasReport};
 
 // 判例注入面：feature 门控重导出（e2ee::rogue::...）

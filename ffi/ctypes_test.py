@@ -52,7 +52,7 @@ else:
 assert ev.name == b"Bob" and ev.text == b"python ye neng shuo", (ev.name, ev.text)
 print(f"heard: [{ev.name.decode()}] {ev.text.decode()}")
 
-# 隐身出生：照常能说这套话（不应答 /shout 是 discover 层的事）
+# 已废弃的别名（3.0.0 起等同 create）：符号保留验 ABI 冻结
 hidden = lib.e2ee_person_create_hidden(b"Hidden", b"127.0.0.1:0")
 assert hidden
 lib.e2ee_person_destroy(hidden)

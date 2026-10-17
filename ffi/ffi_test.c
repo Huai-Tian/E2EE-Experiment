@@ -79,8 +79,8 @@ int main(void) {
     CHECK(e2ee_speak(b, "dui kong qi shuo") != 0, "speak without focus errors");
     show_err("speak no focus");
 
-    /* 隐身出生：探不到，但精确交往照常——这里验精确拨通 */
-    e2ee_person* h = e2ee_person_create_hidden("Hidden", "127.0.0.1:0");
+    /* 已废弃的别名（3.0.0 起等同 create）——这里顺带验精确拨通照常 */
+    e2ee_person* h = e2ee_person_create_hidden("Hidden", "127.0.0.1:0"); /* 已废弃别名（=create）：符号保留验 ABI 冻结 */
     CHECK(h != NULL, "create hidden H");
     if (h) {
         char haddr[64];

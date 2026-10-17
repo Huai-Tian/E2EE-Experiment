@@ -601,47 +601,23 @@ async fn 茶馆_线断不挂链_下场免暗号() {
 }
 
 #[tokio::test]
-async fn 隐身_精确交往照常() {
-    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
-
-    // Bob 隐身出生：不应答「有人吗」，但 TCP 耳朵照常开
-    let port = free_port();
-    let bob_addr = format!("127.0.0.1:{port}");
-    let (bob, mut bob_ev) =
-        Person::born_hidden("Bob", &bob_addr).await.expect("隐身出生不应失败");
-
-    // 隐身者主动精确找人：照常
-    bob.dial(&alice_addr).await.expect("隐身者拨号照常");
-    expect(&mut alice_ev, met).await;
-    expect(&mut bob_ev, met).await;
-    bob.speak("yin shen zhe ye neng shuo").await.expect("隐身者发言");
-    let (from, text) = expect(&mut alice_ev, |ev| {
-        if let Event::Heard { name, text, .. } = ev {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!((from.as_str(), text.as_str()), ("Bob", "yin shen zhe ye neng shuo"));
-
-    // 反过来：拿着确切地址拨隐身者：照常（广播探不到 ≠ 够不着）
-    alice.dial(&bob_addr).await.expect("精确拨隐身者照常");
-    expect(&mut alice_ev, met).await;
-    expect(&mut bob_ev, met).await;
-    alice.speak("na zhe di zhi ye zhao de dao ni").await.expect("Alice 发言");
-    let (from, text) = expect(&mut bob_ev, |ev| {
-        if let Event::Heard { name, text, .. } = ev {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!(
-        (from.as_str(), text.as_str()),
-        ("Alice", "na zhe di zhi ye zhao de dao ni")
-    );
+async fn 出生无喊话耳_删除面守卫() {
+    // 3.0.0 删除面（removals_3_0_0.v1_discovery_family）的结构守卫
+    //（canary 同族：把「无邀请暴露源归零」钉成断言，喊话耳朵悄悄
+    // 爬回来 = 本测试变红）：出生只竖 TCP 这一只耳朵——喊话端口
+    // 37777 上无人守（我们能把 127.0.0.1:37777 绑起来，恰证明进程
+    // 里没有 0.0.0.0:37777 的监听者）。原「隐身」测试随功能退役：
+    // 精确交往（拿地址拨号）曾是隐身模式的主张，如今是唯一的形态。
+    let (_alice, _alice_ev, _addr) = spawn_person("Alice").await;
+    let bob_port = free_port();
+    let (_bob, _bob_ev) =
+        Person::born("Bob", &format!("127.0.0.1:{bob_port}")).await.expect("出生照常");
+    // 喊话端口无人守：bind 成功即证明（旧监听者绑 0.0.0.0:37777，
+    // 会与本绑定冲突报 AddrInUse）
+    let probe = tokio::net::UdpSocket::bind("127.0.0.1:37777")
+        .await
+        .expect("喊话端口应当无人守（3.0.0 删除面）：bind 失败 = 喊话耳朵回来了");
+    drop(probe);
 }
 
 #[tokio::test]

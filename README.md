@@ -1,7 +1,9 @@
 # E2EE-Experiment
 [简体中文](README_ZH.md) | English | [AI collaboration doc](README_AGENT.md)
 
-> One binary. It listens like a person, speaks like a person, and forgets like a person.
+> One binary. It listens like a person, speaks like a person, and forgets like
+> a person. It can also pull up a table — every rule of group chat is
+> translated from the rules of a physical conversation.
 
 **E2EE-Experiment** takes a single metaphor literally: *the executable is a person.*
 No server, no accounts, no database — just a program that can hold up its end of a
@@ -14,20 +16,21 @@ private conversation, then remember nothing.
 
 ## The idea
 
-| A person                             | This program                                                   |
-|--------------------------------------|----------------------------------------------------------------|
-| Ears                                 | open from birth — listening from the moment the process starts |
-| A mouth                              | `/dial` — reach out to anyone, anytime, no restart needed      |
-| A language only the two of you speak | end-to-end encryption, fresh keys every conversation           |
-| Turning away and forgetting          | zero persistence — nothing is ever written to disk             |
-| Recognizing who you're talking to    | **your job**, after decryption                                 |
+| A person                              | This program                                                   |
+|---------------------------------------|----------------------------------------------------------------|
+| Ears                                  | open from birth — listening from the moment the process starts |
+| A mouth                               | `/dial` — reach out to anyone, anytime, no restart needed      |
+| A language only the two of you speak  | end-to-end encryption, fresh keys every conversation           |
+| A table                               | `/circle` — the roster is the table; sit down and it's a circle |
+| Turning away and forgetting           | zero persistence — nothing is ever written to disk             |
+| Recognizing who you're talking to     | **your job**, after decryption                                 |
 
 The last row is deliberate. This is the *telephone model* of security: the wire is
 private, but the person on the other end introduces themselves however they like.
 The system guarantees **secrecy**, never **identity**. Recognizing a voice —
-through shared secrets, in-jokes, a familiar tone — is a human act, and it stays
-human. (If you do need certainty about who is on the other end, agree on a secret
-out-of-band and use it when dialing — see [Secrets](#secrets-knowing-who-is-on-the-other-end).)
+through shared secrets, in-jokes, comparing a short word — is a human act, and it
+stays human. (To do that step properly, see
+[Secrets & SAS](#secrets--sas-knowing-who-is-on-the-other-end).)
 
 ## How it works
 
@@ -48,8 +51,10 @@ Three properties carry all the weight:
 **Honest threat model.** *Protects against:* anyone on the wire (ISP, Wi-Fi
 snooper, backbone tap) — they see encrypted frames and nothing else.
 *Does not protect against (by default):* an active man-in-the-middle who
-relays the handshake (the telephone model's accepted cost — mitigated by
-secrets), and the other end itself (they can copy, paste, screenshot).
+relays the handshake (the telephone model's accepted cost — a shared secret
+blocks it and the SAS word exposes it, see
+[Secrets & SAS](#secrets--sas-knowing-who-is-on-the-other-end)), and the
+other end itself (they can copy, paste, screenshot).
 
 ### Key details worth knowing
 
@@ -59,10 +64,14 @@ secrets), and the other end itself (they can copy, paste, screenshot).
   cannot fingerprint message sizes.
 - **Files never touch the text lane** — binaries arrive byte-for-byte, no
   text mangling, up to 32 MB per file.
-- **Group chat rekeys on every join** — the new member triggers a fresh key;
-  there is no roster to leak because none is ever stored.
-- **The name on your screen comes from the wire, not the plaintext** — no
-  one can put words in another's mouth inside a conversation or a group.
+- **No one speaks in another's name at the table** — every member brings a
+  one-time voice key: circle speech, farewells, introductions and testimony
+  are all signed; each roster row is self-signed by its owner.
+- **Every departure or arrival re-keys (a change of breath)** — the leaver
+  can no longer read new speech, the newcomer cannot unlock old history:
+  the key boundary is the table boundary. There is no roster to leak
+  because none is ever stored.
+- **The name on your screen comes from the wire, not the plaintext**.
 - **Close it and it's forgotten — that IS the coercion defense** — nothing
   is ever written to disk, keys and plaintext are wiped from memory the
   moment they're done, and every conversation's keys are ephemeral: after a
@@ -105,7 +114,6 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 |-----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | *(none)*        | Born listening on `0.0.0.0:7777`. Two people on one machine need different ports.                                                                                                     |
 | `-n <name>`     | The name you introduce yourself as (self-reported, nothing behind it).                                                                                                                |
-| `--hidden`      | Never answer LAN broadcast probes (`/shout` cannot detect you); exact-address dials still work.                                                                                       |
 | `--no-chain`    | Don't reserve next-time secrets at farewell, don't accept others' — the right shape for a desk open to strangers.                                                                     |
 | `--guard <KEY>` | Stable door lock: every caller must pass the same machine key (32-byte random), never consumed — wrong-key floods can't lock the desk. Pair with `--no-chain` for an armed open desk. |
 | `--courier`     | Open a teahouse (see [Behind NAT](#two-people-behind-nat)) — the same binary in its other job.                                                                                        |
@@ -122,21 +130,46 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 | `/talk <id\|name>`                        | Switch attention among parallel conversations.                                                         |
 | `/list`                                   | Who's currently connected to you.                                                                      |
 | `/card`                                   | Print your name and dial address for every network interface.                                          |
-| `/shout`                                  | Broadcast "anyone there?" on the LAN; listeners answer with name + address.                            |
-| `/circle`                                 | Form a group key with everyone currently connected (all must have dialed each other).                  |
-| `/gsay <text>`                            | Speak in the circle — encrypted once, everyone receives.                                               |
-| `/bye`                                    | Say goodbye to the focused conversation.                                                               |
+| `/circle [closed\|open]`                  | Gather a circle from everyone currently connected; re-run inside a circle = roll call (the repair path). Multi-person defaults to a closed table, solo to an open stage. |
+| `/gsay <text>`                            | Speak in the circle — signed, encrypted once, everyone receives.                                       |
+| `/bring [expected-name]`                  | Introduce someone to the table: hand a seat skeleton to the focused conversation. With a name, an expectation gate opens. |
+| `/sit [name]`                             | Take a seat in answer to an offer (the seat signature must be triggered by the person themselves).     |
+| `/word`                                   | Compare words: show the current channel's short word (conversation / circle).                          |
+| `/bye`                                    | Say goodbye to the focused conversation (a signed circle farewell first, if seated).                   |
 | `/quit` or Ctrl-D                         | Say goodbye to everyone and leave. Ctrl-C walks away immediately.                                      |
 
-### Group chat
+### Group chat: pulling up a table
 
-1. Everyone dials everyone (full mesh — that's what makes it listener-free).
-2. Anyone runs `/circle` — each member contributes randomness, the group key
-   is derived from all of it. Nobody dictates it, nobody can predict it.
-3. `/gsay <text>` — one ciphertext, fanned out to every link.
-4. Someone new joins? They dial everyone, then anyone re-runs `/circle` —
-   that *is* the rekey rule. Practical ceiling: ~8 people (an N-person circle
-   needs N² links; bigger gatherings need a stage, which is a different project).
+1. **Gathering** — anyone runs `/circle` on the people **currently connected
+   to them**: a signed invitation roster (what *she* has personally seen, not
+   anyone's authoritative register). Each name on the roster brings a
+   self-signed random contribution; when **all names have arrived**, the
+   group key is cast: nobody dictates it, nobody can predict it. Full mesh
+   not required — members just need to be connected to each other (stars
+   and chains both welcome); speech travels along the roster.
+2. **Speech** — `/gsay <text>`: signed with a one-time voice key, encrypted
+   once under the group key, relayed hop by hop along member lines.
+   Multi-person circles default to a **closed table** (introductions need
+   the table's blessing); a circle of one defaults to an **open stage**.
+   Override with `/circle closed|open`.
+3. **Comparing words** — `/word`: inside the circle, a group short word
+   (12 digits in 4 groups, identical for everyone). Want to confirm nobody
+   has tampered with this table? Say it out loud to each other.
+4. **Taking a seat** — a seated member `/bring`s (introduces), the candidate
+   `/sit`s (self-signed seating): offer → acceptance → rekey → seating
+   chart, four steps and the newcomer is in — she can read everything said
+   from now on, and cannot unlock anything said before she arrived.
+5. **Leaving** — `/bye` is a *signed* farewell: the neighbor holding her
+   direct line witnesses and the table rekeys — the leaver can no longer
+   read new speech. Vanishing (power cut, unplugged cable) works the same:
+   the holder of the dead line testifies. A rekey seals only the future;
+   it never pretends to unsay what was said.
+6. **Repairing the table** — any inconsistency (two people editing the
+   roster at once; undecipherable speech surfacing as a loud "mumble"
+   notice) is fixed by one and the same gesture: re-run `/circle` — a
+   **roll call**. Fresh circle id, everyone re-gathers, everything settles.
+   The protocol never pretends to be always-consistent; it promises:
+   **disagreement is always heard, repair is always available.**
 
 ### Two people behind NAT
 
@@ -163,10 +196,10 @@ who receives. Two answers, both built in:
 (two pairs colliding on a room number get wired to each other), and agree on
 them out-of-band exactly like secrets.
 
-### Secrets: knowing who is on the other end
+### Secrets & SAS: knowing who is on the other end
 
-The cure for the man-in-the-middle gap is one human act: agree on a secret
-out-of-band (in person, by phone — any channel but this one), then use it:
+The cure for the man-in-the-middle gap is two human acts — a shared **secret**
+prevents it up front, the **SAS word** catches it on the spot:
 
 - `/dial <addr> <secret>` — the handshake now includes a cryptographic proof
   that both sides hold the *same* secret. The secret itself never crosses the
@@ -177,6 +210,14 @@ out-of-band (in person, by phone — any channel but this one), then use it:
   the already-authenticated channel, so tomorrow's conversation re-authenticates
   automatically. It lives in RAM only; a restart returns you to the out-of-band
   reading. A desk open to strangers opts out with `--no-chain`.
+- **The SAS word (`/word`)** — insurance even without a secret: with a focused
+  1:1 it shows the **conversation word** (identical at both ends); inside a
+  circle, the **group word** (identical for everyone); with both, it shows
+  both. Twelve digits in four groups — the decades-proven ritual of reading
+  numbers over a phone. A splicer who splits one line into two halves gets
+  two keys, hence two different words — one reading aloud and the trick is
+  exposed. The word is computed on the spot and never stored; not comparing
+  is your freedom — it's a tool for the willing, not an obligation.
 - **A weak secret only hurts that one handshake instant** — the secret never
   encrypts the conversation itself; every conversation key is fresh and
   ephemeral.
@@ -186,27 +227,33 @@ out-of-band (in person, by phone — any channel but this one), then use it:
 The core is a Rust library (`e2ee`); this CLI is merely its first consumer,
 and the same "person" can live inside any program — Rust via the crate, other
 languages via the C ABI (`libe2ee.so` / `e2ee.dll`, header `include/e2ee.h`,
-frozen add-only surface). `cargo test` covers the full behavior. Design
-invariants and red lines live in [README_AGENT.md](README_AGENT.md) — read it
-before touching anything.
+frozen add-only surface). `cargo test --features rogue` covers the full
+behavior (including the attack-precedent injection matrix — see
+[README_AGENT.md](README_AGENT.md)). Design invariants and red lines also
+live there — read them before touching anything.
 
 ## Known limitations
 
 - **No liveness probes.** A peer that vanishes without closing (or over a
   punched UDP line, which has no EOF) leaves the line and its `/list` entry
-  hanging until you `/quit`.
+  hanging until you `/quit`. A zombie circle member is cleared out by the
+  witness rekey of her direct neighbor.
 - **The introducer's referral is unauthenticated.** Anyone who knows the tag
   can register as your "peer" — bring a secret if you need to know who's there.
 - **The teahouse pairs by room number alone** — pick unguessable ones.
-- **Group consistency is by convention** — a botched simultaneous re-`/circle`
-  surfaces as "mumble" notices; re-run `/circle` to converge. One circle per
-  process.
-- **`--hidden` is not invisibility.** It silences the broadcast reflex only;
-  a port scanner can still find the open port (nothing tells it what it is).
-  True "nobody gets in" adds `/await <secret>`.
-- **Cross-version chat is one-way.** The size-padded chat frame is invisible
-  to older builds (silently skipped, no garbage); old→new still reads fine.
-  Upgrade both ends together.
+- **The carrier sees the table's physics.** The teahouse/network can observe a
+  circle's existence, traffic shape and relay topology among members (the
+  circle id is plaintext routing information) — it cannot read a single word.
+  "The physical table is inherited by the teahouse" — documented honestly.
+- **Group consistency is by roll call.** Disagreement never hides — an
+  undecipherable line surfaces loudly as a "mumble"; any member re-runs
+  `/circle` to re-gather. When the hub of a star leaves, the rest re-gather
+  by roll call. One circle per process at a time.
+- **Cross-version: chat still works, circles don't.** The size-padded chat
+  frame is invisible to older builds (silently skipped, no garbage);
+  old→new still reads fine; but 3.0.0's circle frame layouts are
+  incompatible with 1.x (that's exactly why this is a breaking release).
+  Upgrading both ends is best.
 
 ## 🚫 Non-Commercial Statement
 
@@ -268,40 +315,39 @@ is copyright infringement.
   the laws of your jurisdiction**, including encryption regulations and export
   control laws. It is **solely the user's responsibility** to determine and
   comply with all applicable laws before using this project.
-- **Known security boundaries**:
-  This system provides secrecy, not identity verification (the telephone
-  model) — an active man-in-the-middle can relay conversations unless both
-  sides use a shared secret; recognizing the other end is the user's own
-  responsibility. Assess the risks before use.
-- **No warranty of any kind**:
-  This software is provided under its license terms **without any express or
-  implied warranty**, including but not limited to merchantability, fitness
+- **Known security boundary**:
+  This system provides secrecy, not identity authentication (the telephone
+  model) — unless both sides use a shared secret or compare the SAS word, an
+  active man-in-the-middle can relay the conversation; recognizing the other
+  end is the user's own responsibility. Assess the risks before use.
+- **No warranty whatsoever**:
+  This software is provided under its license terms **without any warranty,
+  express or implied**, including but not limited to merchantability, fitness
   for a particular purpose, accuracy, reliability, non-infringement, or
-  security. There is **no guarantee of uninterrupted availability, error-free
-  operation, or continued maintenance**.
+  security. **No guarantee of uninterrupted availability, error-free
+  operation, or continued maintenance is given.**
 - **No support obligation**:
-  The author is **not obligated to provide technical support, bug fixes,
-  updates, or any assistance**, to any user, at any time.
+  The author **has no obligation to provide any user with technical support,
+  bug fixes, updates, or assistance of any kind, at any time**.
 - **Limitation of liability**:
   To the maximum extent permitted by applicable law, **in no event shall the
-  authors or contributors be liable for any direct, indirect, incidental,
-  special, exemplary, or consequential damages arising from, or in any way
-  related to, the use or inability to use this software**, whether advised of
-  the possibility. This includes but is not limited to data loss, account
-  bans, legal liability, or security incidents.
+  author or contributors be liable for any direct, indirect, incidental,
+  special, punitive, or consequential damages arising from the use of or
+  inability to use this software**, including but not limited to data loss,
+  account bans, legal liability, or security incidents, whether or not
+  advised of the possibility.
 - **User responsibility**:
-  Users bear **all** risks and legal responsibilities arising from their use
-  of this project, and from obtaining it from any channel.
+  Users assume **all** risks and legal responsibilities arising from using
+  this project and from obtaining it through any channel.
 - **Severability**:
-  If any provision of this disclaimer is held invalid or unenforceable, the
-  remaining provisions remain in full force and effect.
+  If any provision of this disclaimer is found invalid or unenforceable, the
+  remaining provisions remain fully in force.
 - **Acceptance and changes**:
   Continued use of this project constitutes acceptance of this disclaimer.
   The author reserves the right to update these terms at any time; the
-  current version in this repository governs.
+  current version in this repository prevails.
 - **Final interpretation**:
-  The author of this project reserves the right of final interpretation of
-  this disclaimer.
+  The author reserves the final right of interpretation of this disclaimer.
 
 ## License
 

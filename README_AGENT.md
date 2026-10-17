@@ -8,9 +8,10 @@
 #              STRUCTURAL INVARIANT: the whole file MUST parse as ONE valid
 #              YAML document.
 # SCOPE      : as-built facts describe HEAD (v3 slice-1..6 landed 2026-10-15/16,
-#              P15 landed + landing-audit closed 2026-10-17 —
-#              P3 complete: roster/genesis/seat flow/SAS/判例矩阵 + 线绑定（peer 键撤销）;
-#              pre-3.0.0-release: P4 removal face + P5 android + P6 nesting pending).
+#              P15 closed 2026-10-17 — P3 complete; P4 removal face in-progress:
+#              v1 discovery family REMOVED + ffi alias + human READMEs rewritten
+#              2026-10-17, all_convos_flooding migration pending owner ruling;
+#              pre-3.0.0-release: P4 remainder + P5 android + P6 nesting + P7).
 #              group_v3.nested_circles and pending_work carry OWNER-SETTLED DESIGNS
 #              not yet written — every such block is status-tagged. NEVER document
 #              planned work as built; NEVER re-propose anything listed in
@@ -41,7 +42,7 @@ doc_index:                                  # entry alignment across the 3 docs
   zh: README_ZH.md
   en: README.md
   agent: README_AGENT.md                     # this file
-  rule: "README.md / README_ZH.md describe the P2 world and legitimately lag this file; they MUST be rewritten together with the 3.0.0 release (removals_3_0_0 + pending_work.P4)."
+  rule: "README.md / README_ZH.md 已随 P4 按 v3 世界全量重写（2026-10-17，doc_index.rule 约定兑现）；此后三份文档同步维护——human READMEs 描述用户面，本文件承载机器面与裁决库。"
 
 doc_protocol:                               # how to maintain THIS file
   update_triggers:
@@ -120,7 +121,8 @@ theory:
     2026_10_17_left_voices_tombstone: "left_voices（圈内嗓音墓碑：名字→公钥；apply_rm 除名时写入；随圈生灭，点名重置，进程死亡）——A2 直接推导：我的信念记得她走过，墓碑是信念的一部分，与名单同族非新物种。用途：迟到直接告别帧的验签（RM 先到、名单已除名时，直接接收者经 members ∪ left_voices 取公钥验签后照常发见证 RM——幂等应用正是 rm_multiplicity 语义；转发接收者的提前跳过保留，旧闻无害）。四条精化随裁决钉死：① 名字复用优先级——members 优先于墓碑，ADD 应用时清除该名字的墓碑条目；② bye 去重键 = 签名而非裸名字（Ed25519 确定性（RFC 8032）⇒ sig 即事件 ID：同事件重放同 sig 被去重，重入后新钥新 sig 放行——裸名字键在『离场→重入→再离场』下吞掉第二次告别；flood_key 注释的『告别用名字』预留被本裁决取代）；去重在验签之后（集合只收有效签名，垃圾进不了集合）；③ 墓碑只存公钥非秘密——不 Zeroizing，RAM-only 零持久化不受影响；有界性：对抗 ADD/RM 循环可增长但每轮受 seat-flow 成本约束，接受为已知边界；④ 衍生检查项（已回答 2026-10-17，升级立案 P-15）：别名映射本身结构性无碰撞（仅 seat flow 写入、按对话编号键控，无自报名合并路径）；但基础路由第一判定 their_name（0x05 密文内自报、无验证）构成 P-02 重生面——自报名即入路由 → 圈帧送入攻击者 Noise 会话 → 收齐 r 得 K → 静默旁听。已立案 P-15 判例（方向 a 线绑定），规格裁决见 theory.rulings.2026_10_17_p15_line_binding_spec。crash 路径 witness_ctx 同步改 members ∪ left_voices。"
     2026_10_17_p15_line_binding_spec: "P-15 方向 a 规格裁决（owner 复核编码模型立案，追认五条精化 + 两处 spec 钉死 + 实现授权）。五条精化全部追认：① 三种线绑定行为（form_circle 发起者快照=创世名单裁决复用——名单本就扫自她自己的线，自洽感知宣誓；0x0F 送达绑定；seat flow 双侧绑定=封桌裁决『新人命运必然经引荐人』的必然后果——0x10/0x12 是 1:1 直发帧，到达绑定无转发歧义）② 两个负结果入档（0x09 凑话到达不绑线——泛洪帧署名者≠线的对端、转发与直达不可区分，绑它=用别人的嗓音给自己的线授权，且捕获合法 0x09 重放即得圈线资格；『验签发言绑线』死码拒绝——信念路由决定发言只从已绑线发出，机制永不可达=投机机器）③ genesis direct-lock 退役（creator==their_name 本身就是一处 their_name 检查=P-15 攻击面在创世处的实例，退役是同一修复的完成而非新裁决；幻影圈等价 1:1、/word 群词可检，走 P-08/T5 既有模型）④ P-05/见证判定连带迁移（必要非清理：crash 路径见证判定读 their_name + 攻击者自报成员名 → 其线被当成员线 → 杀线触发伪证 RM 逐出真成员，全程无需伪造任何签名；顶替场景『直连声明取代』退为『响亮冲突+点名』——两个身体同名是两个身体（A1）、自报不是感知（A2）、裁决权在人类（A4），是修正不是退化）⑤ 已知代价诚实入档（发起者中继瓶颈、/circle 全量重绑；瓶颈死亡场景退化为 mumble→点名，A4 完整保留）。方向 a 凭证枚举勘误：owner 原枚举含『凑话到达』，编码模型剪枝正确，追认。两处 spec 钉死：(a) 0x0F 送达绑定的语义 = 圈线资格（该线获得此圈的路由资格），非 creator 名字绑定——链式拓扑下 0x0F 经成员转发到达，线的对端不是 creator；creator 身份来自帧内签名而非线，绑定若写成名字绑定则链式成员误绑转发者为 creator，结构性错误。(b) 0x12 重放面显式断言：前成员重放历史自签 0x12（行级 contrib_sig 用旧公钥永远可验——A1 一次性嗓音但公钥不撤销）→ 若到达绑定授予线资格 → 安全性依赖『每次离席必旋转一行（见证人 fresh r）』不变量：离席者必缺 ≥1 枚现行 r，无 K；其名单外发言被 P-03 响亮拒，最坏流量黑洞、点名恢复。此安全性不得靠 incidental 成立——不变量钉为测试断言，任何未来改动若允许无旋转离席，0x12 重放面即静默失效。簿记三项：P-14 补录（slice-4 落地的行内 sig_pk 与名单一致性检查追溯占号）；P-15 立项带『slice-6 前必修』标注（测试矩阵 P-02 条目在恶意自报变体下不成立，无依赖≠次序自由）；判例 8 条断言与矩阵条目映射核对（防并入遗漏）。实现授权：P15_line_binding_routing 开工——绑定结构、四个改写点（genesis 快照 / 0x0F 送达 / seat flow 双侧 / P-05+见证判定迁移）、测试矩阵按本裁决修正后执行。"
     2026_10_17_p15_landing_audit: "P-15 落地复审（owner，2026-10-17）：主体全部接受（绑定结构、四个改写点、spec-a/spec-b 测试构造）；三个附带修复逐项追认（0x0F 同圈重放闸=incidental 守卫显式化正是 spec-b 纪律；ADD 契约类拒收照转/伪造类终止=星型下拒收者不得当全局守门人；早到凑话去重键时序定罪）。裁量（members ∪ left_voices）接受但同构论证修正：bye 验签的 union 是验签的必要条件，crash 判定的 union 不产生新证据、只是幂等冗余见证——witnessed_departs 守卫兜住，无害。三项裁决：阻断项 B（via 键撤销在中继拓扑下是 A3 回归——泄漏论证只在 via==线对端时成立，spec-a 合法化的转发送达使 via≠对端成为合法状态；pre-P15 的 their_name 查名单结构性封住此面，P-15 引入的是回归不是可声明边界）→ 修复见 rulings.2026_10_17_p15_peer_keyed_revocation；收尾项 A（中继反方向路由机制未入档——M→B 方向在三种绑定行为下无一路取得资格，要求第四行为/路由规则入档 + A2 推导 + 与负结果①②对账）→ 见 group_v3.routing.relay_asymmetry；收尾项 C（名字复用 × crash 见证缺测试——真风险轴是 ADD 同名清除作用域：v1 线死时 crash 见证读旧绑定指向名、在 members 命中 v2 → 无据 RM 逐出新任期，members-only 与 union 两变体都经 members 分支暴露）→ 作用域钉死（清该名全部绑定=Name+Qualified{peer}，先于引荐人写新绑定）+ 集成测试落地。反向错位（creator 离席过度撤销 via==creator 线含通往在席转发者的线）随 peer 键修复消失——过度撤销面不再存在，点名自愈（A4 创世同构重绑线）钉为测试。关闭条件全部达成：B 修复落地（回归测试自证：修复前红/修复后绿）+ A 入档对账 + C 作用域+测试。slice-6 次序不变。连带定罪：canary 契约曾被违约（迟到告别测试未门控 rogue API → 无 feature 时集成测试编译失败——『恰一条响亮失败』被编译期符号缺失取代），随本轮修复。"
-    2026_10_17_p15_peer_keyed_revocation: "阻断项 B 修复裁决（对端键撤销）：Qualified 绑定升为双键 Qualified{via, peer}——via=帧内可验的授予者（genesis creator/seat flow 引荐人 hint），纯溯源不进任何判定；peer=授予时刻送达线对端的 0x05 自报名捕获快照（每线终身不变——握手后首帧定名），成为撤销键/路由键/见证键三判定的唯一读点。公理推导：A3（RM 封存未来）的作用对象是离席者=线对端，不是授予者——撤销键错位在 via 上，转发送达线（via=creator、对端=转发者）就在转发者离席时续命，RM 帧自身携带的见证人新 r 经此线泄漏新 K（先应用后泛洪的时序只保住发起者自己的出线，转发链上每跳的出线由各跳的撤销决定）；A2 认可 peer 为唯一线对端感知源（她在这条线上亲口报的名）——P-15 的功绩是把 their_name 从授予判定退役（自报名不得给予资格），本裁决把它放回熄灭判定（资格的存续以对端在信念为条件）：授予=协议行为（帧内可验），熄灭=信念检查（对端出信念即熄）。四种判定迁移：路由 Qualified{peer}∈belief（原无条件放行=回归根源）；apply_rm 撤 Qualified{peer:离场者}（原 via 键）；apply_add 同名清账扩到 Qualified{peer:重入名}（C 项作用域）；points_to/witness_ctx 见证读 peer（原 via——顺带修正：转发线的对端是转发者，转发者的告别由此线持有者见证，创作者经别线转达的告别不越权见证，感知必须是一跳的）。正向红利：creator 离席不再过度撤销通往在席转发者的中继线（over-revocation 面随键修正消失）。残余面诚实入档（pre-P15 同等暴露、非回归，pk 锚定前不修）：对端 0x05 谎报成员名的资格线在被谎报名离席前持续路由（名字≠身份的既定边界）；谎报名 ∉ 信念的送达线永不路由（fail-closed，转发送达的入座半途而废——pre-P15 同构）。结构性修复方向（提案待 owner 裁决，暂不实现）：线有密码学验证的对端身份锚定——注意本套件 Noise_NN 无 remote static（NN 模式不传静态钥），owner 提示的『Noise remote static』在 NN 下不存在；可行同构是嗓音钥线证明（成员以圈嗓音钥签 circle_id‖线 transcript 哈希，收端按名单行 pk 验证并锚定绑定到 pk——撤销/见证按 pk 而非名字，名字复用与谎报面同时消失），属新协议元素（新帧或送达包装），走 decision_procedure 另案。"
+    2026_10_17_p15_peer_keyed_revocation: "阻断项 B 修复裁决（对端键撤销）：Qualified 绑定升为双键 Qualified{via, peer}——via=帧内可验的授予者（genesis creator/seat flow 引荐人 hint），纯溯源不进任何判定；peer=授予时刻送达线对端的 0x05 自报名捕获快照（每线终身不变——握手后首帧定名），成为撤销键/路由键/见证键三判定的唯一读点。公理推导：A3（RM 封存未来）的作用对象是离席者=线对端，不是授予者——撤销键错位在 via 上，转发送达线（via=creator、对端=转发者）就在转发者离席时续命，RM 帧自身携带的见证人新 r 经此线泄漏新 K（先应用后泛洪的时序只保住发起者自己的出线，转发链上每跳的出线由各跳的撤销决定）；A2 认可 peer 为唯一线对端感知源（她在这条线上亲口报的名）——P-15 的功绩是把 their_name 从授予判定退役（自报名不得给予资格），本裁决把它放回熄灭判定（资格的存续以对端在信念为条件）：授予=协议行为（帧内可验），熄灭=信念检查（对端出信念即熄）。四种判定迁移：路由 Qualified{peer}∈belief（原无条件放行=回归根源）；apply_rm 撤 Qualified{peer:离场者}（原 via 键）；apply_add 同名清账扩到 Qualified{peer:重入名}（C 项作用域）；points_to/witness_ctx 见证读 peer（原 via——顺带修正：转发线的对端是转发者，转发者的告别由此线持有者见证，创作者经别线转达的告别不越权见证，感知必须是一跳的）。正向红利：creator 离席不再过度撤销通往在席转发者的中继线（over-revocation 面随键修正消失）。残余面诚实入档（pre-P15 同等暴露、非回归，pk 锚定前不修）：对端 0x05 谎报成员名的资格线在被谎报名离席前持续路由（名字≠身份的既定边界）；谎报名 ∉ 信念的送达线永不路由（fail-closed，转发送达的入座半途而废——pre-P15 同构）。结构性修复方向（方向性批准——owner 关闭裁决 2026_10_17_p15_closure_granted，立 pending_work.P16_voice_key_line_proof，排 P4 之后、不阻塞 3.0.0）：线有密码学验证的对端身份锚定——注意本套件 Noise_NN 无 remote static（NN 模式不传静态钥），owner 前期提示的『Noise remote static』系勘误（NN 下不存在，closure 裁决正式入档）；可行同构是嗓音钥线证明（成员以圈嗓音钥签 circle_id‖线 transcript 哈希，收端按名单行 pk 验证并锚定绑定到 pk——撤销/见证按 pk 而非名字，名字复用与谎报面同时消失），属新协议元素（新帧或送达包装），设计走 decision_procedure 全流程过堂后开工。"
+    2026_10_17_p15_closure_granted: "P-15 关闭裁决（owner 复审 B/A/C 回报，三项全闭环，P-15 关闭，P3 全板完成）。(B) peer 键双键修复接受：A3 封存的作用对象是离席者=线对端而非授予者——撤销键追踪对端是公理必然；授予=协议行为（帧内可验，P-15 战果保留），熄灭=信念检查（peer ∈ belief）。攻击链封闭验证：RM 两路径先应用后泛洪 + 全部 peer==离席者线在泛洪前熄灭 → RM 帧自身的见证人新 r 无路送达离席者。自证红/绿（临时还原修复前行为让 B 回归测试变红）入档为修复落地标配：今后每个安全修复的回归测试都须证明修复前真的红。(A) 机制识别接受——owner 矩阵条目前提被取证证伪：M→B 方向结构性不存在，半开边（relay_asymmetry）+ 强连通约束入档，负结果①②对账成立。(C) 作用域接受：清账=该名一切绑定（Name ∪ Qualified{peer}），apply_add 内先于 complete_bring 写新绑定，是 crash 判定之前的门。owner 勘误入档：『Noise remote static』提示错误（本套件 Noise_NN 不传静态钥），编码模型否决正确；其替代方案获裁（见下）。owner 非阻塞验证项（引荐人自身绑定存活）确认已被 C 测试『B 的 Carol 绑定恰一条』覆盖。"
 
   decision_procedure:                       # 编码模型遇到任何设计问题时的裁决流程
     step_1: "找公理依据：提案的每个机制，问它由哪条公理生成。答不出 → 默认拒绝。"
@@ -161,7 +163,7 @@ architecture:
     - ed25519-dalek                          # P2: one-time circle voice keys (fast + zeroize features)
   planned_deps_v3: []                        # v3 needs NO new crypto dep — seat flow uses existing ed25519
   lifecycle: single-startup-person           # INVARIANT: no role subcommands; one process is born with both ears and mouth
-  birth_modes: "born (v1: visible, answers /shout — REMOVED in 3.0.0) | --no-chain (never offers/accepts a next secret — the open-desk shape) | --guard <machine-secret> (EVERY arrival must pass PAKE; arming NEVER consumed; armed open-desk = --guard KEY --no-chain) | --hidden (DEPRECATED alias, dies with shout in 3.0.0)"
+  birth_modes: "born | --no-chain (never offers/accepts a next secret — the open-desk shape) | --guard <machine-secret> (EVERY arrival must pass PAKE; arming NEVER consumed; armed open-desk = --guard KEY --no-chain)。3.0.0 已执行：出生只竖 TCP 耳——喊话发现家族整体退役（removals_3_0_0.v1_discovery_family LANDED 2026-10-17），--hidden/born_hidden 随之消亡（无喊话则无隐身语义），ffi e2ee_person_create_hidden 保留为 deprecated 别名（ABI 冻结）"
   other_job: "--courier — the same binary as a teahouse: room numbers are GUEST-CHOSEN; wires same-room arrivals, relays opaque bytes; no identity, no storage, no plaintext"
   commands:                                  # in-session, parsed by CLI handle_command (src/main.rs)
     dial:  { syntax: "/dial ADDR:PORT [secret]", behavior: "outbound connect + hybrid NN handshake as initiator; optional secret → PAKE first; auto-uses chained secret for that addr (burned only when actually verified); 5s connect timeout" }
@@ -170,8 +172,7 @@ architecture:
     await:  { syntax: "/await SECRET", behavior: "arm the password challenge for the NEXT inbound arrival (one-shot; spent only when PAKE masks are actually exchanged)" }
     talk:  { syntax: "/talk id|name-prefix", behavior: "switch input focus; ambiguous prefix lists candidates" }
     list:  { syntax: "/list", behavior: "enumerate live conversations, mark focused" }
-    card:  { syntax: "/card", behavior: "print one 'name  ip:port' line per interface — SURVIVES removals (card only lists own addresses, touches no network)" }
-    shout: { syntax: "/shout", behavior: "v1: udp-broadcast who-is-there on the lan — STILL IN CODE, REMOVED in 3.0.0 (removals_3_0_0)" }
+    card:  { syntax: "/card", behavior: "print one 'name  ip:port' line per interface — touches no network；discover.rs 在 3.0.0 删除面后仅存 card/local_ips" }
     circle: { syntax: "/circle [封桌|开台]", behavior: "开台/围坐/点名：扫描发起者当前会话→署名邀请名单→0x0F 只走一跳。席位默认多人封桌/一人开台，可显式覆盖（开台是刻意的宣言）。重跑 = 点名 roll call（新 circle_id 重新聚首，A4）。库面 form_circle() / form_circle_seats(Option<u8>)" }
     gsay: { syntax: "/gsay TEXT", behavior: "speak in the circle (signed speech 0x0A); v3 gains a circle-target argument for nested circles" }
     bring: { syntax: "/bring [拟名]", behavior: "领人入座（slice-4 已落地）：向聚焦对端（候选人）发 0x10 看座。带拟名 → 期望门（0x11 自署名不匹配 → CircleConflict 响亮暂停 + 回执丢弃 + 待座保留；放行=重跑 /bring）；不带 → 无门直接自动。封桌时 CLI 警告但照发（拒绝是全员契约行为）。库面 bring(Option<&str>) -> seats，外层据此警告" }
@@ -187,17 +188,17 @@ architecture:
   packaging: workspace-three-gates            # root pkg = rust lib `e2ee` + bin; ffi/ member = cdylib gate — see ffi block
   api_style: "library NEVER prints nor reads stdin nor touches the fs; actions in = metaphor-verb methods; experiences out = Event stream (tokio mpsc); Event/LeaveReason/PersonError are non_exhaustive; errors carry semantics, CLI renders prose"
   modules:
-    src/lib.rs:     "crate root: pub mod circle + courier + discover + person + punch + wire; re-exports Person/Events/Event/LeaveReason/PersonError/RosterEntry/Discovered/SasReport; cfg(rogue) re-exports person::rogue"
+    src/lib.rs:     "crate root: pub mod circle + courier + discover + person + punch + wire; re-exports Person/Events/Event/LeaveReason/PersonError/RosterEntry/SasReport; cfg(rogue) re-exports person::rogue. 3.0.0: Discovered re-export 随喊话发现退役移除"
     src/person.rs:  "core person model; handshake<S> GENERIC over AsyncRead+AsyncWrite (tcp and UdpPunch alike); ear() dispatches on frame_kind; ZERO printing, ZERO stdin, ZERO fs. v3 adds (slice-1..4): Gathering (voice keypair + roster rows + seats + line-aliases), 0x09 self-certified rows, 0x0A dual-gate, 0x0B RM/ADD (witness/unified introducer, sig_pk-vs-roster consistency), 0x0C signed bye, 0x0F genesis/roll-call, seat flow 0x10/0x11/0x12 (bring/sit + expectation gate + closed-table fork), belief-routed flood with aliases, presence defense (30s wallclock); slice-5: per-convo Noise transcript capture (noise_stage) + sas_word() -> SasReport (NoSasChannel); slice-6: #[cfg(feature=\"rogue\")] pub mod rogue — rogue_frame/rogue_flood/circle_id/roster_snapshot/forge_row, injection via REAL send paths; 2026-10-17 fix: Gathering.left_voices 嗓音墓碑 + witnessed_departs 义务幂等 + bye sig 键去重（验签后）+ 迟到直接告退见证复活（members ∪ left_voices）+ crash 路径 witness_ctx union；P-15: enum LineBinding{Name,Qualified{via,peer}} + Gathering.line_bindings（取代 aliases）——belief_flood 只认绑定（授予=协议行为，熄灭=对端键 peer 过信念检查）/ form_circle 快照 / 0x0F 送达（direct-lock 退役+同圈重放闸）/ seat flow 双侧 / P-05+bye+crash 判定迁移（读 points_to=peer）/ apply_rm 撤 Qualified{peer:leaver} + apply_add 同名清账 Name+Qualified{peer} / ADD 契约类拒收照转"
     src/punch.rs:   "introducer client + punch transport: UdpPunch (frame-per-datagram, echo swallowing); INTRO2 source-checked"
     src/circle.rs:  "group key schedule: derive_group_key (HKDF over byte-sorted contributions, takes &[&[u8]] borrows), derive_sender_subkey, seal/open (ChaCha20Poly1305, nonce = counter ‖ sender-tag); slice-5: sas_word_from_transcript (HKDF(p2p-sas)) / sas_word_from_group_key (HKDF(circle-sas)), 12-digit 4-group format; cfg(rogue): RosterRow::seat_with_r (P-12 injection material); unit tests for order-independence, subkey isolation, SAS derivation, P-13 rotation-seals-history"
     src/courier.rs: "teahouse: serve() wires same-room arrivals, splices raw bytes; serve_introducer on the same udp port; JOIN frame bounded 10s"
     src/wire.rs:    "framing primitives; generic over AsyncRead/AsyncWrite; clean EOF vs mid-frame break"
-    src/discover.rs: "v1: lan shout + card. 3.0.0: shout listener + shout() REMOVED; card() (own-interface listing) survives"
+    src/discover.rs: "3.0.0 删除面已执行（2026-10-17）：喊话家族（SHOUT_PORT/PROBE/REPLY/Discovered/listen_for_shouts/shout）整体退役；仅存 local_ips + card（自己的网卡清单，不碰网络）"
     src/main.rs:    "thin CLI renderer; safe() sanitizes ALL remote-controlled strings; harden_process() = RLIMIT_CORE=0 + swap warning (P7 adds PR_SET_DUMPABLE)"
     ffi/src/lib.rs: "cdylib gate: 12 exported e2ee_* symbols; per-handle tokio runtime"
     include/e2ee.h: "C header — MUST change together with ffi/src/lib.rs (frozen ABI)"
-    tests/conversation.rs: "52 integration tests, real persons on ephemeral ports (slice-4 adds 7: full seat flow, expectation-gate retry, seat-name override + line alias, closed-table fork + roll-call re-accept, closed-table repeated-bring DoS surface, same-introducer double-ADD ordered convergence, declining-candidate zero frames; slice-5/6 add 13: sas same-word + roll-call freshness, MITM-splice different words (P-08), 4-chain relay + seat completion, solo-stage joiner, forwarded-bye never issues RM, presence-defense withheld path (sacrificial-thread crash sim), P-01/P-03/P-04/P-05/P-12 rogue-injection rejections, 50-member circle, rogue canary; 2026-10-17 fix adds 2: late-bye witness revival (delaying-carrier gate: RM₁ preempts direct bye → tombstone verification → RM₂ → both rotations converge) and depart→rejoin→re-depart (sig-keyed dedup + ADD triple-clear + second RM fires); P-15 lands 3 new + rewrites 4 for star-routing semantics: P15_圈外自报名_零圈帧 (impersonating line receives zero circle frames), P15_spec_a_转发创世 (forwarded genesis grants circle-line QUALIFICATION via frame-creator, never name-binding; replayed direct genesis binds nothing), P15_spec_b_前成员重放 (mortal-proxy line kill: zombie table bring → phantom circle, every-departure-rotates invariant asserted, ex-member lacks rotated r → no K, P-03 loud reject); 署名告别→creator-departure dual-witness + roll-call relights B-C, 在场辩护→sole bound-line witness, 点名→single-RM convergence, 迟到告别→dual-proxy deterministic gate); expect() deadline 15s (parallel-run scheduler pressure)"
+    tests/conversation.rs: "54 integration tests, real persons on ephemeral ports (slice-4 adds 7: full seat flow, expectation-gate retry, seat-name override + line alias, closed-table fork + roll-call re-accept, closed-table repeated-bring DoS surface, same-introducer double-ADD ordered convergence, declining-candidate zero frames; slice-5/6 add 13: sas same-word + roll-call freshness, MITM-splice different words (P-08), 4-chain relay + seat completion, solo-stage joiner, forwarded-bye never issues RM, presence-defense withheld path (sacrificial-thread crash sim), P-01/P-03/P-04/P-05/P-12 rogue-injection rejections, 50-member circle, rogue canary; 2026-10-17 fix adds 2: late-bye witness revival (delaying-carrier gate: RM₁ preempts direct bye → tombstone verification → RM₂ → both rotations converge) and depart→rejoin→re-depart (sig-keyed dedup + ADD triple-clear + second RM fires); P-15 lands 3 new + rewrites 4 for star-routing semantics: P15_圈外自报名_零圈帧 (impersonating line receives zero circle frames), P15_spec_a_转发创世 (forwarded genesis grants circle-line QUALIFICATION via frame-creator, never name-binding; replayed direct genesis binds nothing), P15_spec_b_前成员重放 (mortal-proxy line kill: zombie table bring → phantom circle, every-departure-rotates invariant asserted, ex-member lacks rotated r → no K, P-03 loud reject); P-15 audit lands 2: P15_B_转发资格线_对端离席熄灭 (peer-keyed revocation regression, self-certified red-pre/green-post) + P15_C_同名重入_crash见证不误逐新任期; P4 删除面: 隐身 test dies with the feature, 出生无喊话耳_删除面守卫 takes its slot (bind 127.0.0.1:37777 succeeds ⇒ no 0.0.0.0:37777 listener — structural removal guard, canary family); expect() deadline 15s (parallel-run scheduler pressure)"
     tests/pq.rs:       "hybrid suite round-trip"
 
 # ───────────────────────────────────────────────────────────────
@@ -280,9 +281,10 @@ wire_protocol:
     punch: "register w/ retry (3s), connect to peer's public endpoint, exchange PUNCH frames (~150ms apart, 8s window); INTRO2 accepted ONLY from the introducer's own address"
     transport: "UdpPunch: one frame per datagram, punch-echo discarded, max frame 65507B; no liveness detection — a vanished peer hangs the line until /quit"
     fallback: "on punch failure the USER re-routes via /meet manually — no automatic fallback"
-  lan_discovery:                             # v1 as-built — ENTIRE SUBTREE REMOVED in 3.0.0 (removals_3_0_0)
-    status: still-in-code-removal-pending
-    v1_behavior: "udp 37777; E2EEPROBE1 broadcast probe, E2EEREPLY1 name+port reply; hidden mode = listener never spawned"
+  lan_discovery:                             # v1 家族——3.0.0 删除面已执行（2026-10-17，removals_3_0_0.v1_discovery_family）
+    status: removed-2026-10-17
+    was: "udp 37777; E2EEPROBE1 broadcast probe, E2EEREPLY1 name+port reply; hidden mode = listener never spawned"
+    removal_proof: "出生无喊话耳_删除面守卫（bind 127.0.0.1:37777 成功 ⇔ 无 0.0.0.0:37777 监听者）——结构守卫防爬回；cargo build 默认构建零 SHOUT/PROBE/Discovered 符号"
 
 # ───────────────────────────────────────────────────────────────
 # FILE TRANSFER (as-built, unchanged by v3)
@@ -357,7 +359,7 @@ group_v3:
         unbound_line_carries: "未获资格的线（发送方无绑定）**零圈帧出向**——belief_flood 在发送侧拒绝，含 r 的帧（0x09 凑话/0x12 座次表）只走发送方已绑定的线。接收方处理到达帧不需要自己的绑定（路由是发送方判定）——到达 ≠ 资格，到达不授予任何东西"
         contrib_replay: "负结果①对账：捕获合法 0x09 重放给受害者 → 行照收（若名在信念）但转发**排除来源线**（攻击者线一帧也拿不回）且 0x09 到达不绑线（无资格面）——①要防的『重放即得圈线资格』不成立。r 帧流向圈外线的唯一路径=持有 0x0F/0x12 送达帧的伪造递送（成员泄帧/载体 MITM（P-08，SAS 可检）/共谋（成员本有 K）——皆文档化边界，非①回归）；peer 键修复后此面进一步收紧：伪造递送线在谎报名（或真名）出信念时熄灭"
         speech_binding: "负结果②对账：『验签发言绑线』仍为死码——发言只从发送方已绑线发出，未绑线永远收不到发言，绑它=永不可达的投机机器（spec 裁决原文，peer 键不改变此结论）"
-      their_name_residuals: "发送侧 their_name 残留面清单（P-15 范围外、无 r 泄漏、入档待后续裁决）：circle_bye_frames 的告别 targets 筛选读 belief.contains(their_name)——自报成员名的圈外线可收到 0x0C 告别帧（泄露面=圈号+离场者名+签名，元数据级；0x0C 无 r 无密文，不在 P-02 红线内）"
+      their_name_residuals: "发送侧 their_name 残留面清单（P-15 范围外、无 r 泄漏）：circle_bye_frames 的告别 targets 筛选读 belief.contains(their_name)——自报成员名的圈外线可收到 0x0C 告别帧（泄露面=圈号+离场者名+签名，元数据级；0x0C 无 r 无密文，不在 P-02 红线内）。owner 裁决（rulings.2026_10_17_p15_closure_granted）：与 P16_voice_key_line_proof 同批处理——同族代码一次触碰，排 P4 之后、不阻塞 3.0.0"
     carrier_visibility: "茶馆转发的是密文，但 circle_id 是明文（路由需要）——载体知道圈的存在/流量/拓扑。这是桌子的物理（不对称表第 4 行），诚实入档，不修"
 
   rekey:                                     # 换气——点名为真理，补话为捷径
@@ -414,24 +416,27 @@ group_v3:
 
 # ───────────────────────────────────────────────────────────────
 # REMOVALS 3.0.0 — 删除面（含原 2.0.0 未执行项；settled 2026-10-14/15）
+# P4 盘点已执行（2026-10-17）：逐项状态标注在每条尾部——
+# 【已死无码】= v3 slices 早已替换、src 无残骸；【已删】= 本轮删除落地；
+# 【仍在运行】= 活残骸，走 decision_procedure 报裁决后才能动（owner 指令）。
 # ───────────────────────────────────────────────────────────────
 
 removals_3_0_0:
   version_window: "HEAD is post-P2 unreleased; the next release IS 3.0.0 (breaking: 0x09/0x0B/0x0C layout changes) — no 2.0.0 release is cut"
-  v1_discovery_family:                       # 原 removals_2_0_0，至今未执行，并入 3.0.0
-    shout: "udp lan discovery (probe/reply + listener + /shout) — was the ONLY unsolicited exposure source; circles absorb audience-finding"
-    hidden_mode: "born_hidden / --hidden / e2ee_person_create_hidden — existed only to dodge shout probes; ffi symbol stays as deprecated alias (ABI frozen add-only)"
-    lan_broadcast: "the loudspeaker /say design — cancelled before birth (settled_decisions.rejected)"
-    listen_toggle: "the deaf/undeaf switch — evaporates with the loudspeaker"
+  v1_discovery_family:                       # 原 removals_2_0_0——本轮（2026-10-17）执行删除，全部【已删】
+    shout: "udp lan discovery (probe/reply + listener + /shout) — was the ONLY unsolicited exposure source; circles absorb audience-finding。【已删 2026-10-17】discover.rs 仅存 local_ips+card；Person::shout/born 内 listener spawn 已除；/shout 指令已除；出生无喊话耳守卫钉死"
+    hidden_mode: "born_hidden / --hidden / e2ee_person_create_hidden — existed only to dodge shout probes; ffi symbol stays as deprecated alias (ABI frozen add-only)。【已删 2026-10-17】born_hidden/--hidden 消亡（无喊话则无隐身语义）；ffi e2ee_person_create_hidden 保留符号、行为= create（deprecated alias 落地）"
+    lan_broadcast: "the loudspeaker /say design — cancelled before birth (settled_decisions.rejected)。【已死无码】从未成码"
+    listen_toggle: "the deaf/undeaf switch — evaporates with the loudspeaker。【已死无码】从未成码"
   sync_machinery:                            # v3 死刑——理论裁决（A2），不是实现取舍
-    epoch_field: "epoch(u32) in 0x0B — 目录的残留；防重放由署名 counter 承担；或降级为纯显示代际标签"
-    initiator_election: "smallest-r initiator + 3s cascade + 'initiator named in frame' — 选举机制整体退役；见证人取代"
-    validity_rules: "first-arriver-wins / same-leaver-no-op / serialize-by-arrival — 全部退役；T2 交换代数 + T1 响亮分歧取代"
-    fork_announcement_frame: "0x0E 分叉通告（曾计划的 prev-hash 链）——死于重建：分叉不预防、不通告，分叉必被听见（mumble），修复必可得（点名）"
-    counting_admission: "expected = convos.len()+1 — 计数死；名单上的名字到齐才是完成（P-03）"
-    unsigned_bye: "0x0C 无签名形态死——告别是身体的行为（A1），必须署名（P-01）"
-    all_convos_flooding: "flood to all convos minus source — 信念路由取代（P-02/P-04）"
-  ffi_compatibility: "e2ee_person_create_hidden stays as deprecated alias; circle v3 events extend the enum add-only; 0x09/0x0B/0x0C layout changes are wire-breaking = exactly why this is 3.0.0"
+    epoch_field: "epoch(u32) in 0x0B — 目录的残留；防重放由署名 counter 承担；或降级为纯显示代际标签。【已死无码】v3 slice-2 的 rm_payload/add 布局（circle_id‖'R'/'A'‖…）不含 epoch 字段，src 全文无 epoch 残迹——owner 担心的『活在 wire 布局里』不存在，无需裁决"
+    initiator_election: "smallest-r initiator + 3s cascade + 'initiator named in frame' — 选举机制整体退役；见证人取代。【已死无码】smallest-r/级联定时器在 src 无残迹（v3 slice-2 起彻底替换）"
+    validity_rules: "first-arriver-wins / same-leaver-no-op / serialize-by-arrival — 全部退役；T2 交换代数 + T1 响亮分歧取代。【已死无码】收端语义=幂等应用（条件删除+无条件行替换），无任何 serialize-by-arrival 残迹"
+    fork_announcement_frame: "0x0E 分叉通告（曾计划的 prev-hash 链）——死于重建：分叉不预防、不通告，分叉必被听见（mumble），修复必可得（点名）。【已死无码】frame_kind 无 0x0D/0x0E 常量（死于理论，从未成码）"
+    counting_admission: "expected = convos.len()+1 — 计数死；名单上的名字到齐才是完成（P-03）。【已死无码】form_circle 走署名邀请名单，src 无计数式准入残迹"
+    unsigned_bye: "0x0C 无签名形态死——告别是身体的行为（A1），必须署名（P-01）。【已死无码】bye 处理器按长度门槛+验签解析，无签名形态结构性不可解析（v3 slice-2 替换彻底）"
+    all_convos_flooding: "flood to all convos minus source — 信念路由取代（P-02/P-04）。【仍在运行——唯一活残骸】flood_frame_all（person.rs）仍存在，唯一调用点=form_circle 的 0x0F 开台公告扇出；P-15 快照绑定语义下与 belief_flood 目标集构造性等价（快照绑全部 convos 的线、invited=全部对端名），但机制属前 P-15 的全对话泛洪家族——迁移推导已报 owner（P4 盘点表），裁决前不动"
+  ffi_compatibility: "e2ee_person_create_hidden stays as deprecated alias; circle v3 events extend the enum add-only; 0x09/0x0B/0x0C layout changes are wire-breaking = exactly why this is 3.0.0。【已执行 2026-10-17】alias 落地（12 符号不变，契约测试照常绿）"
 
 # ───────────────────────────────────────────────────────────────
 # INVARIANTS — any change violating these MUST be rejected
@@ -599,7 +604,7 @@ known_limitations:
   left_voices_growth: "嗓音墓碑随离席累积（对抗 ADD/RM 循环可增长）——每轮受 seat-flow 成本约束，随圈生灭（点名重置、进程死亡），RAM-only 零持久化；接受为已知边界（rulings 2026_10_17_left_voices_tombstone ③）"
   mesh_direct_pair_relay: "P-15 线绑定代价：发起者之外的 mesh 直连对（双方都不是 creator、也不是 seat-flow 对端）在下次点名前只经发起者中继（双方线未绑，发言只走各自已绑线）；创作者星心离场=分叉静默（两幸存者的 RM 无路互达，各自单旋转不同钥）——mumble/T1 语义，点名即全量重绑恢复。A4 完整保留：mesh 冗余的恢复路径就是点名（rulings 2026_10_17_p15_line_binding_spec ⑤）"
   relay_half_open_edge: "转发送达的入座是半开边（复审收尾项 A 入档，见 group_v3.routing.relay_asymmetry）：B 经 M 转发的 genesis 入座只取得 B→M 出向资格，M→B 入向结构性无资格（M 侧三种绑定行为无一覆盖）——B 的成钥依赖她自己另一条被对端绑定的线；中继者离席后 B 的出向亦熄灭（peer 键）→ 发送面归零=听见不了=响亮（A4 点名重绑自愈，测试钉死）。同族：中继者若中途诚实点亮反向（对 B 发起 seat flow）则边转全通——机制已存在，无需新协议元素"
-  p15_fake_name_peer_residual: "peer 键修复的残余面（pre-P15 同等暴露、非回归，pk 锚定前不修）：资格线对端 0x05 谎报成员名 → 该线在被谎报名离席前持续路由（名字≠身份既定边界——谎报者须先持 0x0F/0x12 送达帧，成员泄帧/MITM(P-08)/共谋皆文档化边界）；谎报名 ∉ 信念的送达线永不路由（fail-closed，入座半途而废——pre-P15 同构）。结构性修复=嗓音钥线证明锚定 pk（提案见 rulings.2026_10_17_p15_peer_keyed_revocation 尾段，待 owner 裁决）"
+  p15_fake_name_peer_residual: "peer 键修复的残余面（pre-P15 同等暴露、非回归，pk 锚定前不修——owner 确认 rulings.2026_10_17_p15_closure_granted）：资格线对端 0x05 谎报成员名 → 该线在被谎报名离席前持续路由（名字≠身份既定边界——谎报者须先持 0x0F/0x12 送达帧，成员泄帧/MITM(P-08)/共谋皆文档化边界）；谎报名 ∉ 信念的送达线永不路由（fail-closed，入座半途而废——pre-P15 同构）。结构性修复=嗓音钥线证明锚定 pk（P16_voice_key_line_proof，方向性批准 rulings.2026_10_17_p15_closure_granted，排 P4 之后、不阻塞 3.0.0）"
   p15_seat_flow_via_hint: "P-15 残余：候选人侧 0x12 建圈的 Qualified 取 0x10 到达线的自报名为 hint（0x12 无整帧签名）——peer 键修复后 hint 同时落 via（溯源）与 peer（撤销/路由/见证键）：引荐人自报名=她的行名（常态）时三判定全对；自报名≠行名（引荐人本人覆盖落座名的罕见合成）时该线 fail-closed（peer ∉ 信念 → 永不路由）——pre-P15 同构的 liveness 边角，点名自愈，无泄漏面。可随未来 0x12 整帧签名升级消除，暂入档不修"
   sleeping_member_false_rm: "沉睡成员可被伪证 RM 临时驱逐；回来发言即 mumble → 点名回归；入档不修（群钥固有+物理等价已论证）"
   newcomer_roster_is_copy: "封桌被拒的新人（或任何刚拿到 0x12 的人）手里的座次表是引荐人信念的复印件，不是活视图——她看到五个名字却只听见引荐人说话时，可能不知道自己被拒了，除非引荐人告诉她。物理对应：朋友拿到一张座次表，但那只是引荐人的说法。不修——修法是『拒绝通告帧』，那是同步机 creeping back；A2 推到极致：连你手里的座次表都只是别人的直连感知"
@@ -619,7 +624,7 @@ known_limitations:
 
 pending_work:
   P3_v3_axiom_rebuild:                       # 核心：理论落地。slice 顺序=依赖顺序
-    status: complete-2026-10-17             # slice-1/2/3 LANDED 2026-10-15；slice-4 LANDED 2026-10-16；slice-5/6 LANDED 2026-10-16；迟到告别竞态修复 LANDED 2026-10-17（65 测试：15 单元 + 49 集成 + 1 pq，跑法 --features rogue）
+    status: complete-2026-10-17             # slice-1/2/3 LANDED 2026-10-15；slice-4 LANDED 2026-10-16；slice-5/6 LANDED 2026-10-16；迟到告别竞态修复 + P-15 LANDED 2026-10-17；关闭裁决 rulings.2026_10_17_p15_closure_granted：P3 全板完成。71 测试：16 单元 + 54 集成 + 1 pq（跑法 --features rogue）
     depends: []
     engineering_debt:                       # slice-4 期间发现的既有 flaky（上游 slice-2 遗留，非 slice-4 引入）
       teardown_lock_fix: "已修（随 slice-4）：ear 收摊曾在持有 Inner 锁期间 await（writer 锁+TCP shutdown）——阻塞窗口内一切等 Inner 锁的任务（RM 处理等）卡死，见证人 RM 帧到达却无人处理 → 双方都只应用自己的 RM → rekeyed 缺一份 → 测试超时。修复：锁内纯同步收尾，shutdown/witness 移到锁外"
@@ -634,9 +639,10 @@ pending_work:
       - "[x] slice-5 对词（LANDED 2026-10-16）：/word 双层短词——1:1 从 Noise transcript 哈希 HKDF(\"p2p-sas\") 派生（per-convo transcript 捕获于 noise_stage）、群从 HKDF(K, \"circle-sas\") 派生（circle.rs sas_word_from_*）；12 位数字分 4 组；即时显示零落盘（Kills P-08 的可检测性）"
       - "[x] slice-6 判例测试矩阵（LANDED 2026-10-16）：注入面 #[cfg(feature=\"rogue\")] pub mod rogue（rogue_frame/rogue_flood/circle_id/roster_snapshot/forge_row，经真实发送路径）+ 判例集成测试（P-01/P-03/P-04/P-05/P-08/P-12 拒收或检测）+ P-13 确定性单元断言（旋转封旧史）+ 交换代数断言（不相交序无关收敛 + 同旋转者相交必分叉→T1）+ 四点链式中继 + 转发告别只应用不发起 + 在场辩护扣下路径（牺牲线程 crash 模拟）+ 一人开台收客 + 50 人规模 + canary（缺 feature 恰一条响亮失败；CI 已带 --features rogue）"
   P4_removal_face_3_0_0:
-    status: not-started
+    status: in-progress                        # 2026-10-17 开工：v1 发现家族删除落地 + ffi alias + 两份 human README 全量重写 + 盘点入档；剩 all_convos_flooding 迁移（待 owner 裁决）+ 发布杂务
     depends: [P3_v3_axiom_rebuild]
     scope: "删除 shout/hidden/lan listener（v1 家族）+ 同步机全部残骸（epoch/initiator/validity/cascade/计数完成/无签名 0x0C/全对话泛洪）；ffi create_hidden → deprecated alias；README.md/README_ZH.md 按 v3 世界重写；版本 3.0.0"
+    landed_2026_10_17: "盘点（removals_3_0_0 逐项状态标注）：同步机六项全部【已死无码】（v3 slices 替换彻底，epoch 不在 wire 布局——owner 担心不成立）；v1 家族【已删】：discover.rs 仅存 local_ips+card、Person::shout/born_hidden/born listener spawn 删除、main.rs --hidden + /shout 删除、lib.rs Discovered 导出删除；ffi e2ee_person_create_hidden = deprecated alias（12 符号不变，契约+ctypes 绿）；测试：隐身 test 随功能退役，出生无喊话耳_删除面守卫补位（54 集成不减）；README.md/README_ZH.md 按 v3 世界全量重写（doc_index.rule 时点已到）。待办：all_convos_flooding（flood_frame_all）迁移裁决；3.0.0 发布杂务（tag/release notes）"
   P5_android_abi:
     status: not-started
     scope: "cargo-ndk + NDK r28+ (16KB page alignment — verify LOAD p_align via llvm-readelf); targets aarch64/armv7/x86_64/i686-linux-android; api 24; verify 12 e2ee_* symbols per .so; GitHub Actions job + release artifacts; pure-rust deps only"
@@ -645,16 +651,20 @@ pending_work:
     status: not-started
     depends: [P3_v3_axiom_rebuild]
     scope: "hall+table slots in Inner; per-circle circle_id + belief routing; line reuse; /gsay target argument; compartmentalization tests; carrier_policy per group_v3.nested_circles"
+  P16_voice_key_line_proof:                  # 嗓音钥线证明（P-15 的 A1 完成态：名字→身体）——方向性批准 rulings.2026_10_17_p15_closure_granted
+    status: not-started
+    depends: [P4_removal_face_3_0_0]        # 排 P4 之后、不阻塞 3.0.0（发布后跟进）
+    scope: "成员以圈嗓音钥签 circle_id‖线 transcript 哈希，收端按名单行 pk 验证并锚定绑定到 pk——撤销/路由/见证按 pk 而非名字（谎报名〔p15_fake_name_peer_residual〕与名字复用面同时消失）；their_name_residuals（circle_bye targets 读 their_name）同批处理——同族代码一次触碰（owner 裁决）；属新协议元素（新帧或送达包装），设计走 decision_procedure 全流程过堂后开工"
   P7_hardening:
     status: not-started
     depends: []
     parallelizable: true
     scope: "PR_SET_DUMPABLE(0)（P-10，结构解）；punch tag 三层规则（省略 TAG→自动 128bit 上屏转告（Crockford base32 分组）；显式短标签→响亮警告照用，文案写明 PAKE 补偿关系）；padded_chat 分桶填充（P-11）；counter 去重=最高水位+有界乱序窗口（规约定死）"
-  P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17；落地复审 2026-10-17 闭环）
-    status: complete-2026-10-17             # LANDED 同日：LineBinding 两形态 + 三写入行为 + 四判定迁移 + 契约类拒收照转 + 同圈创世重放闸 + 判例矩阵全绿；复审（rulings.2026_10_17_p15_landing_audit）三项裁决同日闭环：B=peer 键撤销修复（Qualified{via,peer}，回归测试自证）+ A=中继半开边入档（routing.relay_asymmetry + 负结果对账）+ C=同名重入作用域钉死+测试；canary 违约（迟到告别漏门控）连带修复。71 测试：16 单元 + 54 集成 + 1 pq
+  P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17；落地复审 2026-10-17 闭环；关闭裁决 2026-10-17）
+    status: closed-2026-10-17               # LANDED + 复审三项闭环（rulings.2026_10_17_p15_landing_audit）+ 关闭裁决（rulings.2026_10_17_p15_closure_granted：B/A/C 全接受，P-15 关闭，P3 全板完成；自证红/绿入档为安全修复落地标配；『Noise remote static』勘误；pk 锚定方向性批准 → P16）。71 测试：16 单元 + 54 集成 + 1 pq
     depends: []
     landed: "person.rs：enum LineBinding{Name,Qualified{via,peer}}（points_to 归一判定——Qualified 读 peer）+ Gathering.line_bindings（取代 aliases）；belief_flood 只认绑定（Name 过行名信念检查；Qualified 过对端键 peer 信念检查——授予=协议行为，熄灭=信念检查）；form_circle 快照全量绑定；GENESIS 处理器 direct-lock 退役 + 同圈重放闸（先于一切）+ join_genesis(src_line) 送达绑定 Qualified{via:帧内 creator, peer:送达线 0x05 捕获}；handle_contribution 签名改 src_line（暂存保线号——P-05 直连声明判定与转发排除读它，非逆向路径学习）+ P-05 直连声明读 Name 绑定；complete_bring 绑 Name(0x11 行名)；handle_seat_roster 绑 Qualified{via:引荐人 hint, peer:hint}；bye/crash 见证判定读 points_to（peer）；apply_rm 急切撤 Qualified{peer:leaver} + apply_add 同名清账 Name+Qualified{peer}（先于引荐人写新绑定）；ADD 契约类拒收照转。测试：单元（线绑定_生死周期_对端键熄灭_授予键留溯源——含过度撤销消失断言）+ P15_圈外自报名_零圈帧 + P15_spec_a_转发创世（确定性载体构造：直发被扣→转发送达→放行重放不授绑）+ P15_spec_b_前成员重放（mortal proxy 杀线不杀进程：僵尸桌 bring 幻影圈 + 旋转不变量断言 + 旧材料无钥 + P-03 拒收）+ P15_B_转发资格线_对端离席熄灭_除名者零圈帧（复审阻断项 B 回归：转发者离席熄灭+RM 帧不泄漏+幸存者同钥+点名自愈）+ P15_C_同名重入_crash见证不误逐新任期（复审收尾项 C：v1 线死无据 RM、v2 新绑定存活）+ 既有测试按新拓扑语义重写（署名告别→创作者离场双见证/点名点亮 B-C；在场辩护→唯一绑定线见证；点名→单 RM 收敛；迟到告别→双代理线确定性构造）"
-    landing_audit_2026_10_17: "owner 复审：主体接受、三附带修复追认、union 同构论证修正（crash 的 union=幂等冗余见证，义务守卫兜住）；阻断项 B（via 键撤销=A3 回归）+ 收尾项 A（中继反向未入档）+ 收尾项 C（名字复用×crash 见证缺测试）三项裁决，关闭条件全达成（B 修复落地自证 + A 入档对账 routing.relay_asymmetry + C 作用域+测试）；残余面（谎报 peer 名、pk 锚定提案）入档 known_limitations.p15_fake_name_peer_residual 与 rulings 尾段，待 owner 另案裁决"
+    landing_audit_2026_10_17: "owner 复审：主体接受、三附带修复追认、union 同构论证修正（crash 的 union=幂等冗余见证，义务守卫兜住）；阻断项 B（via 键撤销=A3 回归）+ 收尾项 A（中继反向未入档）+ 收尾项 C（名字复用×crash 见证缺测试）三项裁决，关闭条件全达成（B 修复落地自证 + A 入档对账 routing.relay_asymmetry + C 作用域+测试）；残余面（谎报 peer 名、pk 锚定提案）入档 known_limitations.p15_fake_name_peer_residual 与 rulings 尾段——后续裁决已落地：关闭见 rulings.2026_10_17_p15_closure_granted，pk 锚定方向性批准立 P16"
 
   research_track:                            # 非代码轨——论文工作，不阻塞任何 P 项；细节另档
     note: "T1-T5 Tamarin 形式化（P3 落地后建模）；取证测量论文（Signal/Telegram/Briar/本系统 本地残留对比）；trilemma 以猜想形态入论文一。README 不承载研究细节。"

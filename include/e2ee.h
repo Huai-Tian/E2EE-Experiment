@@ -57,7 +57,7 @@ const char*    e2ee_version(void);
 
 /* 生灭 */
 e2ee_person*   e2ee_person_create(const char* name, const char* listen_addr); /* NULL 失败 */
-e2ee_person*   e2ee_person_create_hidden(const char* name, const char* listen_addr); /* 隐身：不应答 /shout 探测 */
+e2ee_person*   e2ee_person_create_hidden(const char* name, const char* listen_addr); /* 已废弃的别名（3.0.0 起等同 create）：喊话发现已删除，无隐身语义 */
 void           e2ee_person_destroy(e2ee_person* p);                           /* 体面道别后熄灭 */
 
 /* 查询 */

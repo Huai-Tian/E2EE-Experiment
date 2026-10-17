@@ -15,22 +15,16 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   E2EE-Experiment [监听地址] [-n 名字]
       出生。默认在 0.0.0.0:7777 上听，等人来，也随时可以主动去找人。
       同一台机器开两个人时，记得用不同端口。
-  E2EE-Experiment --hidden [监听地址] [-n 名字]
-      隐身出生：永不应答 /shout 广播探测——同屋喊一嗓子也探不到你在。
-      拿确切地址 /dial、/meet、/punch 等精确交往一切照常（TCP 耳朵照常开）。
-      注意：隐身者仍可主动 /shout 找别人，但喊这一嗓子会把自己的 IP 暴露给
-      所有在听的人——真隐身连喊也不喊。
   E2EE-Experiment --no-chain [监听地址] [-n 名字]
       不续链出生：道别时不预约下一把暗号，也不接受别人的预约。
       适合对陌生人常开的台席（如意见反馈热线）——谁来都行，散场不留锁
       （默认的续链会把下一场留给上一位客人，陌生人反而进不来）。
-      可与 --hidden 叠加。
   E2EE-Experiment --guard <机器暗号> [监听地址] [-n 名字]
       常备门禁出生：每位来客都要对上这句暗号才谈得成，且从不消耗——
       瞎拨多少次也锁不住台，真钥永远进得来。这句应是 32 字节级的
       随机机器密钥（不是人类暗号：一次性切口「烧掉」防的是对低熵暗号
-      的在线爆破，机器密钥在线爆破本就不可能）。可与 --no-chain、
-      --hidden 叠加；对陌生人常开的武装台席推荐 --guard KEY --no-chain。
+      的在线爆破，机器密钥在线爆破本就不可能）。可与 --no-chain 叠加；
+      对陌生人常开的武装台席推荐 --guard KEY --no-chain。
   E2EE-Experiment --courier [监听地址]
       开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
       （房号由客人带外自选，茶馆只认号接线）。
@@ -51,7 +45,6 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   /talk <编号|名字>     把注意力切到另一场对话
   /list                看看在场的人
   /card                打印自己的名片（名字 + 各网卡地址）
-  /shout               同屋喊一圈，看看谁在（局域网发现）
   /circle [封桌|开台]
       开台/围坐/点名：署名邀请名单=当前在场的人；名单上的
       名字自署到齐后铸群钥。在圈中重跑 = 点名重聚（修复路径）。
@@ -85,7 +78,6 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut name = String::from("无名氏");
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
     let mut as_courier = false;
-    let mut hidden = false;
     let mut no_chain = false;
     let mut guard_secret: Option<String> = None;
     let mut positional: Vec<String> = Vec::new();
@@ -98,7 +90,6 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             "--courier" => as_courier = true,
-            "--hidden" => hidden = true,
             "--no-chain" => no_chain = true,
             "--guard" => match args.next() {
                 Some(g) => guard_secret = Some(g),
@@ -135,12 +126,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 
     // 出生；此后一半心思听事件，一半心思读输入。
-    // 隐身出生的人不应答同屋喊话（广播探不到存在），其余照常。
-    let (person, mut events) = if hidden {
-        Person::born_hidden(&name, &listen_addr).await?
-    } else {
-        Person::born(&name, &listen_addr).await?
-    };
+    let (person, mut events) = Person::born(&name, &listen_addr).await?;
     // 不续链：道别不预约、来约不接受（开放台席形态）
     if no_chain {
         person.set_chaining(false).await;
@@ -150,9 +136,6 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         person.expect_secret_stable(g.as_bytes()).await;
     }
     let mut notes = String::new();
-    if hidden {
-        notes.push_str("（隐身：不应答 /shout）");
-    }
     if no_chain {
         notes.push_str("（不续链：道别不预约，谁来都行）");
     }
@@ -353,18 +336,6 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
             }
             for l in lines {
                 eprintln!("{l}");
-            }
-        }
-        "shout" => {
-            eprintln!("喊一嗓子…");
-            let found = person.shout().await;
-            if found.is_empty() {
-                eprintln!("屋里没人应。");
-            } else {
-                for d in found {
-                    // 应答里的名字是局域网里任何人都能伪造的，照例先消毒
-                    eprintln!("{}  {}", safe(&d.name), d.dial_addr);
-                }
             }
         }
         "circle" => {
