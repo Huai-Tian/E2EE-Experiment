@@ -64,6 +64,10 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   /sit [名字]          落座：回应看座邀约（A1：落座署名必须本人触发）。
                        默认用你在这条线上的自报名，可覆盖
                        （「这桌叫我阿花」是自己的嗓音）
+  /word                对词：显示当前信道的短词（聚焦 1:1 的会话短词 /
+                       在圈的群短词，12 位数字分 4 组）。两边各看各的
+                       屏幕，想核对的人口头对一遍——念的不一样
+                       = 这条线上有人拼话。短词即时显示、永不落盘
   /bye                 和当前对话的人道别
   /quit 或 Ctrl-D      和所有人道别，离场
   Ctrl-C               直接离场
@@ -415,6 +419,24 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
             let name_override = parts.next().map(|s| s.to_string());
             match person.sit(name_override.as_deref()).await {
                 Ok(()) => eprintln!("落座署名递回去了——等引荐人的座次表。"),
+                Err(e) => eprintln!("{e}"),
+            }
+        }
+        "word" => {
+            // /word：SAS 对词——即时显示、零落盘；不对账是用户的自由
+            match person.sas_word().await {
+                Ok(rep) => {
+                    if let Some((with, word)) = rep.p2p {
+                        eprintln!("和 [{with}] 的会话短词：{word}");
+                    }
+                    if let Some((members, word)) = rep.circle {
+                        eprintln!("圈内群短词（{members} 人）：{word}");
+                    }
+                    eprintln!(
+                        "对词：两边各念各的短词，一样 = 这条线上没人拼话；\
+                         不一样 = 有人把线拼成了两半（P-08）。"
+                    );
+                }
                 Err(e) => eprintln!("{e}"),
             }
         }

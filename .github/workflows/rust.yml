@@ -12,7 +12,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Linux：构建 + 全量测试（干净环境里的回归防线）
+  # Linux：构建 + 全量测试（干净环境里的回归防线）。
+  # 判例注入测试需要 rogue feature（settled 2026-10-16）：缺 feature 时
+  # canary 测试恰一条响亮失败——静默跳过=罪，所以 CI 必须带上 feature。
+  # 默认构建（不带 feature）在上面的 build 步骤验证：编译期零注入符号。
   test-linux:
     runs-on: ubuntu-latest
     steps:
@@ -20,7 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - run: cargo build --verbose
-      - run: cargo test --verbose
+      - run: cargo test --verbose --features rogue
 
   # Windows：你日常开发在 Windows，双向都不许回归
   test-windows:
@@ -30,7 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
       - run: cargo build --verbose
-      - run: cargo test --verbose
+      - run: cargo test --verbose --features rogue
 
   # musl 静态构建：验证 release 产物形态永远可构建
   musl-static-build:

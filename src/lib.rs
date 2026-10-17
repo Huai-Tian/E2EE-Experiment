@@ -10,6 +10,9 @@
 //! - Rust 程序直接依赖本 crate；
 //! - 任何能调 C 的语言经 `ffi/` 门面 crate（`.so` / `.dll`，头文件
 //!   `include/e2ee.h`，契约测试 `ffi/ffi_test.c`）。
+//!
+//! 判例注入面（P3 slice-6）：`--features rogue` 才编译（默认构建
+//! 编译期零注入符号）；判例矩阵测试跑法 `cargo test --features rogue`。
 
 pub mod circle;
 pub mod courier;
@@ -19,4 +22,8 @@ pub mod punch;
 pub mod wire;
 
 pub use discover::Discovered;
-pub use person::{Event, Events, LeaveReason, Person, PersonError, RosterEntry};
+pub use person::{Event, Events, LeaveReason, Person, PersonError, RosterEntry, SasReport};
+
+// 判例注入面：feature 门控重导出（e2ee::rogue::...）
+#[cfg(feature = "rogue")]
+pub use person::rogue;

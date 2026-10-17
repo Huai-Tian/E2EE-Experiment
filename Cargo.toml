@@ -16,6 +16,14 @@ members = ["ffi"]
 [patch.crates-io]
 snow = { path = "vendor/snow" }
 
+# 判例注入面（P3 slice-6，settled 2026-10-16）：默认构建编译期零注入符号
+# （结构解——doc(hidden)+君子协定是被否的检测式编码）。判例矩阵的注入
+# 测试跑法：cargo test --features rogue；缺 feature 时 canary 测试恰一条
+# 响亮失败（静默跳过=罪）。注意 #[cfg(test)] 干不了这活：集成测试编译
+# 库时 cfg(test) 关闭。
+[features]
+rogue = []
+
 # Rust 库（供 Rust 程序直接依赖；C ABI 在 ffi/ 成员里）
 [lib]
 name = "e2ee"

@@ -132,6 +132,22 @@ impl RosterRow {
         let row = Self::from_bytes(b)?;
         row.verify_self(circle_id).then_some(row)
     }
+
+    /// 定 r 落座（判例注入面的材料构造器）：r 由调用者指定——
+    /// 生产路径永远是 [`RosterRow::self_seat`]（r 自选随机）。
+    /// P-12 的碰撞注入（指定的 r 撞现有成员）用得上。
+    #[cfg(feature = "rogue")]
+    pub fn seat_with_r(circle_id: u64, name: &str, r: &[u8], sig: &SigningKey) -> Self {
+        assert_eq!(r.len(), CONTRIB_LEN, "凑话贡献恒 32 字节");
+        let sig_pk = sig.verifying_key();
+        let contrib_sig = sig.sign(&row_payload(circle_id, name, r, sig_pk.as_bytes()));
+        Self {
+            name: name.to_string(),
+            r: Zeroizing::new(r.to_vec()),
+            sig_pk,
+            contrib_sig,
+        }
+    }
 }
 
 /// 从全部贡献铸出群钥匙。贡献必须按字节排序后拼接——顺序无关，
@@ -200,6 +216,32 @@ pub fn open(subkey: &[u8; 32], blob: &[u8]) -> Option<Vec<u8>> {
             Payload { msg: ct, aad: nonce },
         )
         .ok()
+}
+
+/// SAS 对词（1:1·slice-5）：从 Noise transcript 哈希派生的 12 位数字
+/// 短词（4 组 × 3 位，约 40bit）。两端 transcript 相同 ⇒ 同词；
+/// MITM 把见面劈成两半 ⇒ 两个 transcript ⇒ 两半短词不同（P-08 的
+/// 可检测性来源——无 SAS 则机密性定理无法陈述，T5）。
+pub fn sas_word_from_transcript(transcript: &[u8]) -> String {
+    sas_word(transcript, b"p2p-sas")
+}
+
+/// SAS 对词（群·slice-5）：HKDF(K, "circle-sas") 派生——全员同 K 同词，
+/// 每次聚首新鲜（新圈号新贡献 ⇒ 新词），不累积不持久。
+pub fn sas_word_from_group_key(k: &[u8; 32]) -> String {
+    sas_word(k, b"circle-sas")
+}
+
+/// 短词蒸馏：IKM 与域标签喂进 HKDF，取 8 字节（64bit）模 10^12
+/// （偏置约 1e-7，对 40bit 量级的仪式词可忽略），铸成 12 位数字
+/// 分 4 组——电话念 12 位分组数字是数十年验证过的人类工程学。
+fn sas_word(ikm: &[u8], label: &[u8]) -> String {
+    let hk = Hkdf::<Sha256>::new(None, ikm);
+    let mut out = [0u8; 8];
+    hk.expand(label, &mut out).expect("8 字节恒成立");
+    let v = u64::from_be_bytes(out) % 1_000_000_000_000;
+    let s = format!("{v:012}");
+    format!("{} {} {} {}", &s[0..3], &s[3..6], &s[6..9], &s[9..12])
 }
 
 #[cfg(test)]
@@ -277,5 +319,84 @@ mod tests {
             contrib_sig: old_sig,
         };
         assert!(!old_r_before.verify_self(cid), "旋转后行失签是常态，帧必须带重签整行");
+    }
+
+    #[test]
+    fn 对词_格式与派生() {
+        // slice-5：12 位数字分 4 组（~40bit）；同一 K 同词；换气即换词；
+        // 1:1（transcript 面）与群（K 面）两个派生域彼此分离。
+        let k1 = [7u8; 32];
+        let k2 = [8u8; 32];
+        let w1 = sas_word_from_group_key(&k1);
+        assert_eq!(w1, sas_word_from_group_key(&k1), "确定性：全员同 K 必同词");
+        assert_ne!(sas_word_from_group_key(&k2), w1, "换气即换词");
+        // 格式：4 组、每组 3 位、纯数字
+        assert_eq!(w1.split(' ').count(), 4, "12 位分 4 组：{w1}");
+        for g in w1.split(' ') {
+            assert_eq!(g.len(), 3);
+            assert!(g.bytes().all(|b| b.is_ascii_digit()), "纯数字：{g}");
+        }
+        // 1:1 面同构：确定性 + 区分度 + 与群面域分离
+        let t1 = [1u8; 32];
+        assert_eq!(
+            sas_word_from_transcript(&t1),
+            sas_word_from_transcript(&t1),
+            "两端 transcript 相同 ⇒ 同词"
+        );
+        assert_ne!(
+            sas_word_from_transcript(&t1),
+            sas_word_from_transcript(&[2u8; 32]),
+            "拼线 ⇒ 两半 transcript 不同 ⇒ 异词（P-08）"
+        );
+        assert_ne!(
+            sas_word_from_transcript(&t1),
+            sas_word_from_group_key(&t1),
+            "p2p-sas 与 circle-sas 域分离"
+        );
+    }
+
+    #[test]
+    fn 判例p13_共谋解史_引荐人旋转封住入座前历史() {
+        // P-13 的密码学核心（确定性断言）：恶意载体存档全部密文 +
+        // 共谋候选人入座 → 新人持 0x12 全表现行 r，也铸不出 K_old。
+        // 旧圈：Alice、Bob(r_b1)、Carol；Bob 在 K_old 下说过话
+        let r_a = [0x11u8; 32];
+        let r_b1 = [0x22u8; 32];
+        let r_c = [0x33u8; 32];
+        let k_old = derive_group_key(&[&r_a, &r_b1, &r_c]);
+        let sub_old = derive_sender_subkey(&k_old, &r_b1);
+        let old_frame = seal(&sub_old, 1, &r_b1, "ru zuo qian de hua".as_bytes());
+
+        // 反事实（修复的必要性）：若引荐人不旋转（r_b2 == r_b1），
+        // 新人排除自己的 r 即重铸 K_old——攻击成立
+        let k_no_rotation = derive_group_key(&[&r_a, &r_b1, &r_c]);
+        assert_eq!(k_no_rotation, k_old, "不旋转 ⇒ 新人解旧历史（P-13 攻击面）");
+
+        // 现实（P-13 旋转后）：Bob 转 r_b2、新人 N1 落座。
+        // 新人手里的全部材料 = 0x12 全表：{r_a, r_c, r_b2, r_n}
+        let r_b2 = [0x44u8; 32];
+        let r_n = [0x55u8; 32];
+        let k_new = derive_group_key(&[&r_a, &r_b2, &r_c, &r_n]);
+        // 她能推导的候选钥：排除自己（假装算旧圈）与含自己（新圈）
+        let k_guess = derive_group_key(&[&r_a, &r_b2, &r_c]);
+        // 全部候选子钥（她持有的一切 r × 两把候选钥）都解不开旧帧——
+        // K_old 缺 r_b1 这块，无从推导（密钥边界=成员边界）
+        for (k, label) in [(k_new, "新圈钥"), (k_guess, "排除自己")] {
+            for r in [&r_a, &r_c, &r_b2, &r_n] {
+                let sub = derive_sender_subkey(&k, r);
+                assert!(
+                    open(&sub, &old_frame).is_none(),
+                    "{label} × r={:#x} 的子钥解不开入座前旧帧",
+                    r[0]
+                );
+            }
+        }
+        // 新圈的话照解（她自己的权益）
+        let sub_new = derive_sender_subkey(&k_new, &r_b2);
+        let new_frame = seal(&sub_new, 2, &r_b2, "ru zuo hou de hua".as_bytes());
+        assert_eq!(
+            open(&sub_new, &new_frame).unwrap(),
+            "ru zuo hou de hua".as_bytes()
+        );
     }
 }
