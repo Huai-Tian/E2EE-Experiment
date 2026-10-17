@@ -14,13 +14,20 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{timeout, Instant};
 
 /// 等到事件流里出现满足条件的事件（跳过无关事件），超时则失败。
-/// 时限 15 秒：cargo test 多线程并行下多个 current_thread 运行时
+/// 时限默认 15 秒：cargo test 多线程并行下多个 current_thread 运行时
 /// 抢核，5 秒会偶发饿死（事件本身毫秒级，只有调度压力才会用满）。
+/// 预算可经 E2EE_TEST_EVENT_BUDGET_MS（毫秒）环境校准（rulings.
+/// 2026_10_17_ci_debug_budget_mismatch：预算是环境校准非断言语义——
+/// CI 2 核共享 runner 置 45000；缺省/坏值回落 15000，本地语义零变化）。
 async fn expect<T>(
     events: &mut UnboundedReceiver<Event>,
     cond: impl Fn(&Event) -> Option<T>,
 ) -> T {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let budget_ms = std::env::var("E2EE_TEST_EVENT_BUDGET_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15_000);
+    let deadline = Instant::now() + Duration::from_millis(budget_ms);
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
         let ev = timeout(left, events.recv())
