@@ -511,6 +511,22 @@ impl Gathering {
         Some(members)
     }
 
+    /// 钥匙随名单（rulings.2026_10_17_key_follows_roster）：名单行经
+    /// 凑话替换路径（P-05 直连声明取代 / 同嗓音直连更新）变更时，若
+    /// 群钥已铸，以当前名单行重derive 并清 P7 计数水位（新钥=新计数
+    /// 空间）。与 apply_rm/apply_add 的『名单变→重derive』同一代数——
+    /// 钥匙是信念的具象，名单行变而钥匙不变 = 读写面分裂（人在座、
+    /// 她的话永远解不开）。锁内完成（try_complete 先例同形）。
+    fn rekey_to_roster(&mut self) {
+        if self.key.is_none() {
+            return; // 未成键：try_complete 会按当前名单铸钥，无分裂面
+        }
+        let mut all: Vec<&[u8]> = self.members.values().map(|m| &m.r[..]).collect();
+        all.push(&self.my_row.r[..]);
+        self.key = Some(Zeroizing::new(crate::circle::derive_group_key(&all)));
+        self.counter_watermark.clear();
+    }
+
     /// 应用一次 RM（幂等语义，T2 收敛的规约来源）：
     /// 条件删除（告退者在则删、不在则跳过——不能因已删而丢弃后半帧）
     /// + 无条件行替换（见证人签名验证通过则换她的行）。
@@ -2471,22 +2487,29 @@ async fn handle_contribution(
         } else if let Some(taken) = g.members.get(&row.name) {
             // P-05：同名对峙——先到暂定；名字绑定线上的声明 = 见证裁决
             if taken.sig_pk == row.sig_pk {
-                // 同嗓音：直连到达则更新（本人的最新印），转述则保留原行
+                // 同嗓音：直连到达则更新（本人的最新印），转述则保留原行。
+                // 钥匙随名单（rulings.2026_10_17_key_follows_roster）：
+                // 成键后行替换 = 信念变更 → 群钥随行重铸 + 清水位
                 if direct_claim {
                     g.members.insert(row.name.clone(), row.clone());
+                    g.rekey_to_roster();
                 } else {
                     forward = false; // 转述的同钥重复：当没听见
                 }
             } else if direct_claim {
-                // 见证裁决：直连声明取代暂定（这条线对面就是她本人）
+                // 见证裁决：直连声明取代暂定（这条线对面就是她本人）。
+                // 钥匙随名单：取代后重铸——否则名单说真 A 在座、群钥却
+                // 嵌暂定行的 r（读写面分裂，真 A 的发言永久 mumble）
                 ev = Some(Event::CircleConflict {
                     circle_id,
                     detail: format!(
-                        "名字〔{}〕有两份名单行：直连声明取代先到的暂定行（P-05 裁决）。",
+                        "名字〔{}〕有两份名单行：直连声明取代先到的暂定行（P-05 裁决），\
+                         群钥随行重铸。",
                         row.name
                     ),
                 });
                 g.members.insert(row.name.clone(), row.clone());
+                g.rekey_to_roster();
             } else {
                 // 转述到达的对峙：保留暂定、响亮冲突——转发出去，
                 // 让她的名字绑定线裁决

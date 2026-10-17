@@ -133,6 +133,8 @@ theory:
     2026_10_17_p7_control_frame_padding_deferred: "P7 裁决①缓办项归档（owner，2026-10-17）。spec-lite 已批的『帧类语义公共长度集（0x0F/0x10/0x11/0x12/0x0C/0x13 归一）』实现落场为仅 0x0A 密封帧分桶填充——落差裁决：控制帧长度归一化缓办。理由：控制帧长度泄露的是圈子结构（成员数），而成员数已被稳态流量分析结构性泄露（每发言的扇出模式对线路观察者恒可见）——归一化封的是已开信道，无边际保密收益；有实质意义的指纹面（聊天内容长度推断）已由 0x0A 分桶填充封死。与不对称表『载体可见元数据=诚实入档，不修』同族：此为诚实声明的边界，非遗漏。若未来出现仅经控制帧长度可感知、流量分析不可达的信息差，此裁决重开。"
     2026_10_17_p5_completion_scope: "P5 完成面裁决（owner，2026-10-17）。aarch64 直测通过（owner 侧独立构建复现：12 e2ee_* T 符号逐项一致、四条 LOAD Align 全 0x4000、host 契约 FFI/hidden/ctypes 复跑全绿；owner 构建 sha256 edce9230…与交付物 67b10bd2…不同——无 reproducible-build 旗标下的正常非确定性，发布物身份=随 release 交付的二进制及其 sha，非字节复现性）。剩余三目标（armv7/x86_64/i686）+ GitHub Actions + release artifacts 全部完成于 tag 前——owner 裁决：先全部完成再发版涵盖打包面。注意：armv7 为 ELF32，其 p_align 表现以 llvm-readelf 实测为准（若 NDK r28 对 32 位默认非 16KB，如实入档报裁决，不强行加旗标）。"
     2026_10_17_ci_debug_budget_mismatch: "CI 测试 job 红迹归档（owner，2026-10-17，附复现矩阵）。现象：ff148bb 的 CI（rust.yml——0bc55b8 v1 时代添加，先于全部 v3 工作存在）test-linux/test-windows 红：五十人（linux）/P16_镜子1（双平台）/在场辩护（windows），签名一律为事件 helper 15s 预算 Elapsed。owner 侧单变量实验定罪：同套件唯一变量换 debug——五十人即刻红（release 恒绿）；P16_镜子1 debug 单跑 3.26s 绿（争抢受害者：与五十人 60s+ 长跑共享 2 核被饿死）；taskset 2 核复现同形。根因=rust.yml 沿用 v1 时代 cargo test（debug）+ 15s 固定事件预算 + 2 核共享 runner——v3 验证纪律自 P3 起全部按 release 执行，CI 配置从未跟进；红迹自预算重型测试落地即存在（Actions 历史可核），ff148bb 非回归源（P17 行为中性，三环境 92 基线绿）。修复双管：① 测试步骤改 --release（对齐项目实际验证形态）；② 事件预算环境化 E2EE_TEST_EVENT_BUDGET_MS（默认 15000 不变，本地语义零变化——预算是环境校准非断言语义，不触测试语义弱化红线；CI 置 45000）。此即 fifty_star_scale_budget 定罪时悬置的『规模档预算分层』之裁——环境速度分层经预算旋钮实现。流程教训：CI 红迹长期无人察觉（含 owner 侧误报——『无 workflow』检查曾被 zsh glob 失败短路）；结构性建议：owner 开 branch protection 必需检查，红 CI 阻断合流。"
+    2026_10_17_p18_windows_hang_convicted: "P18 定罪归档（owner，2026-10-17，附插桩日志）。现象：d95ae00 后 CI 仅 test-windows 红：在场辩护（45s 预算仍烧穿=真悬挂）+ P16_镜子1。取证：owner 一次性插桩（E2EE_TRACE 门控、永不提交）在原生 Windows 取得全帧级地面真相。案一（在场辩护）=测试层竞态：Carol 的圈经 C-A 一线即凑齐（多径泛洪正确），CircleFormed 先于 C-B 握手的 Met 入队；expect 逐事件扫描会丢弃不匹配事件——formed 被 expect(met) 吞掉，后续 expect(formed) 永久饿死。库行为正确；Windows 时序使该序近乎确定、Linux 恒相反（迟到告别 同牺牲线程模式通过=双运行时/IOCP 假说证伪）。案二（P16_镜子1）=库语义缺口：P-05 直连声明取代暂定行时仅更新 members 行、不重铸群钥（try_complete 的 key.is_some() 守卫使成钥后永不重derive）——名单说真 A 在座、群钥却嵌 fake 的 r（信念/钥匙分裂），真 A 发言对 B 永久 mumble；测试『占位=真 A ⇒ 她的 r 在 B 的钥里 ⇒ heard』按钥匙随名单语义书写，Linux 通过纯属成键时序巧合。两案均非 d95ae00/ff148bb 回归，均为入仓日起潜伏、Windows 时序暴露。"
+    2026_10_17_key_follows_roster: "钥匙随名单裁决（owner，2026-10-17）。裁：直连声明取代名单行（P-05 对峙裁决路径）与同嗓音直连更新行（本人最新印）发生时，若群钥已铸，必须以当前名单行重derive 群钥并清 P7 计数水位（新钥=新计数空间；不清则新钥低计数帧被旧水位误拒）。推导：钥匙=信念的具象——名单行变而钥匙不变=分裂态（人看到 A 在座、A 的话却永远解不开），比响亮分叉更糟；P16『占位者的 pk 决定锚与路由』预设名单行是权威信念，路由读行、钥匙却嵌旧行 r=读写面分裂；RM/点名路径（apply_rm/apply_add）已有『名单变→重derive』先例，本裁把凑话替换路径补齐到同一代数。攻击面：同名直连注入本就能毒化名单行（P-05 已文档化对峙世界），重derive 只令钥匙与信念一致——冲突事件照发、点名照旧修复，无新攻击能力。事件面：零新事件类型（P6 ffi 裁决延续），CircleConflict detail 补『群钥随行重铸』一句。转发不变（替换行照旧泛洪——真行经她自己的直连线直达全网，有直连者皆收敛；无直连者保留暂定+响亮冲突，点名修复——P-05 既有世界不变）。"
 
   decision_procedure:                       # 编码模型遇到任何设计问题时的裁决流程
     step_1: "找公理依据：提案的每个机制，问它由哪条公理生成。答不出 → 默认拒绝。"
@@ -729,6 +731,57 @@ pending_work:
       arm64-v8a 7abb6611…6526（1,031,480 B）/ armeabi-v7a ad3c67a5…fcd3
       （812,408 B）/ x86_64 94c1469c…d37f（1,285,288 B）/ x86 ff05f637…92ee
       （1,274,880 B）；SHA256SUMS.txt 重出（5fab87b9…0d4f）随产物目录交付。
+  P18_windows_hang:                        # test-windows 悬挂定罪（owner 立项 2026-10-17，tag 阻塞）——双案定罪 rulings.2026_10_17_p18_windows_hang_convicted；修复授权 rulings.2026_10_17_key_follows_roster
+    status: fixed-2026-10-17               # 双案修复落地，本侧全套验证绿——关闭门=CI test-windows 两案绿（owner push 后 Actions 裁决；本沙箱无 GitHub 凭据，发布门控继续）
+    depends: []                            # 案一=纯测试层；案二=凑话替换路径补齐（钥匙随名单），无 wire 变更
+    landed: >-
+      案一（在场辩护=测试层竞态，库无恙）：Carol 的圈经 C-A 一线即凑齐（多径泛洪
+      正确），CircleFormed 可先于 C-B 握手的 Met{Bob} 入队（Windows 近确定、
+      Linux 恒反）；expect 逐事件扫描丢弃不匹配事件——formed 被 expect(met) 吞
+      掉、后续 expect(formed) 永久饿死。修复：Carol 线程 Met{Bob} 与
+      CircleFormed 改无序收集（循环双标记直到两者都见；dial 返回即保证 Met 已
+      入队，必终止）；注释承载 Windows 吞噬根因与「禁止按假设顺序 expect」纪律。
+      案二（P16_镜子1=库语义缺口）：P-05 直连声明取代暂定行/同嗓音直连更新时
+      仅改 members、不重铸群钥（try_complete 的 key.is_some() 守卫使成钥后永不
+      重derive）——名单说真 A 在座、群钥嵌 fake 的 r（读写面分裂），真 A 发言
+      对 B 永久 mumble。修复（rulings.2026_10_17_key_follows_roster 全文照办）：
+      Gathering::rekey_to_roster（成键后按当前名单重derive+清 P7 水位——
+      apply_rm/apply_add 同一代数，锁内完成 try_complete 先例同形），接于
+      handle_contribution 两个 insert 位点（同嗓音直连更新 + 直连声明取代）；
+      冲突 detail 补『群钥随行重铸』；零新事件；转发不变。测试期望零调整
+      ——P05/P16_镜子1 原就按钥匙随名单语义书写（Linux 通过纯属成键时序巧
+      合，修复使其成为结构保证）。
+      同模式扫荡（全测试面 rg『expect(met) 在 form_circle 之后』9 候选 + 牺牲
+      线程测试 2，逐个判定）：唯一确诊=在场辩护（已修）；其余全免疫——免疫
+      形态 A（序屏障：全部 formed 先于后续 dial 消费完毕）：快照后新线、一人
+      成圈、名单未到齐、一人开台、P6_K独立、P6_纯内圈（外圈 formed×3 消费
+      后才 dial X/Dave）；免疫形态 B（单线路径：成圈严格依赖该线——formed 只
+      能后于其 Met）：迟到告别（Carol 唯一 bye 线——与 owner 取证『Windows
+      通过』互证：非双运行时/IOCP 之因，结构不同）、P15_spec_b（入席线唯
+      一）、P6_内圈入席流（逐跳序屏障+入席线唯一）。owner 点名候选 P6_内圈
+      入席流/封桌bring：前者逐跳免疫，后者 expect(met) 全在 form_circle 之
+      前（脚本零命中）——均无吞噬面。
+      验证（2026-10-17 本侧）：关键三测单跑绿（P05_同名对峙 / 在场辩护 /
+      P16_镜子1，6.91s）；rogue 全量 92 不回退（20 单元+1 dumpable+1 pq+70
+      集成=69 绿+五十人环境红 fifty_star_scale_budget 同形）；无 feature 50
+      绿+canary 恰一红；YAML 自检过。压力：release --skip 五十人 共 52 轮
+      （10+12+30），1 轮红于首轮循环第 2 次——**无签名**（初版脚本只存计数、
+      未存失败名——教训入档：压力脚本必须留存失败输出，本块落笔起已改进），
+      后续连续 42 轮全绿、关键面单跑/全量反复绿；如实呈报不归属：CI（release
+      +45s 预算）与 owner Windows 原生全量为最终裁决门，若再现 owner 侧可据
+      E2EE_TRACE 插桩定罪。
+      四 ABI 重建（src 变更——P17 产物作废）：四 .so 各恰 12 个 e2ee_* T 符
+      号、64 位 LOAD 全 0x4000 / 32 位 0x1000 同形不变；新 sha256——arm64-v8a
+      8e14b0db…2d82（1,032,280 B）/ armeabi-v7a 5b44635e…1b9d（812,984 B）/
+      x86_64 e016cf7a…7e1a（1,286,280 B）/ x86 72775e40…171a（1,275,808 B）；
+      SHA256SUMS.txt 重出（6bfbaf71…689c）。
+      顺手项 run #32『1 warning』注解：API 限流（未认证 60/h 耗尽）未取证——
+      非阻塞，owner push 后 Actions 直视即知；本侧四 ABI 构建零警告（grep
+      warning=0）。
+      环境注记（沙箱基础设施）：rustup target 与 ~/.cargo/bin 曾在本会话内
+      被外部重置（E0463/no such command——重装 rust-std 四 target + cargo-
+      ndk 后恢复）；不影响产物正确性（重建后符号/对齐/契约全验），但沙箱环境
+      的非持久性入档备查。
   P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17；落地复审 2026-10-17 闭环；关闭裁决 2026-10-17）
     status: closed-2026-10-17               # LANDED + 复审三项闭环（rulings.2026_10_17_p15_landing_audit）+ 关闭裁决（rulings.2026_10_17_p15_closure_granted：B/A/C 全接受，P-15 关闭，P3 全板完成；自证红/绿入档为安全修复落地标配；『Noise remote static』勘误；pk 锚定方向性批准 → P16）。71 测试：16 单元 + 54 集成 + 1 pq
     depends: []
@@ -796,7 +849,7 @@ glossary:
 
 verify:
   build: "cargo build --release"
-  ci: "7 job 全绿形态：test-linux / test-windows（cargo test --release --verbose --features rogue + E2EE_TEST_EVENT_BUDGET_MS=45000——双管修复裁决 rulings.2026_10_17_ci_debug_budget_mismatch；rust.yml 变更=两测试 job 的测试步骤加 --release、job 级 env 置预算，musl/android job 不动）/ musl-static-build / android×4（符号+p_align 常驻断言）。红迹起点（Actions 历史，2026-10-17 查证）：最早红 run = b535a8f（P3 slice-1/2/3 当日，2026-10-15T14:22Z，test-windows 红、test-linux 绿）；五十人/在场辩护随 093d85a（slice-5/6+P-15）入仓，此后多平台红迹持续（65 run 中 20 红）。结构性建议已裁决：owner 开 branch protection 必需检查，红 CI 阻断合流。"
+  ci: "7 job 全绿形态：test-linux / test-windows（cargo test --release --verbose --features rogue + E2EE_TEST_EVENT_BUDGET_MS=45000——双管修复裁决 rulings.2026_10_17_ci_debug_budget_mismatch；rust.yml 变更=两测试 job 的测试步骤加 --release、job 级 env 置预算，musl/android job 不动）/ musl-static-build / android×4（符号+p_align 常驻断言）。红迹起点（Actions 历史，2026-10-17 查证）：最早红 run = b535a8f（P3 slice-1/2/3 当日，2026-10-15T14:22Z，test-windows 红、test-linux 绿）；五十人/在场辩护随 093d85a（slice-5/6+P-15）入仓，此后多平台红迹持续（65 run 中 20 红）。结构性建议已裁决：owner 开 branch protection 必需检查，红 CI 阻断合流。P18 增补（2026-10-17）：test-windows 的 在场辩护/P16_镜子1 两案修复后，CI 7/7 全绿 = P18 关闭与 tag 的裁决门（rulings.2026_10_17_p18_windows_hang_convicted / key_follows_roster；本沙箱无凭据，Actions 由 owner 侧观察）。"
   test: "cargo test --release --features rogue — slice-6 起判例注入测试需要 rogue feature（canary：缺 feature 时恰一条测试响亮失败，不静默跳过——曾因 rogue API 漏门控违约为编译失败，2026-10-17 复审连带修复）；92 tests at HEAD (70 integration + 20 unit + 1 pq + 1 dumpable[bin]), ~seconds"
   ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so; verify: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 12)"
   ffi_contract_test: "gcc -O2 -Wall -I include ffi/ffi_test.c -o /tmp/ffi_test -L target/release -l:libe2ee.so -Wl,-rpath,$PWD/target/release && /tmp/ffi_test — expect 'FFI OK'; then python3 ffi/ctypes_test.py"

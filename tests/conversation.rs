@@ -1842,9 +1842,32 @@ async fn 在场辩护_还在说话的人掉线_补话被扣下() {
             carol.dial(&a_addr_c).await.expect("C-A");
             expect(&mut carol_ev, met).await;
             carol.dial(&b_addr_c).await.expect("C-B");
-            expect(&mut carol_ev, met).await;
-            // 等圈成（Alice 发起）再开口
-            expect(&mut carol_ev, formed).await;
+            // P18 案一（Windows 吞噬根因，rulings.2026_10_17_p18_
+            // windows_hang_convicted）：Carol 的圈经 C-A 一线即凑齐
+            //（多径泛洪正确），CircleFormed 可能先于 C-B 握手的
+            // Met{Bob} 入队——expect 逐事件扫描会丢弃不匹配事件，按
+            // 假设顺序等待会把 formed 吞掉后永久饿死。dial 返回即
+            // 保证 Met 已入队，无序收集双标记必终止——禁止按假设顺序
+            // expect（Windows 时序使旧写法近乎确定红，Linux 恒相反）。
+            let mut saw_met = false;
+            let mut saw_formed = false;
+            while !saw_met || !saw_formed {
+                let is_met = expect(&mut carol_ev, |e| {
+                    if met(e).is_some() {
+                        Some(true)
+                    } else if formed(e).is_some() {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                })
+                .await;
+                if is_met {
+                    saw_met = true;
+                } else {
+                    saw_formed = true;
+                }
+            }
             carol.circle_speak("wo hai zai zhe li shuo hua").await.expect("说");
             // 等主线程确认 A/B 都已验签听见（在场证据入账）再走
             let _ = kill_rx.await;
