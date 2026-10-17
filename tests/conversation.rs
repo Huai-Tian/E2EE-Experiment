@@ -2812,7 +2812,7 @@ async fn P15_B_转发资格线_对端离席熄灭_除名者零圈帧() {
             timeout(deadline.saturating_duration_since(Instant::now()), mallory_ev.recv()).await
         {
             match &ev {
-                Event::CircleMumble { from } if from == "Bob" => {} // B 的泛洪义务（分叉密文中继）
+                Event::CircleMumble { from, .. } if from == "Bob" => {} // B 的泛洪义务（分叉密文中继）
                 Event::CircleMumble { .. }
                 | Event::Heard { .. }
                 | Event::CircleRekeyed { .. }

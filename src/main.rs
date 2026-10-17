@@ -339,20 +339,32 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
             }
         }
         "circle" => {
-            // /circle [封桌|开台]：席位可显式覆盖
-            let seats = match parts.next() {
-                Some("封桌" | "封" | "closed") => Some(e2ee::person::SEATS_CLOSED),
-                Some("开台" | "开" | "stage") => Some(e2ee::person::SEATS_OPEN),
-                Some(other) => {
-                    eprintln!("不认识的席位：{other}。可用：封桌 / 开台（不给就用默认）。");
-                    return Ok(false);
+            // /circle [封桌|开台] [名1 名2 …]：席位可显式覆盖；给名字 =
+            // 选择性开圈（P6 subset form——誓言集=这份名单，唯一精确
+            // 匹配，歧义/无匹配响亮报错）；空参=全部快照（点名语义）。
+            let mut seats: Option<u8> = None;
+            let mut names: Vec<String> = Vec::new();
+            for a in parts {
+                match a {
+                    "封桌" | "封" | "closed" => seats = Some(e2ee::person::SEATS_CLOSED),
+                    "开台" | "开" | "stage" => seats = Some(e2ee::person::SEATS_OPEN),
+                    other => names.push(other.to_string()),
                 }
-                None => None,
+            }
+            let r = if names.is_empty() {
+                person.form_circle_seats(seats).await
+            } else {
+                person.form_circle_subset(&names, seats).await
             };
-            match person.form_circle_seats(seats).await {
+            match r {
                 Ok(n) => eprintln!(
                     "开台了：邀请名单 {n} 人（名单上的名字自署到齐后自动开讲）。\
-                     在圈中重跑 = 点名重聚（新圈号重新围坐）。"
+                     在圈中重跑 = 点名重聚（新圈号重新围坐）。{}",
+                    if names.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!("（选择性开圈：{:?}——旧桌保留，新桌为当前座位）", names)
+                    }
                 ),
                 Err(e) => eprintln!("{e}"),
             }

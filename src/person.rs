@@ -123,6 +123,12 @@ pub enum PersonError {
     NoFocus,
     #[error("没有这样的对话。")]
     NoConvo,
+    #[error("你同时坐在 {count} 张桌上——先说清是哪一圈（圈号见事件面）再说。")]
+    AmbiguousCircle { count: usize },
+    #[error("名〔{name}〕对不上唯一的线——精确匹配一个在场对话才可相邀。")]
+    NoExactMatch { name: String },
+    #[error("名〔{name}〕有 {count} 条线都对得上——歧义响亮报错，改用唯一精确名。")]
+    AmbiguousMatch { name: String, count: usize },
     #[error("还没围坐成圈。")]
     NoCircle,
     #[error("这句话没能送达。")]
@@ -639,8 +645,15 @@ struct Inner {
     inbound_files: HashMap<u64, InboundFile>,
     /// 正在出门的文件（每场对话至多一份在途）：防两份并发交错成乱麻。
     outgoing_files: std::collections::HashSet<u64>,
-    /// 正在围坐的圈子（至多一个：一个人同时在一个屋里说话）
-    gathering: Option<Gathering>,
+    /// 正在围坐的圈子，按圈号索引（P6 嵌套，rulings.2026_10_17_p6_spec_approved）：
+    /// 一个人可同时坐在多张桌——协议眼里只有 N 个平行圈共享一些线，
+    /// 圈与圈的关系不存在于任何协议状态里（嵌套=人类语义）。BTreeMap：
+    /// 迭代序确定（裁决④——进程内状态非跨节点注册表）。
+    gatherings: std::collections::BTreeMap<u64, Gathering>,
+    /// 当前座位（P6）：最近一次 form_circle/join/入席的圈——无参动词
+    ///（/gsay、/word、/bring）落座这里。空参点名会放下旧桌（A4），
+    /// subset 开桌保留旧桌（嵌套耳语），两者都把新桌设为当前座位。
+    active_circle: Option<u64>,
     /// 早到的凑话暂存（乱序容忍：0x09 可能先于 0x0F 到达——打洞线上
     /// 帧即数据报，无序）。开台公告到达时按圈号补放。有界，纯内存。
     /// P-15：暂存带原始到达线号（补放的直连声明判定与转发排除读它）。
@@ -768,7 +781,8 @@ impl Person {
                 chaining: true,
                 inbound_files: HashMap::new(),
                 outgoing_files: std::collections::HashSet::new(),
-                gathering: None,
+                gatherings: std::collections::BTreeMap::new(),
+                active_circle: None,
                 pending_contribs: std::collections::VecDeque::new(),
                 pending_proofs: std::collections::VecDeque::new(),
                 flood_seen: std::collections::HashSet::new(),
@@ -1212,42 +1226,34 @@ impl Person {
     /// （圈号‖名长‖名字）——坏签名一律被拒收（P-01 fix）。发完即散：
     /// 离开者读不了新话（换气+断递，A3），本地名单随手放下。
     async fn circle_bye_frames(&self) {
-        let (targets, frame) = {
+        // P6：离席是身体的行为——把在座的每一桌都告别掉（各圈按各自
+        // 的绑定/信念出线，A2 按圈局部），随后整桌名单随手放下。
+        let sends: Vec<(Arc<Mutex<TransportState>>, Arc<Mutex<BoxedWriter>>, Vec<u8>)> = {
             let mut p = self.inner.lock().await;
-            let Some(g) = p.gathering.as_ref() else {
-                return;
-            };
-            // 圈语境的「我的名字」= 名单行名（/sit 覆盖落座名后，
-            // p.my_name 只是 1:1 自报名——告别必须签名单行名，否则
-            // 收端在名单里找不到这个名字）
-            let my_roster_name = g.my_row.name.clone();
-            let mut v = Vec::with_capacity(8 + 1 + my_roster_name.len() + 64);
-            v.extend_from_slice(&g.circle_id.to_be_bytes());
-            v.push(my_roster_name.len() as u8);
-            v.extend_from_slice(my_roster_name.as_bytes());
-            let sig = g.sig.sign(&v);
-            v.extend_from_slice(&sig.to_bytes());
-            // 快照发送对象后即散（gathering 一放，信念名单就没了——
-            // 散伙的告别按当时的锚定线发出）。P16：targets 按锚判定
-            //（pk 锚=锚行在信念；名字锚窗口态=成键前名字在信念）——
-            // their_name 从判定路径退役（全仓最后一处残迹，spec 问 5）
-            let belief = g.belief_names();
-            let belief_pks = g.belief_pks();
-            let keyed = g.key.is_some();
-            let targets: Vec<_> = p
-                .convos
-                .iter()
-                .filter(|(id, _)| {
-                    g.line_bindings
+            let mut sends = Vec::new();
+            for (_, mut g) in std::mem::take(&mut p.gatherings) {
+                let my_roster_name = g.my_row.name.clone();
+                let mut v = Vec::with_capacity(8 + 1 + my_roster_name.len() + 64);
+                v.extend_from_slice(&g.circle_id.to_be_bytes());
+                v.push(my_roster_name.len() as u8);
+                v.extend_from_slice(my_roster_name.as_bytes());
+                let sig = g.sig.sign(&v);
+                v.extend_from_slice(&sig.to_bytes());
+                let belief = g.belief_names();
+                let belief_pks = g.belief_pks();
+                let keyed = g.key.is_some();
+                for (id, c) in p.convos.iter() {
+                    if g.line_bindings
                         .get(id)
                         .is_some_and(|b| b.routes(&belief, &belief_pks, keyed))
-                })
-                .map(|(_, c)| (c.cipher.clone(), c.writer.clone()))
-                .collect();
-            p.gathering = None;
-            (targets, v)
+                    {
+                        sends.push((c.cipher.clone(), c.writer.clone(), v.clone()));
+                    }
+                }
+            }
+            sends
         };
-        for (cipher, writer) in targets {
+        for (cipher, writer, frame) in sends {
             let _ = send_typed(&cipher, &writer, frame_kind::CIRCLE_BYE, &frame).await;
         }
     }
@@ -1256,12 +1262,34 @@ impl Person {
     /// 署名邀请名单 → 0x0F 只走一跳 → 自署行泛洪。席位默认：多人封桌、
     /// 一人开台。返回名单人数（含发起者）。
     pub async fn form_circle(&self) -> Result<usize, PersonError> {
-        self.form_circle_seats(None).await
+        self.form_circle_inner(None, None).await
     }
 
     /// 同 [`Person::form_circle`]，但可显式覆盖席位（封桌/开台）。
     /// 「/circle 可显式覆盖」——开放台是刻意的宣言，不是默认。
     pub async fn form_circle_seats(&self, seats_override: Option<u8>) -> Result<usize, PersonError> {
+        self.form_circle_inner(None, seats_override).await
+    }
+
+    /// 选择性开圈（P6·subset form，rulings.2026_10_17_p6_spec_approved ②）：
+    /// `/circle 名1 名2 …`——创世誓言集=指定线子集（请谁是主人自由，
+    /// A2 正译）；未入誓言的既有线与快照后新线同权零帧（P-02 按圈）。
+    /// 名字解析=唯一精确匹配（对 0x05 自报名快照），歧义/无匹配响亮
+    /// 报错。旧桌保留（嵌套耳语——新桌成为当前座位）；空参点名才放
+    /// 旧桌（A4 修复语义）。
+    pub async fn form_circle_subset(
+        &self,
+        targets: &[String],
+        seats_override: Option<u8>,
+    ) -> Result<usize, PersonError> {
+        self.form_circle_inner(Some(targets), seats_override).await
+    }
+
+    async fn form_circle_inner(
+        &self,
+        targets: Option<&[String]>,
+        seats_override: Option<u8>,
+    ) -> Result<usize, PersonError> {
         let (invited_count, genesis_frame, contrib_frame, solo_formed, circle_id) = {
             let mut p = self.inner.lock().await;
             // 名单 = 发起者感知快照：在场对话对端 + 我（事实陈述，非权力凭证）。
@@ -1269,16 +1297,44 @@ impl Person {
             // 同责）——每条线按其对话对端名写 Name 绑定。their_name 在
             // 此仅作为「我对这条线的称呼」入档（发起者的直接感知），
             // 不再进入后续任何路由判定。
+            // P6 subset form：targets 给定=只邀指定的线（誓言对象是这份
+            // 名单）；None=全部快照（空参点名，向后兼容）。
+            let wanted: Option<std::collections::HashSet<String>> = targets
+                .map(|ts| {
+                    let mut set = std::collections::HashSet::new();
+                    for t in ts {
+                        let hits: Vec<u64> = p
+                            .convos
+                            .iter()
+                            .filter(|(_, c)| &c.their_name == t)
+                            .map(|(id, _)| *id)
+                            .collect();
+                        if hits.is_empty() {
+                            return Err(PersonError::NoExactMatch { name: t.clone() });
+                        }
+                        if hits.len() > 1 {
+                            return Err(PersonError::AmbiguousMatch {
+                                name: t.clone(),
+                                count: hits.len(),
+                            });
+                        }
+                        set.insert(t.clone());
+                    }
+                    Ok(set)
+                })
+                .transpose()?;
             let mut names: Vec<String> = p
                 .convos
                 .values()
                 .map(|c| c.their_name.clone())
+                .filter(|n| wanted.as_ref().is_none_or(|w| w.contains(n)))
                 .collect();
             names.sort();
             names.dedup();
             let snapshot_bindings: HashMap<u64, LineBinding> = p
                 .convos
                 .iter()
+                .filter(|(_, c)| wanted.as_ref().is_none_or(|w| w.contains(&c.their_name)))
                 .map(|(id, c)| {
                     (
                         *id,
@@ -1324,7 +1380,9 @@ impl Person {
             let genesis_sig = sig.sign(&payload);
             payload.extend_from_slice(&genesis_sig.to_bytes());
             let invited_count = invited.len();
-            p.gathering = Some(Gathering {
+            p.gatherings.insert(
+                circle_id,
+                Gathering {
                 circle_id,
                 seats,
                 sig: sig.clone(),
@@ -1346,9 +1404,16 @@ impl Person {
             contrib.extend_from_slice(&my_row.to_bytes());
             // 一人圈：名单只有我，立即成钥（开台，纯等入席流）
             let solo_formed = p
-                .gathering
-                .as_mut()
+                .gatherings
+                .get_mut(&circle_id)
                 .and_then(Gathering::try_complete);
+            // P6：空参点名=重开整场（A4 修复语义）——旧桌就此放下；
+            // subset 开圈=嵌套耳语，旧桌保留（圈与圈无关系，各自生灭）。
+            // 两者都把新桌设为当前座位。
+            if targets.is_none() {
+                p.gatherings.retain(|&cid, _| cid == circle_id);
+            }
+            p.active_circle = Some(circle_id);
             (invited_count, payload, contrib, solo_formed, circle_id)
         };
         if let Some(members) = solo_formed {
@@ -1368,7 +1433,7 @@ impl Person {
         belief_flood(&self.inner, None, frame_kind::CONTRIB_V2, &contrib_frame).await;
         // P16 三发之一（凑话后——点名重开桌走同一代码路径，即「点名后」
         // 时机）：向自己的每条绑定线递身体印（幂等；一人圈无线可发）
-        send_line_proofs(&self.inner).await;
+        send_line_proofs(&self.inner, circle_id).await;
         Ok(invited_count)
     }
 
@@ -1376,9 +1441,19 @@ impl Person {
     /// 收方双闸：子钥解密（只有贡献对的人的子钥能开）＋公钥验签
     /// （只有名单行里公布这个公钥的人能签）——署名与路径无关（T3）。
     pub async fn circle_speak(&self, text: &str) -> Result<(), PersonError> {
+        // P6：落在当前座位（最近一次开桌/入席的圈）；空手 = 没在圈内。
+        let circle_id = {
+            let p = self.inner.lock().await;
+            p.active_circle.ok_or(PersonError::NoCircle)?
+        };
+        self.circle_speak_in(circle_id, text).await
+    }
+
+    /// 同 [`Person::circle_speak`]，但显式指定圈（P6 嵌套：一人多桌）。
+    pub async fn circle_speak_in(&self, circle_id: u64, text: &str) -> Result<(), PersonError> {
         let frame = {
             let mut p = self.inner.lock().await;
-            let Some(g) = p.gathering.as_mut() else {
+            let Some(g) = p.gatherings.get_mut(&circle_id) else {
                 return Err(PersonError::NoCircle);
             };
             let Some(k) = g.key.as_ref() else {
@@ -1421,7 +1496,11 @@ impl Person {
             let (cipher, writer) = (c.cipher.clone(), c.writer.clone());
             // 借用分两段：从 gathering 取值（不可变）→ 挂账（可变）
             let (frame, seats, circle_id) = {
-                let Some(g) = p.gathering.as_ref() else {
+                // P6：落在当前座位（最近一次开桌/入席的圈）
+                let Some(circle_id) = p.active_circle else {
+                    return Err(PersonError::NoCircle);
+                };
+                let Some(g) = p.gatherings.get(&circle_id) else {
                     return Err(PersonError::NoCircle);
                 };
                 if g.key.is_none() {
@@ -1516,6 +1595,13 @@ impl Person {
     /// 两个都报（两条信道都活着，各自可核对）。即时计算、零落盘——
     /// 无身份层的一部分：对词是给愿意谨慎的人的可选仪式，不是检测器。
     pub async fn sas_word(&self) -> Result<SasReport, PersonError> {
+        // P6：群词取当前座位（每圈群词独立——内圈 SAS 相异性判据）。
+        let cid = self.inner.lock().await.active_circle;
+        self.sas_word_in(cid).await
+    }
+
+    /// 同 [`Person::sas_word`]，但显式指定圈（P6 嵌套；None = 只报 1:1）。
+    pub async fn sas_word_in(&self, circle_id: Option<u64>) -> Result<SasReport, PersonError> {
         let p = self.inner.lock().await;
         let p2p = p
             .focus
@@ -1526,14 +1612,16 @@ impl Person {
                     crate::circle::sas_word_from_transcript(&c.transcript[..]),
                 )
             });
-        let circle = p.gathering.as_ref().and_then(|g| {
-            g.key.as_ref().map(|k| {
-                (
-                    g.members.len() + 1,
-                    crate::circle::sas_word_from_group_key(k),
-                )
-            })
-        });
+        let circle = circle_id
+            .and_then(|cid| p.gatherings.get(&cid))
+            .and_then(|g| {
+                g.key.as_ref().map(|k| {
+                    (
+                        g.members.len() + 1,
+                        crate::circle::sas_word_from_group_key(k),
+                    )
+                })
+            });
         if p2p.is_none() && circle.is_none() {
             return Err(PersonError::NoSasChannel);
         }
@@ -1554,12 +1642,11 @@ async fn belief_flood(
     let circle_id = u64::from_be_bytes(payload[..8].try_into().unwrap_or([0; 8]));
     let targets: Vec<_> = {
         let p = inner.lock().await;
-        let Some(g) = p.gathering.as_ref() else {
+        // P6：按载荷圈号定位自己的圈（嵌套——多圈并行，各泛各的）；
+        // 圈不在 = 一条线都不该走（不是我的信念，一句不转发）。
+        let Some(g) = p.gatherings.get(&circle_id) else {
             return;
         };
-        if g.circle_id != circle_id {
-            return; // 不是我信念里的圈：一句都不转发
-        }
         let belief = g.belief_names();
         let belief_pks = g.belief_pks();
         // P-16 严格档只封**密封**圈载荷（0x0A 发言/0x0B 变更——谎报名
@@ -1599,11 +1686,10 @@ async fn belief_flood(
 /// 是同步机（A2）；丢帧的代价是线停留名字锚 ⇒ 成键后熄灭 ⇒ mumble
 /// ⇒ 点名恢复（A4 兜底闭环）。绑定线含窗口名字锚线（对端行未到也
 /// 发——她收到时无行可验则丢弃，行到后三发点会再来）。
-async fn send_line_proofs(inner: &Arc<Mutex<Inner>>) {
-    // 锁内一次取定：圈号、嗓音 sk、每条绑定线的 transcript 与出线
+async fn send_line_proofs(inner: &Arc<Mutex<Inner>>, circle_id: u64) {
+    // 锁内一次取定：嗓音 sk、每条绑定线的 transcript 与出线
     //（锁外签名发送——sk 的本地副本用后即弃，Zeroizing 纪律照旧）
-    let (circle_id, sig, lines): (
-        u64,
+    let (sig, lines): (
         ed25519_dalek::SigningKey,
         Vec<(
             Zeroizing<[u8; 32]>,
@@ -1612,11 +1698,10 @@ async fn send_line_proofs(inner: &Arc<Mutex<Inner>>) {
         )>,
     ) = {
         let p = inner.lock().await;
-        let Some(g) = p.gathering.as_ref() else {
+        let Some(g) = p.gatherings.get(&circle_id) else {
             return;
         };
         (
-            g.circle_id,
             g.sig.clone(),
             p.convos
                 .iter()
@@ -1688,11 +1773,11 @@ async fn issue_witness_rm(inner: &Arc<Mutex<Inner>>, circle_id: u64, leaver: &st
         let mut p = inner.lock().await;
         // 借用分三段：检查+造帧（不可变）→ 去重（无借用）→ 应用（独占）
         let (frame, witness_row, blocked) = {
-            let Some(g) = p.gathering.as_ref() else {
+            let Some(g) = p.gatherings.get(&circle_id) else {
                 return;
             };
             // 圈语境的「我」= 名单行名（/sit 覆盖落座名后同构）
-            if g.circle_id != circle_id || leaver == g.my_row.name {
+            if leaver == g.my_row.name {
                 return;
             }
             // 见证义务幂等守卫（2026-10-17）：同一离场只发一次 RM——
@@ -1729,12 +1814,11 @@ async fn issue_witness_rm(inner: &Arc<Mutex<Inner>>, circle_id: u64, leaver: &st
         p.flood_seen
             .insert(flood_key(circle_id, &witness_row.r[..]));
         // 本地立即应用（见证人视角）+ 见证义务记账（此时才真正履行）
-        let Some(mut g) = p.gathering.take() else {
+        let Some(g) = p.gatherings.get_mut(&circle_id) else {
             return;
         };
         g.witnessed_departs.insert(leaver.to_string());
         let (members, change) = g.apply_rm(leaver, &witness_row);
-        p.gathering = Some(g);
         p.events
             .send(Event::CircleRekeyed { circle_id, members, change })
             .ok();
@@ -1744,7 +1828,7 @@ async fn issue_witness_rm(inner: &Arc<Mutex<Inner>>, circle_id: u64, leaver: &st
     belief_flood(inner, None, frame_kind::TOPUP, &frame).await;
     // P16 三发之一（换气后）：RM 也是换气——锚线经得起行旋转
     //（sig_pk 不变），但补发幂等无成本，覆盖未锚定的窗口线
-    send_line_proofs(inner).await;
+    send_line_proofs(inner, circle_id).await;
 }
 
 /// 从缓冲区头部读出一行的线长（名长 u8 决定整行长度）；装不下 = None。
@@ -1826,16 +1910,18 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
             return;
         }
         let (add_frame, roster_frame, members, change, flood_k, alias_name) = {
-            let Some(g) = p.gathering.as_mut() else {
+            let circle_id = bring.circle_id;
+            // P6：按挂账圈号取圈（get 即对账——圈号不符=已换桌=查无）
+            let Some(g) = p.gatherings.get_mut(&bring.circle_id) else {
                 p.events
                     .send(Event::CircleRejected {
                         circle_id: bring.circle_id,
-                        detail: "圈子已经散了——这次领人作废，重新 /bring。".into(),
+                        detail: "圈子已经散了（或已换桌）——这次领人作废，重新 /bring。".into(),
                     })
                     .ok();
                 return;
             };
-            if g.circle_id != bring.circle_id || g.key.is_none() {
+            if g.key.is_none() {
                 p.events
                     .send(Event::CircleRejected {
                         circle_id: bring.circle_id,
@@ -1914,9 +2000,9 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
         p.events
             .send(Event::CircleRekeyed { circle_id: bring.circle_id, members, change: format!("{change}（{alias_name} 经我入席）") })
             .ok();
-        (add_frame, roster_frame, send_target)
+        (add_frame, roster_frame, send_target, bring.circle_id)
     };
-    let (add_frame, roster_frame, send_target) = outcome;
+    let (add_frame, roster_frame, send_target, circle_id) = outcome;
     // 泛洪 ADD（信念路由——我的信念已含新人）
     belief_flood(inner, None, frame_kind::TOPUP, &add_frame).await;
     // 0x12 座次表走候选人那条 1:1 线（只递已成成员——她已在我名单上）
@@ -1926,7 +2012,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
     // P16 三发之一（成键后——引荐人本地应用路径）：换气即成键，向
     // 绑定线补发身体印（新人侧的出线锚定依赖引荐人的证明——严格档
     // 下漏发=新人的圈话无路可出）
-    send_line_proofs(inner).await;
+    send_line_proofs(inner, circle_id).await;
 }
 
 /// 座次表收端（0x12 = 候选人）：验每行自署 → 名字/r 唯一性 → 找到
@@ -2043,7 +2129,9 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
     all.push(&mine.r[..]);
     let headcount = all.len();
     let key = Zeroizing::new(crate::circle::derive_group_key(&all));
-    p.gathering = Some(Gathering {
+    p.gatherings.insert(
+        circle_id,
+        Gathering {
         circle_id,
         seats,
         sig,
@@ -2068,13 +2156,14 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
         )]),
     });
     p.seat_offers.remove(&line);
+    p.active_circle = Some(circle_id);
     p.events
         .send(Event::CircleFormed { circle_id, members: headcount })
         .ok();
     drop(p); // 先放锁——send_line_proofs 内部要再拿（不可重入）
     // P16 三发之一（成键后）：座次表入座即刻成键——向自己的绑定线
     //（引荐人线）补发线证明（幂等）
-    send_line_proofs(inner).await;
+    send_line_proofs(inner, circle_id).await;
 }
 
 /// 线证明收端（0x13·P16）：验签 = 按**当前信念名单**（members ∪
@@ -2099,23 +2188,17 @@ async fn handle_line_proof(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
     };
     let mut p = inner.lock().await;
     // 圈不在：暂存（乱序容忍——pending_contribs 同族；对端凑话后的
-    // 0x13 可能抢在我 join 之前到达，join 后按圈号补验）
-    if p.gathering.is_none() {
+    // 0x13 可能抢在我 join 之前到达，join 后按圈号补验）。P6：按圈号
+    // 查容器——其他圈在座不影响本圈的暂存判定。
+    if !p.gatherings.contains_key(&circle_id) {
         if p.pending_proofs.len() >= PENDING_PROOF_CAP {
             p.pending_proofs.pop_front();
         }
         p.pending_proofs.push_back((circle_id, sig.to_bytes(), line));
         return;
     }
-    // 圈在但圈号不符：旧圈证明对当前圈无意义，丢弃（不暂存——暂存
-    // 条目按圈号补验，旧圈号在 join 后仍不符，存了也是死信）
-    if !p
-        .gathering
-        .as_ref()
-        .is_some_and(|g| g.circle_id == circle_id)
-    {
-        return;
-    }
+    // 圈在（圈号即对账）：试钥锚定。旧圈证明对已退的圈无意义——
+    // anchor 内圈号对账失败安静丢弃（不暂存——存了也是死信）。
     anchor_line_proof(&mut p, line, circle_id, &sig);
 }
 
@@ -2131,7 +2214,7 @@ fn anchor_line_proof(
     // 本线 transcript（证明的绑定面——per-line，不可跨线重放）——
     // 先于可变借用取走（gathering 的独占借用与 convos 读取互斥）
     let transcript = p.convos.get(&line).map(|c| Zeroizing::new(*c.transcript));
-    let Some(g) = p.gathering.as_mut() else {
+    let Some(g) = p.gatherings.get_mut(&circle_id) else {
         return;
     };
     if g.circle_id != circle_id {
@@ -2192,7 +2275,7 @@ async fn join_genesis(
         let my_row = crate::circle::RosterRow::self_seat(circle_id, &my_name, &sig);
         // 回声免疫：自己的贡献键先记下
         p.flood_seen.insert(flood_key(circle_id, &my_row.r[..]));
-        p.gathering = Some(Gathering {
+        let g = Gathering {
             circle_id,
             seats,
             sig,
@@ -2227,10 +2310,12 @@ async fn join_genesis(
                     },
                 )])
             },
-        });
+        };
+        p.gatherings.insert(circle_id, g);
+        p.active_circle = Some(circle_id);
         let mut frame = Vec::with_capacity(8 + 130 + my_name.len());
         frame.extend_from_slice(&circle_id.to_be_bytes());
-        frame.extend_from_slice(&p.gathering.as_ref().unwrap().my_row.to_bytes());
+        frame.extend_from_slice(&p.gatherings.get(&circle_id).expect("刚插入").my_row.to_bytes());
         // 补放早到的凑话（乱序容忍）——带原始到达线号（P-15：直连
         // 声明判定读线绑定，暂存必须保线号）
         let drained: Vec<(Vec<u8>, u64)> = p
@@ -2266,7 +2351,7 @@ async fn join_genesis(
         }
     }
     // P16 三发之一（凑话后）：向自己的每条绑定线递身体印（幂等）
-    send_line_proofs(inner).await;
+    send_line_proofs(inner, circle_id).await;
 }
 
 /// 凑话（0x09·自署行）收端处理：验自署 → 去重 → 信念检查 → 入册/
@@ -2298,10 +2383,8 @@ async fn handle_contribution(
     // 0x09 在多线并发下可稳定先于 0x0F 到达，暴露此缺陷；单运行时
     // 对局里 genesis 几乎总先到，时运掩盖了它）。补放走完整处理
     //（含去重+转发）；重复暂存无害——补放时第二份撞去重。
-    let circle_here = p
-        .gathering
-        .as_ref()
-        .is_some_and(|g| g.circle_id == circle_id);
+    // 圈不在（或圈号对不上）= 暂存（乱序容忍）。P6：按圈号查容器。
+    let circle_here = p.gatherings.contains_key(&circle_id);
     if !circle_here {
         if p.pending_contribs.len() >= PENDING_CONTRIB_CAP {
             p.pending_contribs.pop_front();
@@ -2320,8 +2403,8 @@ async fn handle_contribution(
     // 自己的回声：按名单行名判（/sit 覆盖落座名后，p.my_name 只是
     // 1:1 自报名——回声对的是名单行名）
     if p
-        .gathering
-        .as_ref()
+        .gatherings
+        .get(&circle_id)
         .is_some_and(|g| row.name == g.my_row.name)
     {
         return;
@@ -2331,7 +2414,7 @@ async fn handle_contribution(
     let mut forward = true;
     let mut formed: Option<usize> = None;
     {
-        let Some(g) = p.gathering.as_mut() else {
+        let Some(g) = p.gatherings.get_mut(&circle_id) else {
             return;
         };
         // P-15 + P16：直连声明判定读线绑定——pk 锚优先（锚 pk == 行
@@ -2430,14 +2513,14 @@ async fn handle_contribution(
     // P16 三发之一（成键后）：名单到齐铸钥即向绑定线补发身体印
     //（幂等；UDP 乱序丢的证明由此就地恢复，无需等点名）
     if formed.is_some() {
-        send_line_proofs(inner).await;
+        send_line_proofs(inner, circle_id).await;
     }
 }
 
 /// 补话行的 r 碰撞检查（P-12）：见证人新 r 与名单上**其他**成员碰撞
 /// → 拒绝；与她自己的旧行相同不算（旋转自洽）。
-fn g_check_r_collision(p: &Inner, witness_row: &crate::circle::RosterRow) -> bool {
-    let Some(g) = p.gathering.as_ref() else {
+fn g_check_r_collision(p: &Inner, circle_id: u64, witness_row: &crate::circle::RosterRow) -> bool {
+    let Some(g) = p.gatherings.get(&circle_id) else {
         return true;
     };
     let witness = &witness_row.name;
@@ -2708,13 +2791,9 @@ async fn ear(
                                 // 线不重绑（幂等）。静默授予，无事件。
                                 {
                                     let mut p = inner.lock().await;
-                                    if p
-                                        .gathering
-                                        .as_ref()
-                                        .is_some_and(|g| g.circle_id == circle_id)
-                                    {
-                                        let peer_name = p.convos.get(&id).map(|c| c.their_name.clone());
-                                        if let (Some(g), Some(peer)) = (p.gathering.as_mut(), peer_name) {
+                                    let peer = p.convos.get(&id).map(|c| c.their_name.clone());
+                                    if let Some(g) = p.gatherings.get_mut(&circle_id) {
+                                        if let Some(peer) = peer {
                                             g.line_bindings
                                                 .entry(id)
                                                 .or_insert_with(|| LineBinding::Qualified {
@@ -2787,9 +2866,8 @@ async fn ear(
                                 let mut spoken: Option<(String, Zeroizing<Vec<u8>>)> = None;
                                 {
                                     let p = inner.lock().await;
-                                    if let Some(g) = p.gathering.as_ref() {
-                                        if g.circle_id == circle_id {
-                                            if let Some(k) = g.key.as_ref() {
+                                    if let Some(g) = p.gatherings.get(&circle_id) {
+                                        if let Some(k) = g.key.as_ref() {
                                                 // 按署名标签找说话的人（子钥即署名——
                                                 // 只有贡献对的人的子钥能开这把锁）
                                                 for m in g.members.values() {
@@ -2821,7 +2899,6 @@ async fn ear(
                                                         ));
                                                     }
                                                 }
-                                            }
                                         }
                                     }
                                 }
@@ -2831,9 +2908,8 @@ async fn ear(
                                     let mut sig_ok = false;
                                     {
                                         let mut p = inner.lock().await;
-                                        if let Some(g) = p.gathering.as_mut() {
-                                            if g.circle_id == circle_id
-                                                && let Ok(sig) = ed25519_dalek::Signature::from_slice(
+                                        if let Some(g) = p.gatherings.get_mut(&circle_id) {
+                                            if let Ok(sig) = ed25519_dalek::Signature::from_slice(
                                                 &body[body.len() - 64..],
                                             )
                                             {
@@ -2969,21 +3045,17 @@ async fn ear(
                                         p.flood_seen.clear();
                                     }
                                     p.flood_seen.insert(fk);
-                                    // 圈对不上：不是我信念里的圈
-                                    if p
-                                        .gathering
-                                        .as_ref()
-                                        .is_none_or(|g| g.circle_id != circle_id)
-                                    {
+                                    // 圈对不上（P6：容器里查无此圈）：不是我信念里的圈
+                                    if !p.gatherings.contains_key(&circle_id) {
                                         continue;
                                     }
                                     // 引荐人须在名单，且行内嗓音公钥与名单一致
                                     //（A1：行名可伪、嗓音不可顶替——堵『名字行
                                     // 换钥』冒名洞；我自己的回声同理须钥一致）
-                                    let is_echo = p.gathering.as_ref().is_some_and(|g| {
+                                    let is_echo = p.gatherings.get(&circle_id).is_some_and(|g| {
                                         introducer_row.name == g.my_row.name
                                     });
-                                    let intro_known = p.gathering.as_ref().is_some_and(|g| {
+                                    let intro_known = p.gatherings.get(&circle_id).is_some_and(|g| {
                                         if introducer_row.name == g.my_row.name {
                                             introducer_row.sig_pk == g.my_row.sig_pk
                                         } else {
@@ -3034,7 +3106,7 @@ async fn ear(
                                     // 换气——不旋转则新人拿全表现行 r 即可解
                                     // 入座前历史
                                     if !is_echo {
-                                        let rotated = p.gathering.as_ref().is_some_and(|g| {
+                                        let rotated = p.gatherings.get(&circle_id).is_some_and(|g| {
                                             g.members
                                                 .get(&introducer_row.name)
                                                 .is_some_and(|m| &m.r[..] != &introducer_row.r[..])
@@ -3054,7 +3126,7 @@ async fn ear(
                                     }
                                     // 名字冲突 + r 碰撞（P-12）+ 席位契约
                                     let rejected = {
-                                        let Some(g) = p.gathering.as_ref() else {
+                                        let Some(g) = p.gatherings.get_mut(&circle_id) else {
                                             continue;
                                         };
                                         if newcomer_row.name == g.my_row.name
@@ -3108,7 +3180,7 @@ async fn ear(
                                     }
                                     // 应用（开台：引荐即背书）
                                     let (members, change) = {
-                                        let Some(g) = p.gathering.as_mut() else {
+                                        let Some(g) = p.gatherings.get_mut(&circle_id) else {
                                             continue;
                                         };
                                         g.apply_add(&newcomer_row, &introducer_row)
@@ -3124,7 +3196,7 @@ async fn ear(
                                     // complete_bring——新人侧依赖引荐人的证明
                                     // 才能锚定她的出线，漏发=严格档下新人的
                                     // 圈话无路可出）
-                                    send_line_proofs(&inner).await;
+                                    send_line_proofs(&inner, circle_id).await;
                                     continue;
                                 }
                                 if body[8] != b'R' {
@@ -3165,18 +3237,14 @@ async fn ear(
                                     p.flood_seen.clear();
                                 }
                                 p.flood_seen.insert(fk);
-                                // 圈对不上：不是我信念里的圈，一句不转发
-                                if p
-                                    .gathering
-                                    .as_ref()
-                                    .is_none_or(|g| g.circle_id != circle_id)
-                                {
+                                // 圈对不上（P6：容器里查无此圈）：不是我信念里的圈，一句不转发
+                                if !p.gatherings.contains_key(&circle_id) {
                                     continue;
                                 }
                                 // 见证人须在名单，且行内嗓音公钥与名单一致
                                 //（A1：行名可伪、嗓音不可顶替——堵『名字行
                                 // 换钥』冒名洞；我自己的回声同理须钥一致）
-                                let witness_ok = p.gathering.as_ref().is_some_and(|g| {
+                                let witness_ok = p.gatherings.get(&circle_id).is_some_and(|g| {
                                     if witness_row.name == g.my_row.name {
                                         witness_row.sig_pk == g.my_row.sig_pk
                                     } else {
@@ -3220,7 +3288,7 @@ async fn ear(
                                 }
                                 // r 唯一性（P-12）：见证人新 r 与其他成员碰撞
                                 // → 响亮拒绝（排除见证人自己的旧行——旋转不是碰撞）
-                                let collide = g_check_r_collision(&p, &witness_row);
+                                let collide = g_check_r_collision(&p, circle_id, &witness_row);
                                 if collide {
                                     p.events
                                         .send(Event::CircleRejected {
@@ -3231,7 +3299,7 @@ async fn ear(
                                     continue;
                                 }
                                 // 在场辩护（收端）：还在说话的人不可被判离开
-                                let Some(g) = p.gathering.as_mut() else {
+                                let Some(g) = p.gatherings.get_mut(&circle_id) else {
                                     continue;
                                 };
                                 if leaver != g.my_row.name && g.presence_blocked(leaver) {
@@ -3256,7 +3324,7 @@ async fn ear(
                                 // 信念路由转发（leaver 已除名——断递，P-04）
                                 belief_flood(&inner, Some(id), plain[0], &plain[1..n]).await;
                                 // P16 三发之一（换气后）：RM 也是换气（幂等补发）
-                                send_line_proofs(&inner).await;
+                                send_line_proofs(&inner, circle_id).await;
                             }
                         }
                         frame_kind::CIRCLE_BYE => {
@@ -3287,12 +3355,8 @@ async fn ear(
                                     continue;
                                 };
                                 let mut p = inner.lock().await;
-                                // 圈对不上：不是我信念里的圈
-                                if p
-                                    .gathering
-                                    .as_ref()
-                                    .is_none_or(|g| g.circle_id != circle_id)
-                                {
+                                // 圈对不上（P6：容器里查无此圈）：不是我信念里的圈
+                                if !p.gatherings.contains_key(&circle_id) {
                                     continue;
                                 }
                                 // P16：验签按 pk——对 members ∪ left_voices 的
@@ -3304,7 +3368,7 @@ async fn ear(
                                 // 墓碑兜底（迟到告别的验签源——直接/转发接收
                                 // 者验签面统一，后续见证判定分野不变）。
                                 let signer: Option<(String, ed25519_dalek::VerifyingKey)> = {
-                                    let Some(g) = p.gathering.as_ref() else {
+                                    let Some(g) = p.gatherings.get(&circle_id) else {
                                         continue;
                                     };
                                     let payload = bye_payload(circle_id, leaver.as_bytes());
@@ -3347,7 +3411,7 @@ async fn ear(
                                 // 完成态）；锚缺席的窗口回退名字判定
                                 //（Name/peer points_to——快照/bring/送达的
                                 // 窗口信任映射）
-                                let i_am_witness = p.gathering.as_ref().is_some_and(|g| {
+                                let i_am_witness = p.gatherings.get(&circle_id).is_some_and(|g| {
                                     g.line_bindings.get(&id).is_some_and(|b| {
                                         b.anchor_pk() == Some(&signer_pk)
                                             || (b.anchor_pk().is_none()
@@ -3369,7 +3433,7 @@ async fn ear(
                                 // 副本迟到的交错），豁免要先于
                                 // issue_witness_rm 就位（apply_rm 会再清账）
                                 if fresh || i_am_witness {
-                                    if let Some(g) = p.gathering.as_mut() {
+                                    if let Some(g) = p.gatherings.get_mut(&circle_id) {
                                         g.seen_bye.insert(leaver.to_string());
                                     }
                                 }
@@ -3618,7 +3682,12 @@ async fn ear(
         // 幂等收敛 T2；义务幂等守卫兜底双触发）。未绑定的线（圈外语线）
         // 断了不见证——它从未承载圈语义（Proven 锚线属圈内：锚行在
         // 信念才路由/见证）。
-        let witness_ctx: Option<(u64, String)> = p.gathering.as_ref().and_then(|g| {
+        // P6：线死=对每个把这条线绑进自己圈的圈**各自**见证（一跳感知
+        // 按圈取用——共享线死一次，多圈各自出 RM，义务幂等守卫兜底）。
+        let witness_ctx: Vec<(u64, String)> = p
+            .gatherings
+            .values()
+            .filter_map(|g| {
             let binding = g.line_bindings.get(&id)?;
             let leaver = match binding.anchor_pk() {
                 // pk 锚：锚 → 行（在座优先，墓碑兜底）→ 名字
@@ -3653,14 +3722,15 @@ async fn ear(
                 },
             };
             Some((g.circle_id, leaver))
-        });
+        })
+        .collect();
         (closed, witness_ctx)
     };
     // 锁外关线（best effort——线已经死了，关不掉也无妨）
     if let Some(w) = closed_writer {
         let _ = w.lock().await.shutdown().await;
     }
-    if let Some((circle_id, leaver)) = witness_ctx {
+    for (circle_id, leaver) in witness_ctx {
         issue_witness_rm(&inner, circle_id, &leaver).await;
     }
 }
@@ -3988,15 +4058,25 @@ pub mod rogue {
             belief_flood(&self.inner, None, kind, payload).await;
         }
 
-        /// 当前圈的圈号（非机密：随帧可见的正当信息）。
+        /// 当前圈的圈号（非机密：随帧可见的正当信息）。P6：当前座位。
         pub async fn circle_id(&self) -> Option<u64> {
-            self.inner.lock().await.gathering.as_ref().map(|g| g.circle_id)
+            self.inner.lock().await.active_circle
         }
 
         /// 当前信念名单快照（0x12 同款全表内容——只递成员的正当材料）。
+        /// P6：当前座位（多圈用 roster_snapshot_in）。
         pub async fn roster_snapshot(&self) -> Option<Vec<crate::circle::RosterRow>> {
+            let cid = self.inner.lock().await.active_circle?;
+            self.roster_snapshot_in(cid).await
+        }
+
+        /// 指定圈的信念名单快照（P6 嵌套断言面）。
+        pub async fn roster_snapshot_in(
+            &self,
+            circle_id: u64,
+        ) -> Option<Vec<crate::circle::RosterRow>> {
             let p = self.inner.lock().await;
-            let g = p.gathering.as_ref()?;
+            let g = p.gatherings.get(&circle_id)?;
             Some(
                 g.members
                     .values()
@@ -4012,8 +4092,18 @@ pub mod rogue {
         /// +pk 后缀 = pk 锚已建立（P16 proven_pk/Proven，锚=pk 前 8 hex）。
         /// their_name 仅供测试可读性对照。
         pub async fn line_bindings_debug(&self) -> Option<Vec<(u64, String, String)>> {
+            // P6：当前座位（多圈用 line_bindings_debug_in）。
+            let cid = self.inner.lock().await.active_circle?;
+            self.line_bindings_debug_in(cid).await
+        }
+
+        /// 指定圈的线绑定全貌（P6 嵌套断言面）。
+        pub async fn line_bindings_debug_in(
+            &self,
+            circle_id: u64,
+        ) -> Option<Vec<(u64, String, String)>> {
             let p = self.inner.lock().await;
-            let g = p.gathering.as_ref()?;
+            let g = p.gatherings.get(&circle_id)?;
             let mut v: Vec<(u64, String, String)> = Vec::new();
             for (id, c) in &p.convos {
                 if let Some(b) = g.line_bindings.get(id) {
@@ -4042,8 +4132,10 @@ pub mod rogue {
         /// 发起者（天生已验，payload=None）返回 None。
         pub async fn pending_genesis(&self) -> Option<Vec<u8>> {
             let p = self.inner.lock().await;
-            p.gathering
+            // P6：当前座位。
+            p.active_circle
                 .as_ref()
+                .and_then(|cid| p.gatherings.get(cid))
                 .and_then(|g| g.genesis_payload.as_ref().map(|(_, b)| b.clone()))
         }
     }
