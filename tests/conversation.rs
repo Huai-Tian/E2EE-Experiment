@@ -3425,3 +3425,402 @@ async fn P16_乱序容错_点名后三发重锚_双向恢复() {
     let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
     assert_eq!(got.1, "wo ye shi");
 }
+// ── P6 嵌套圈测试矩阵（rulings.2026_10_17_p6_spec_approved §三）────
+
+/// 从事件里取 (圈号, 人数)——圈号路由断言面。
+fn formed_c(ev: &Event) -> Option<(u64, usize)> {
+    if let Event::CircleFormed { circle_id, members, .. } = ev {
+        Some((*circle_id, *members))
+    } else {
+        None
+    }
+}
+
+/// 从事件里取 (圈号, 人数, 变更)。
+fn rekeyed_c(ev: &Event) -> Option<(u64, usize, String)> {
+    if let Event::CircleRekeyed { circle_id, members, change, .. } = ev {
+        Some((*circle_id, *members, change.clone()))
+    } else {
+        None
+    }
+}
+
+/// P6 矩阵 1+4（K 独立 + P-02 内圈版）：外圈 A/B/C；A subset 开内圈
+/// [A,B]；内圈话 B 独享、外圈话 C 也在；圈外线 X 零圈帧（全类）。
+#[tokio::test]
+async fn P6_K独立_内外互不泄漏_圈外零帧() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    let (xia, mut xia_ev, xia_addr) = spawn_person("Xia").await;
+    bob.dial(&alice_addr).await.expect("B-A");
+    expect(&mut bob_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    carol.dial(&alice_addr).await.expect("C-A");
+    expect(&mut carol_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    // 外圈 [A,B,C]（X 稍后拨入——两圈成形后的圈外线）
+    let n = alice.form_circle().await.expect("外圈开台");
+    assert_eq!(n, 3);
+    let (outer_cid, mo) = expect(&mut alice_ev, formed_c).await;
+    assert_eq!(mo, 3);
+    expect(&mut bob_ev, formed).await;
+    expect(&mut carol_ev, formed).await;
+    // 内圈 subset [Bob]：誓言集=这条线
+    let n = alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈 subset");
+    assert_eq!(n, 2);
+    let (inner_cid, mi) = expect(&mut alice_ev, formed_c).await;
+    assert_eq!(mi, 2);
+    expect(&mut bob_ev, formed).await;
+    assert_ne!(inner_cid, outer_cid, "两圈圈号互异");
+    // X 拨入（两圈之外的线）：无内圈资格、无外圈快照座位
+    xia.dial(&alice_addr).await.expect("X-A（圈外线）");
+    expect(&mut xia_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    // K 独立（内圈说话只有 B 听见；X/C 零帧）
+    alice.circle_speak_in(inner_cid, "nei quan mi yu").await.expect("内圈说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "nei quan mi yu");
+    // 外圈说话（显式圈——A 的当前座位是内圈）
+    alice.circle_speak_in(outer_cid, "wai quan gong kai").await.expect("外圈说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "wai quan gong kai");
+    let got = expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "wai quan gong kai");
+    // P-02 内圈版：X 的窗口期内零圈帧（密封+状态+凑话全类——她连圈
+    // 号都不可见）
+    let deadline = Instant::now() + Duration::from_millis(2000);
+    while let Ok(Some(ev)) =
+        timeout(deadline.saturating_duration_since(Instant::now()), xia_ev.recv()).await
+    {
+        assert!(
+            !matches!(
+                ev,
+                Event::Heard { .. }
+                    | Event::CircleMumble { .. }
+                    | Event::CircleRekeyed { .. }
+                    | Event::CircleFormed { .. }
+                    | Event::CircleRejected { .. }
+                    | Event::CircleConflict { .. }
+            ),
+            "圈外线零圈帧（P-02 按圈）：{ev:?}"
+        );
+    }
+    let _ = (bob_addr, carol_addr, xia_addr);
+}
+
+/// P6 矩阵 2（外换钥内照常）：C 离外圈 → 外圈 Rekeyed(2)；内圈 A-B
+/// 说话照常——两圈账本各自独立。
+#[tokio::test]
+async fn P6_外换钥_内圈照常() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    bob.dial(&alice_addr).await.expect("B-A");
+    expect(&mut bob_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    carol.dial(&alice_addr).await.expect("C-A");
+    expect(&mut carol_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    alice.form_circle().await.expect("外圈");
+    expect(&mut alice_ev, formed).await;
+    expect(&mut bob_ev, formed).await;
+    expect(&mut carol_ev, formed).await;
+    alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈");
+    expect(&mut alice_ev, formed).await;
+    expect(&mut bob_ev, formed).await;
+    // C 离外圈（她不在内圈——只发外圈 RM）
+    carol.bye().await.expect("C 离外圈");
+    let (cid, m, ch) = expect(&mut alice_ev, rekeyed_c).await;
+    assert_eq!(m, 2, "外圈换钥：{ch}");
+    assert!(ch.contains("Carol"), "变更点名离场者：{ch}");
+    expect(&mut bob_ev, rekeyed).await;
+    // 内圈照常（未受外圈换钥波及——同圈同钥）
+    alice.circle_speak_in(cid, "nei zhao chang shuo").await.expect("内圈说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "nei zhao chang shuo");
+    let _ = (bob_addr, carol_addr);
+}
+
+/// P6 矩阵 5（内圈入席流全走位）：A solo subset 开内圈（空名单=舞台）
+/// → B 拨入 → /bring 看座 → /sit 落座 → 内圈 Rekeyed(3) → 内圈说话。
+#[tokio::test]
+async fn P6_内圈入席流_solo_subset_全走位() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    // A solo subset（空 targets = 只邀自己 = 舞台内圈）
+    let n = alice
+        .form_circle_subset(&[], None)
+        .await
+        .expect("solo 内圈");
+    assert_eq!(n, 1);
+    let (inner_cid, m) = expect(&mut alice_ev, formed_c).await;
+    assert_eq!(m, 1);
+    // B 拨入方向改为 A 拨 B（拨号方聚焦=新线，bring 走聚焦线）
+    alice.dial(&bob_addr).await.expect("A-B");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    let seats = alice.bring(None).await.expect("内圈看座");
+    assert_eq!(seats, e2ee::person::SEATS_OPEN, "solo 内圈默认开台");
+    expect(&mut bob_ev, seat_offered).await;
+    bob.sit(None).await.expect("B 落座内圈");
+    let (cid, m, _) = expect(&mut alice_ev, rekeyed_c).await;
+    assert_eq!((cid, m), (inner_cid, 2), "内圈 ADD：新人入座");
+    expect(&mut bob_ev, formed).await;
+    // C 入桌：A 拨 C（聚焦移到新线）→ bring
+    alice.dial(&carol_addr).await.expect("A-C");
+    expect(&mut carol_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    alice.bring(None).await.expect("内圈看座 C");
+    expect(&mut carol_ev, seat_offered).await;
+    carol.sit(None).await.expect("C 落座内圈");
+    let (cid, m, _) = expect(&mut alice_ev, rekeyed_c).await;
+    assert_eq!((cid, m), (inner_cid, 3), "内圈 ADD：第三人");
+    // B 已在座（roster 入座 + ADD 双路径）——她的流里是 Rekeyed(3)
+    let (cid, m, _) = expect(&mut bob_ev, rekeyed_c).await;
+    assert_eq!((cid, m), (inner_cid, 3), "B 的 ADD 收敛：{m}");
+    expect(&mut carol_ev, formed).await;
+    // 内圈说话全听见
+    alice.circle_speak_in(inner_cid, "nei ru xi liu wan zheng").await.expect("说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "nei ru xi liu wan zheng");
+    let got = expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "nei ru xi liu wan zheng");
+}
+
+/// P6 矩阵 6（内圈独立点名，外圈无感）：A/B 内圈已在；A 对内圈
+/// subset 重跑 = 内圈点名（新内圈号）——外圈成员 C 零事件。
+#[tokio::test]
+async fn P6_内圈独立点名_外圈无感() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    bob.dial(&alice_addr).await.expect("B-A");
+    expect(&mut bob_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    carol.dial(&alice_addr).await.expect("C-A");
+    expect(&mut carol_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    alice.form_circle().await.expect("外圈");
+    let (outer_cid, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    expect(&mut carol_ev, formed).await;
+    alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈");
+    let (inner1, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    // 内圈点名：subset 重跑（新内圈号）——旧内圈由新桌顶替（A 端
+    // subset 不清旧圈，B 端 join 新圈；两圈号互异即证独立重聚）
+    alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈点名");
+    let (inner2, m) = expect(&mut alice_ev, formed_c).await;
+    assert_eq!(m, 2);
+    assert_ne!(inner2, inner1, "点名=新圈号");
+    expect(&mut bob_ev, formed).await;
+    // 点名后内圈照常说话（当前座位=新内圈）
+    alice.circle_speak_in(inner2, "dian ming hou nei zhao chang").await.expect("说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "dian ming hou nei zhao chang");
+    // 外圈成员 C：零内圈事件；外圈照常存活（外圈说话她听见）
+    alice.circle_speak_in(outer_cid, "wai quan yi ran huo zhe").await.expect("外圈说");
+    let got = expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "wai quan yi ran huo zhe");
+    let deadline = Instant::now() + Duration::from_millis(1200);
+    while let Ok(Some(ev)) =
+        timeout(deadline.saturating_duration_since(Instant::now()), carol_ev.recv()).await
+    {
+        assert!(
+            !matches!(
+                ev,
+                Event::Heard { ref text, .. } if text == "dian ming hou nei zhao chang"
+            ),
+            "内圈话不到外圈-only 成员：{ev:?}"
+        );
+    }
+    let _ = (inner1, bob_addr, carol_addr);
+}
+
+/// P6 矩阵 7（纯内圈成员离席 = 平行事实可行面）：D 只在内圈（不在
+/// 外圈）——D 的线死 → 内圈 RM(Dave)；外圈 C（与 D 无线）零事件。
+/// 外逐内留的完整构造需内圈独立线（同名多线 subset 解析歧义边界，
+/// 入档）——本条覆盖平行事实的可观测面。
+#[tokio::test]
+async fn P6_纯内圈成员_离席_外圈无感() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    let (dave, mut dave_ev, dave_addr) = spawn_person("Dave").await;
+    bob.dial(&alice_addr).await.expect("B-A");
+    expect(&mut bob_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    carol.dial(&alice_addr).await.expect("C-A");
+    expect(&mut carol_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    alice.form_circle().await.expect("外圈");
+    let (outer_cid, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    expect(&mut carol_ev, formed).await;
+    alice.dial(&dave_addr).await.expect("A-D");
+    expect(&mut alice_ev, met).await;
+    expect(&mut dave_ev, met).await;
+    alice
+        .form_circle_subset(&["Bob".to_string(), "Dave".to_string()], None)
+        .await
+        .expect("内圈含圈外人");
+    let (inner_cid, m) = expect(&mut alice_ev, formed_c).await;
+    assert_eq!(m, 3, "内圈 [A,B,D]");
+    expect(&mut bob_ev, formed).await;
+    expect(&mut dave_ev, formed).await;
+    // D 的线死（进程销毁=线断）→ 内圈 crash 见证 RM(Dave)
+    dave.leave().await;
+    let (cid, m, ch) = expect(&mut alice_ev, rekeyed_c).await;
+    assert_eq!((cid, m), (inner_cid, 2), "内圈 RM：{ch}");
+    assert!(ch.contains("Dave"));
+    expect(&mut bob_ev, rekeyed).await;
+    // 外圈 C（与 D 无线）零事件；外圈照常
+    alice.circle_speak_in(outer_cid, "wai quan wu yang").await.expect("外圈说");
+    let got = expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(got.1, "wai quan wu yang");
+    let _ = (bob_addr, carol_addr);
+}
+
+/// P6 矩阵 8（深度 2 圈中圈同构）+ 矩阵 11（SAS 相异）+ 增补（flood_seen
+/// 跨圈不互斥）：A/B 外圈 → subset[B] 内圈一 → 再 subset[B] 内圈二；
+/// 三圈并行（圈号互异），同一句话两圈各达一次（去重键含圈号），
+/// 三圈群词互异。
+#[tokio::test]
+async fn P6_深度2_圈中圈_SAS相异_flood跨圈() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("B-A");
+    expect(&mut bob_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    alice.form_circle().await.expect("外圈");
+    let (outer, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈一");
+    let (inner1, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈二（第三桌）");
+    let (inner2, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    assert_ne!(outer, inner1);
+    assert_ne!(inner1, inner2);
+    assert_ne!(outer, inner2);
+    // 同一句话两圈各说各的：flood_seen 跨圈不互斥（B 各听一次）
+    alice.circle_speak_in(inner1, "tong yi ju hua").await.expect("圈一说");
+    let g1 = expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    alice.circle_speak_in(inner2, "tong yi ju hua").await.expect("圈二说");
+    let g2 = expect(&mut bob_ev, |e| heard(e).filter(|(h, _)| h == "Alice")).await;
+    assert_eq!(g1.1, "tong yi ju hua");
+    assert_eq!(g2.1, "tong yi ju hua", "同内容跨圈不去重（键含圈号）");
+    // SAS 相异：三圈群词两两不同（P-08 人墙在嵌套下仍工作）
+    let w_outer = alice.sas_word_in(Some(outer)).await.expect("外圈词").circle.expect("有群词").1;
+    let w_i1 = alice.sas_word_in(Some(inner1)).await.expect("圈一词").circle.expect("有群词").1;
+    let w_i2 = alice.sas_word_in(Some(inner2)).await.expect("圈二词").circle.expect("有群词").1;
+    assert_ne!(w_outer, w_i1);
+    assert_ne!(w_i1, w_i2);
+    assert_ne!(w_outer, w_i2);
+}
+
+/// P6 矩阵 13（多圈 RM 封口——审计保留意见）+ 增补（共线多锚圈间
+/// 独立）：A/B 外圈 + A/B 内圈共享同一条线；B 体面告退（双圈同离）
+/// → A 恰收两个 Rekeyed（圈号互异、各点名 Bob）——多圈告别与见证
+/// 各自一次、互不吞并。
+#[tokio::test]
+async fn P6_多圈RM_共享线告退_两圈各自换钥() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("B-A");
+    expect(&mut bob_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    alice.form_circle().await.expect("外圈");
+    expect(&mut alice_ev, formed).await;
+    expect(&mut bob_ev, formed).await;
+    alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈");
+    expect(&mut alice_ev, formed).await;
+    expect(&mut bob_ev, formed).await;
+    // B 告退：离所有在座的圈（bye=身体离席，一桌一桌告别）
+    bob.bye().await.expect("B 双圈告退");
+    let r1 = expect(&mut alice_ev, rekeyed_c).await;
+    let r2 = expect(&mut alice_ev, rekeyed_c).await;
+    assert_ne!(r1.0, r2.0, "两圈各自换钥（圈号互异）：{r1:?} vs {r2:?}");
+    assert_eq!(r1.1, 1);
+    assert_eq!(r2.1, 1);
+    assert!(r1.2.contains("Bob") && r2.2.contains("Bob"));
+    // A 幸存：无圈可说（唯一对端走了）——进程收尾安静
+    alice.leave().await;
+}
+
+/// P6 矩阵 9+13（pk 锚按圈 + 共线多锚圈间独立，rogue 断言面）：
+/// A/B 外圈 + 内圈双双成键——两圈的线绑定各自锚定（锚值同为对方
+/// 嗓音钥，分属两圈账本）；内圈绑定形状带 +pk 锚。
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn P6_pk锚按圈_圈间独立() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("B-A");
+    expect(&mut bob_ev, met).await;
+    expect(&mut alice_ev, met).await;
+    alice.form_circle().await.expect("外圈");
+    let (outer, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    alice
+        .form_circle_subset(&["Bob".to_string()], None)
+        .await
+        .expect("内圈");
+    let (inner, _) = expect(&mut alice_ev, formed_c).await;
+    expect(&mut bob_ev, formed).await;
+    // 双圈三发各自的 0x13（成键后时点已过——轮询到两圈锚齐）
+    for cid in [outer, inner] {
+        for _ in 0..300 {
+            let ok = alice
+                .line_bindings_debug_in(cid)
+                .await
+                .expect("绑定")
+                .iter()
+                .all(|b| b.2.contains('+'));
+            if ok {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    let a_outer = alice.line_bindings_debug_in(outer).await.expect("外圈绑定");
+    let a_inner = alice.line_bindings_debug_in(inner).await.expect("内圈绑定");
+    assert!(
+        a_outer.iter().all(|(_, _, d)| d.contains('+')),
+        "外圈绑定全锚：{a_outer:?}"
+    );
+    assert!(
+        a_inner.iter().all(|(_, _, d)| d.contains('+')),
+        "内圈绑定全锚：{a_inner:?}"
+    );
+    // B 侧对称
+    let b_outer = bob.line_bindings_debug_in(outer).await.expect("B 外圈绑定");
+    assert!(
+        b_outer.iter().all(|(_, _, d)| d.contains('+')),
+        "B 外圈绑定全锚：{b_outer:?}"
+    );
+}
