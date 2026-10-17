@@ -169,10 +169,9 @@ mod frame_kind {
     /// 凑话（v1 圈）：其后是 32 字节随机贡献。v2 泛洪圈改用 0x09；
     /// 解析保留给旧同伴，本版不再发出。
     pub const CONTRIB: u8 = 0x03;
-    /// 群聊（v1 圈）：其后是群密文。v2 改用 0x0A；解析已随 v1 圈语义
-    /// 一并退役（泛洪圈不接待无署名群聊帧）——常量留档帧编号不复用。
-    #[allow(dead_code)]
-    pub const CIRCLE: u8 = 0x04;
+    // 0x04（v1 群聊）常量已随 3.0.0 发布清场删除（P17）——零引用残骸；
+    // 帧编号不复用的档案在 README_AGENT wire_protocol.circle_chat
+    //（0x0D/0x0E 同例：历史帧号留档在文档，不留代码）。
     /// 自报家门：其后是 UTF-8 名字（握手后第一帧，双方同时先发后收）。
     /// 也走密文——名字是应用数据，不该裸奔在线上给茶馆和路人看热闹。
     pub const NAME: u8 = 0x05;
@@ -310,9 +309,20 @@ enum LineBinding {
         name: String,
         proven_pk: Option<ed25519_dalek::VerifyingKey>,
     },
-    /// 圈线资格（窗口态）：0x0F/0x10/0x12 送达授予。双键（P-15 peer
-    /// 键修复）+ P16 pk 锚（proven_pk 语义同 Name 变体）。
+    /// 圈线资格（窗口态）：0x0F/0x10/0x12 送达授予。peer 键（撤销/
+    /// 路由/见证的读点，P-15 peer 键修复）+ P16 pk 锚（proven_pk 语义
+    /// 同 Name 变体）。
     Qualified {
+        /// 授予者溯源（帧内 creator / 引荐人 hint）：P-15 spec a 的结构
+        /// 性反证——转发送达时 peer 合法地就是转发者，「creator 来自帧内
+        /// 签名而非线」这一裁决（rulings.2026_10_17_p15_line_binding_spec）
+        /// 唯一的可观察记录就是 via。永不进任何判定（P16 后判定全按 pk
+        /// 锚；一切判定路径 matches!(Qualified{peer,..}) 只读 peer）。
+        /// 默认构建零读取——唯一读者是 rogue 断言面 line_bindings_debug
+        ///（spec-a/P15_B 集成断言 qualified:via=… 的证人面）；cfg_attr
+        /// 把豁免精确限定在读者缺席的构建形态上（结构性表述，非君子
+        /// 协定）。P17 取证留（裁决链见 README_AGENT P17.landed ①）。
+        #[cfg_attr(not(feature = "rogue"), allow(dead_code))]
         via: String,
         peer: String,
         proven_pk: Option<ed25519_dalek::VerifyingKey>,
@@ -377,9 +387,8 @@ impl LineBinding {
 struct Gathering {
     /// 圈号（开台时随机 8B）——泛洪帧路由与去重的第一维；点名 = 新圈号
     circle_id: u64,
-    /// 席位：0 封桌（多人圈默认）/ 1 开台（一人圈默认；开台时任何
-    /// 成员的引荐即背书——入席流 slice-4 落地后生效，本版随帧记档）
-    #[allow(dead_code)] // slice-4（入席流）读它；M1 只随帧传递
+    /// 席位：0 封桌（多人圈默认）/ 1 开台（一人圈默认）。读点：看座
+    /// 0x10 骨架、座次表 0x12 随帧、ADD 封桌契约判定（slice-4 起）。
     seats: u8,
     /// 我的嗓音钥（一次性 Ed25519，私钥仅内存，随进程熄灭）
     sig: ed25519_dalek::SigningKey,
@@ -695,18 +704,14 @@ const PENDING_CONTRIB_CAP: usize = 32;
 /// 早到线证明暂存上限：每条 80B，上限 ~5KB。
 const PENDING_PROOF_CAP: usize = 64;
 
-/// 一份待接的看座邀约（候选人侧）：席位骨架（名字+嗓音公钥，绝无
-/// r——P-09）+ 本人落座材料（/sit 之后才有，0x12 到达时用它建圈）。
+/// 一份待接的看座邀约（候选人侧）：0x10 骨架的桌名已入 SeatOffered
+/// 事件；席位字节照常解析验形（>SEATS_OPEN 拒收），嗓音公钥解析后
+/// 不存（历史零读取，P17 删字段）——骨架红线「绝无 r」不变（P-09）。
+/// /sit 落座材料在此（0x12 到达时取回验身、按本人嗓音公钥找座位）。
 struct SeatOffer {
     circle_id: u64,
-    /// 席位（0x12 自带最新值——这里的留作 /sit 时的桌况参考）
-    #[allow(dead_code)]
-    seats: u8,
     /// 引荐人（到达线对端名）
     introducer: String,
-    /// 桌上的名字+嗓音公钥（骨架——给人类看的桌子）
-    #[allow(dead_code)]
-    table: Vec<(String, [u8; 32])>,
     /// /sit 的落座材料：嗓音钥 + 自署行（等 0x12 时取回验身）
     my_seat: Option<(ed25519_dalek::SigningKey, crate::circle::RosterRow)>,
 }
@@ -1242,7 +1247,7 @@ impl Person {
         let sends: Vec<(Arc<Mutex<TransportState>>, Arc<Mutex<BoxedWriter>>, Vec<u8>)> = {
             let mut p = self.inner.lock().await;
             let mut sends = Vec::new();
-            for (_, mut g) in std::mem::take(&mut p.gatherings) {
+            for (_, g) in std::mem::take(&mut p.gatherings) {
                 let my_roster_name = g.my_row.name.clone();
                 let mut v = Vec::with_capacity(8 + 1 + my_roster_name.len() + 64);
                 v.extend_from_slice(&g.circle_id.to_be_bytes());
@@ -1922,7 +1927,6 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
             return;
         }
         let (add_frame, roster_frame, members, change, flood_k, alias_name) = {
-            let circle_id = bring.circle_id;
             // P6：按挂账圈号取圈（get 即对账——圈号不符=已换桌=查无）
             let Some(g) = p.gatherings.get_mut(&bring.circle_id) else {
                 p.events
@@ -3542,9 +3546,7 @@ async fn ear(
                                     id,
                                     SeatOffer {
                                         circle_id,
-                                        seats,
                                         introducer: their_name.clone(),
-                                        table: table.clone(),
                                         my_seat: None,
                                     },
                                 );

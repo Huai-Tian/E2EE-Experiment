@@ -676,6 +676,58 @@ pending_work:
     parallelizable: true
     landed: "四项逐项（顺序=裁决建议 padding→tag→dumpable→水位）：① 密文填充三层框架（P-11 分桶填充）——circle::padded_len 档位 [256,512,1024,2048,4096,8192,16384,32768]，seal 载荷=真长 4B‖明文‖桶填充（外层只露档位），open 剥前缀还原；档内 8..=16 随机抖动破『同档同长』二次指纹；顶档之上=max 层原长+抖动；作用域=圈密封帧（0x0A 泛洪观测面——1:1 Noise 信道无中继观测者不入此面）。② courier tag 三层规则（CLI 面）——/punch 标签可省略：省略→自动 128bit Crockford base32（26 字符 5-5-5-5-5-1 分组上屏，经介绍人转告）；显式标签照用+<16 字符响亮警告（PAKE 补偿关系写明——tag 猜测无需受害者在场）；词对+nonce+role 的帧内组合由 tag 字符串承载（打洞协议帧内重排未动——改动=打洞协议变更，如需另行报裁决）。③ PR_SET_DUMPABLE=0（P-10 结构解正译）——harden_process 增 prctl(PR_SET_DUMPABLE,0)：RLIMIT_CORE 拦不住 core_pattern='|' 管道收集器，DUMPABLE=0 让 core 从一开始不产生+ptrace 附着被禁（ssh-agent 同款）；RLIMIT_CORE 留作腰带背带；测试=TracerPid=0 恒验+Dumpable 条件断言（本沙箱内核 status 无 Dumpable 行——已探针 prctl ret=0 证实生效，条件式断言入档）。④ counter 水位窗口——Gathering.counter_watermark: 每发送者 tag→已应用最大 counter；水位下早帧（重放/定位噪音）静默丢弃（噪音无传播权），水位上新帧照常；换气清账（try_complete/apply_rm/apply_add——新钥新计数空间）；纯函数 circle::counter_admits 单元三断言。测试：单元 3 新增（pad 同档同长+跨档升位+档位定值、pad roundtrip 真长还原七长度、水位 admits 四断言）+ dumpable 集成 1；红绿自证（padding 镜子，分层定罪）——填充禁用单层还原 ⇒ 『同档同长』断言红实证（外层长度泄露明文长度，left≠right）→ 还原绿；水位为纵深第二层（第一层=flood_seen 去重既有判例），单层还原场景与 P16 镜子1 同构读法已入判据。验证：无 feature 20 单元+1 dumpable+50 集成+canary 恰一响亮+pq ✓；rogue 20 单元+1 dumpable+69 集成+pq ✓（五十人=已定罪环境项）；ffi round-trip ✓；88 基线不回退；10 轮压力随 owner 侧复验执行。关闭（2026-10-17 同日，owner 会话指令）：f5b6bba 审计通过——owner 侧独立复验全绿（20 单元 / rogue 70 集成 / 无 feature 50+canary 设计性失败 / 双裁决逐字 / YAML）；commit 消息逐项据实（纪律遵循确认）。裁决①缓办项归档：『帧类语义公共长度集（0x0F/0x10/0x11/0x12/0x0C/0x13 归一）』实现落场为仅 0x0A 密封帧分桶填充——落差裁决控制帧长度归一化缓办（rulings.2026_10_17_p7_control_frame_padding_deferred：控制帧长度泄露面=圈子结构〔成员数〕，已被稳态流量扇出结构性泄露，归一无边际保密收益；与不对称表『载体可见元数据=诚实入档，不修』同族），边界入档 known_limitations.control_frame_length_shape；verify 计数同步 92 = 70 集成 + 20 单元 + 1 pq + 1 dumpable（bin）"
     scope: "PR_SET_DUMPABLE(0)（P-10，结构解）；punch tag 三层规则（省略 TAG→自动 128bit 上屏转告（Crockford base32 分组）；显式短标签→响亮警告照用，文案写明 PAKE 补偿关系）；padded_chat 分桶填充（P-11）；counter 去重=最高水位+有界乱序窗口（规约定死）"
+  P17_release_hygiene:                       # 发布前清场（owner 立项 2026-10-17，tag v3.0.0 阻塞项）
+    status: landed-2026-10-17               # 六笔静态残迹处置（①keep / ②-⑥remove）+ 扩展扫描清零（含 1 项修复）——待 owner 审计，审计通过即 tag
+    depends: []                             # 与 P5 同族的打包面收尾：零协议变更、零 wire 变更、测试面零改动
+    scope: "owner 预扫描六项逐项取证复核（初判可能错——①复核后改判 keep）+ 扩展扫描（allow 面 / cfg(test) / features 默认面 / dev-deps 泄漏 / 线程与 env 探针 / CLI 动词双语对账）；红线清单逐一保留：unreachable!x2、swaps 提醒、PR_SET_DUMPABLE、短标签响亮警告、canary 契约、RLIMIT_CORE 腰带背带、全部裁决引用注释"
+    landed: >-
+      处置表（①-⑥ = owner 表序）：
+      ① Qualified.via——KEEP（复核后改判处置方向）：零判定读确认（一切判定路径
+      matches!(Qualified{peer,..}) 只读 peer，P16 后判定全按 pk 锚）+ wire 零字节
+      （line_bindings 纯内存、从不序列化）⇒ 删除在技术上合格；但 via 是 P-15 spec-a
+      「creator 身份来自帧内签名而非线」（rulings.2026_10_17_p15_line_binding_spec
+      spec-a）的唯一结构性证人——转发送达时 peer 合法地就是转发者，区分「正确记录
+      帧内 creator」与「误绑转发者」的可观察记录只有 via；删除须改写已关闭 slice 的
+      断言面（P15_spec_a 断言 qualified:via=Alice peer=Mallory；P15_B 2705-2711 同
+      族）且改写后无法验证同一不变量 = 「测试语义不得弱化」红线 ⇒ 留。警告消除走
+      结构性表述：cfg_attr(not(feature="rogue"), allow(dead_code))——唯一读者是
+      rogue 断言面 line_bindings_debug，豁免精确限定在读者缺席的构建形态（rogue
+      构建下字段活、不豁免）——非君子协定；字段注释承载完整裁决链。测试面零改动
+      （spec-a/B 断言原样通过，全量复跑实证）。
+      ② frame_kind::CIRCLE(0x04)——REMOVE 常量+注释：零引用 v1 残骸（CONTRIB 0x03
+      有 ear 读点故留）；「帧编号不复用」档案归 wire_protocol.circle_chat（0x0D/
+      0x0E 先例：历史帧号留档文档不留代码）；rogue 判例族洁净交付纪律。
+      ③ person.rs:1245 多余 mut——REMOVE（circle_bye_frames 对 g 只读）。
+      ④ person.rs:1925 未用局部 circle_id——REMOVE（块内全用 bring.circle_id 直
+      取；不走 _circle_id 改名——变量无存在必要）。
+      ⑤ seats/table——拆三处置：Gathering.seats 的 #[allow] 过时（读点=看座 0x10/
+      座次表 0x12 随帧/ADD 封桌契约 3184）⇒ 删 allow+更正注释、字段留；
+      SeatOffer.seats 与 SeatOffer.table 零读取（读点 grep 证：仅 circle_id/
+      introducer/my_seat）⇒ 删字段+写点；0x10 的 seats 验形（>SEATS_OPEN 拒收）与
+      桌名入 SeatOffered 事件的局部 table 保留——wire 解析零变更。
+      ⑥ courier.rs ROOM_LINGER——REMOVE 常量+占位块（撤房路径即时、无宽限挂载）；
+      「房随线生，线断房灭」文档语义纯注释化落在等位簿声明处（owner 处置方向第
+      二支）。
+      扩展扫描（owner 未覆盖面，全部清零）：allow 面终态=仅存 person.rs 相遇落座
+      的 clippy::too_many_arguments（API 形态决策+注释依据，留）与 ①的 cfg_attr
+      （精确条件豁免）；#[cfg(test)] 全部合法（测试模块 + Gathering::headcount 单
+      元助手）；[features] rogue=[] 无 default 键（不入用户构建，确认）；
+      dev-dependencies 全仓零条目（root+ffi；vendor/snow 的 dev-deps 是上游测试
+      脚手架——依赖的 dev-deps 永不入发布编译）；std::thread::sleep / env::var /
+      dbg! / todo! 零命中；unreachable!x2 = 红线保留（「Proven 恒有锚」响亮不变
+      量）。CLI 动词对账：handle_command 15 动词与 README.md/README_ZH.md 命令表
+      逐行一致 ✓；扩展发现——未知指令回退提示只列 5/15（v1 时代残句）⇒ 修为全
+      列（响亮且准确）。
+      验证：三 target 零警告（root lib+bin / ffi cdylib / rogue 构建，真实重编
+      22.8s/13.5s/23.1s，grep warning=0）；92 基线不回退：rogue 全量 20 单元+1
+      dumpable+1 pq+70 集成（69 绿+五十人环境红=已定罪项 fifty_star_scale_
+      budget），无 feature 50 绿+canary 恰一红。四 ABI 重建（清场后发布物身份
+      变更——旧 sha 作废、P5 landed 的 sha 表随本记录 superseded；发布物身份
+      原则 rulings.2026_10_17_p5_completion_scope 适用）：四 .so 仍各恰 12 个
+      e2ee_* T 符号、64 位 LOAD 全 0x4000 / 32 位实测 0x1000 不变；新 sha256——
+      arm64-v8a 7abb6611…6526（1,031,480 B）/ armeabi-v7a ad3c67a5…fcd3
+      （812,408 B）/ x86_64 94c1469c…d37f（1,285,288 B）/ x86 ff05f637…92ee
+      （1,274,880 B）；SHA256SUMS.txt 重出（5fab87b9…0d4f）随产物目录交付。
   P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17；落地复审 2026-10-17 闭环；关闭裁决 2026-10-17）
     status: closed-2026-10-17               # LANDED + 复审三项闭环（rulings.2026_10_17_p15_landing_audit）+ 关闭裁决（rulings.2026_10_17_p15_closure_granted：B/A/C 全接受，P-15 关闭，P3 全板完成；自证红/绿入档为安全修复落地标配；『Noise remote static』勘误；pk 锚定方向性批准 → P16）。71 测试：16 单元 + 54 集成 + 1 pq
     depends: []

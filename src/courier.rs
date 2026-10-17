@@ -27,9 +27,6 @@ const JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 /// 介绍人那边同时等位的标签上限：防人灌一堆一次性标签把记性撑爆。
 const MAX_WAITING_TAGS: usize = 1024;
 
-/// 房间到期仍无人落座后的宽限。
-const ROOM_LINGER: Duration = Duration::from_secs(5);
-
 /// 开一间茶馆：认房号、接线、忘掉（房号由客人带外自选）。掌柜兼做介绍人（同门牌 UDP）。
 /// 返回值只在占不到端口时出错。
 pub async fn serve(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -48,6 +45,8 @@ pub async fn serve(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     // 等人的房间：房号 → 想搭线的那一端。
     // 房号由客人自选（双方带外约定，与暗号同路数）——茶馆只认号接线。
+    // 房随线生，线断房灭：撤房即时、无宽限（ROOM_LINGER 占位于 3.0.0
+    // 发布清场删除——P17；「到期仍无人」与「接上后任一端离席」都即时散场）。
     let waiting: Arc<Mutex<HashMap<u32, TcpStream>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
@@ -268,10 +267,3 @@ pub async fn enter(
         }
     }
 }
-
-#[allow(dead_code)]
-const _: () = {
-    // ROOM_LINGER 暂时只作语义占位：房随线生，线断房灭，
-    // 当前实现里撤房是即时的，无需宽限。
-    let _ = ROOM_LINGER;
-};

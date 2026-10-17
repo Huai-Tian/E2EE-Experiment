@@ -535,7 +535,10 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
         },
         "quit" => return Ok(true),
         other => {
-            eprintln!("不认识的指令：/{other}。可用：/dial /talk /list /bye /quit")
+            eprintln!(
+                "不认识的指令：/{other}。可用：/dial /meet /punch /await /talk /list /card \
+                 /circle /gsay /bring /sit /word /file /bye /quit"
+            )
         }
     }
     Ok(false)
