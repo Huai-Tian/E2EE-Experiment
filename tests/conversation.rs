@@ -925,7 +925,7 @@ async fn 聊天带垫_长短行照常说听() {
 
 /// 从事件里取 CircleRekeyed。
 fn rekeyed(ev: &Event) -> Option<(usize, String)> {
-    if let Event::CircleRekeyed { members, change } = ev {
+    if let Event::CircleRekeyed { members, change, .. } = ev {
         Some((*members, change.clone()))
     } else {
         None
@@ -934,7 +934,7 @@ fn rekeyed(ev: &Event) -> Option<(usize, String)> {
 
 /// 从事件里取 CircleFormed 的人数。
 fn formed(ev: &Event) -> Option<usize> {
-    if let Event::CircleFormed { members } = ev {
+    if let Event::CircleFormed { members, .. } = ev {
         Some(*members)
     } else {
         None
@@ -1210,7 +1210,7 @@ fn seat_offered(ev: &Event) -> Option<String> {
 
 /// 从事件里取 CircleRejected 的 detail。
 fn rejected(ev: &Event) -> Option<String> {
-    if let Event::CircleRejected { detail } = ev {
+    if let Event::CircleRejected { detail, .. } = ev {
         Some(detail.clone())
     } else {
         None
@@ -1219,7 +1219,7 @@ fn rejected(ev: &Event) -> Option<String> {
 
 /// 从事件里取 CircleConflict 的 detail。
 fn conflict(ev: &Event) -> Option<String> {
-    if let Event::CircleConflict { detail } = ev {
+    if let Event::CircleConflict { detail, .. } = ev {
         Some(detail.clone())
     } else {
         None
@@ -1467,7 +1467,7 @@ async fn 封桌bring_引荐人分叉_双向mumble_点名重聚() {
 
 /// 从事件里取 CircleMumble。
 fn mumble(ev: &Event) -> Option<String> {
-    if let Event::CircleMumble { from } = ev {
+    if let Event::CircleMumble { from, .. } = ev {
         Some(from.clone())
     } else {
         None

@@ -32,6 +32,12 @@ const EVENT_SEAT_OFFERED: c_int = 10;
 /* ── 事件结构：与 e2ee.h 的 struct 一一对应（布局冻结） ── */
 /// 超出容量的字符串会被截断（name 63 字节、text 511 字节，UTF-8 可能截半——
 /// 需要完整文本的接入方请走 Rust API）。
+///
+/// **P6 圈号路由（rulings.2026_10_17_p6_spec_approved ①）**：圈类事件
+///（tag = EVENT_CIRCLE_FORMED / EVENT_CIRCLE_MUMBLE）的 `id` 字段承载
+/// **circle_id**（非对话号——圈事件没有对话号，id 原为零值字段）。
+/// GUI 按此字段做多圈路由；C 头/结构布局/函数签名零变更（值复用既有
+/// 字段，tag 区分语义）。ffi round-trip 断言钉死于 ffi_test.c/ctypes_test.py。
 #[repr(C)]
 pub struct E2eeEvent {
     pub tag: c_int,
@@ -434,12 +440,14 @@ fn to_c_event(ev: Event) -> E2eeEvent {
             e.tag = EVENT_SECRET_CHAINED;
             copy_str(&mut e.name, &with);
         }
-        Event::CircleFormed { members } => {
+        Event::CircleFormed { circle_id, members } => {
             e.tag = EVENT_CIRCLE_FORMED;
+            e.id = circle_id; // P6：圈类事件 id=圈号（GUI 多圈路由）
             e.members = members as c_int;
         }
-        Event::CircleMumble { from } => {
+        Event::CircleMumble { circle_id, from } => {
             e.tag = EVENT_CIRCLE_MUMBLE;
+            e.id = circle_id; // P6：圈类事件 id=圈号
             copy_str(&mut e.name, &from);
         }
         Event::SeatOffered { from, table } => {
@@ -451,4 +459,44 @@ fn to_c_event(ev: Event) -> E2eeEvent {
         _ => {} // 库将来新增的经历：tag 留 0，向前兼容
     }
     e
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P6 round-trip 断言（rulings.2026_10_17_p6_spec_approved ①）：
+    /// 圈类事件的 circle_id 必须到达 ffi 事件载荷（GUI 多圈路由依赖）。
+    /// Event → E2eeEvent 转换层钉死：id 字段承载圈号，tag 区分语义，
+    /// C 头/布局/签名零变更。C 侧圈动词进面时（另行裁决）扩展端到端。
+    #[test]
+    fn circle_event_round_trip_carries_circle_id() {
+        let ev = Event::CircleFormed {
+            circle_id: 0xDEAD_BEEF_CAFE_0001,
+            members: 3,
+        };
+        let c = to_c_event(ev);
+        assert_eq!(c.tag, EVENT_CIRCLE_FORMED);
+        assert_eq!(c.id, 0xDEAD_BEEF_CAFE_0001, "CircleFormed.id 必须承载圈号");
+        assert_eq!(c.members, 3);
+
+        let ev = Event::CircleMumble {
+            circle_id: 0x1234_5678_9ABC_DEF0,
+            from: "Mallory".into(),
+        };
+        let c = to_c_event(ev);
+        assert_eq!(c.tag, EVENT_CIRCLE_MUMBLE);
+        assert_eq!(c.id, 0x1234_5678_9ABC_DEF0, "CircleMumble.id 必须承载圈号");
+        assert_eq!(c.name[0] as u8, b'M');
+
+        // 1:1 事件面零污染：Met 的 id 仍是对话号（不是圈号语义）
+        let c = to_c_event(Event::Met {
+            id: 7,
+            name: "Alice".into(),
+            focused: true,
+        });
+        assert_eq!(c.tag, EVENT_MET);
+        assert_eq!(c.id, 7, "1:1 事件 id 语义不变（对话号）");
+        assert_eq!(c.focused, 1);
+    }
 }

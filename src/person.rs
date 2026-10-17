@@ -61,22 +61,23 @@ pub enum Event {
     FocusReturned { to: Option<u64> },
     /// 暗号链续上了：对方在告别时预约了下一把暗号
     SecretChained { with: String },
-    /// 圈子铸成：名单上的名字全部自署到场，群钥匙在手，屋里的话开讲
-    CircleFormed { members: usize },
+    /// 圈子铸成：名单上的名字全部自署到场，群钥匙在手，屋里的话开讲。
+    /// circle_id = 哪一圈（P6 嵌套：一人可同时在多圈，事件按圈路由）。
+    CircleFormed { circle_id: u64, members: usize },
     /// 圈里收到一句解不开的话（T1 响亮分歧：信念不同 ⇒ 钥匙不同）。
     /// v3 升格为核心感知：听见失败不是错误，是圈在告诉你你们的信念
     /// 分岔了——修复路径永远是点名（重跑 /circle）。
-    CircleMumble { from: String },
+    CircleMumble { circle_id: u64, from: String },
     /// 圈子名单变了（有人离席/入席），新钥匙已就位。
     /// members = 变更后的圈内人数；change = 人话描述（谁进/谁走）。
-    CircleRekeyed { members: usize, change: String },
+    CircleRekeyed { circle_id: u64, members: usize, change: String },
     /// 响亮拒绝（静默=罪）：名单外的凑话、坏签名的告别/补话、
     /// r 碰撞……一切拒收都要被听见，detail 说人话。
-    CircleRejected { detail: String },
+    CircleRejected { circle_id: u64, detail: String },
     /// 圈内冲突（人类裁决）：在场辩护扣下的补话（还在说话的人不可
     /// 被判离开）、同名抢注对峙、期望门拟名不符……协议不裁决，
     /// 只响亮呈现。
-    CircleConflict { detail: String },
+    CircleConflict { circle_id: u64, detail: String },
     /// 有人给你看座（0x10 到达）：from = 引荐人（到达线对端名），
     /// table = 桌上的名字（席位骨架，无 r）。想坐就 /sit。
     SeatOffered { from: String, table: Vec<String> },
@@ -1261,7 +1262,7 @@ impl Person {
     /// 同 [`Person::form_circle`]，但可显式覆盖席位（封桌/开台）。
     /// 「/circle 可显式覆盖」——开放台是刻意的宣言，不是默认。
     pub async fn form_circle_seats(&self, seats_override: Option<u8>) -> Result<usize, PersonError> {
-        let (invited_count, genesis_frame, contrib_frame, solo_formed) = {
+        let (invited_count, genesis_frame, contrib_frame, solo_formed, circle_id) = {
             let mut p = self.inner.lock().await;
             // 名单 = 发起者感知快照：在场对话对端 + 我（事实陈述，非权力凭证）。
             // P-15 快照绑定：扫描自己的线（自洽感知宣誓，与署名 genesis
@@ -1348,14 +1349,14 @@ impl Person {
                 .gathering
                 .as_mut()
                 .and_then(Gathering::try_complete);
-            (invited_count, payload, contrib, solo_formed)
+            (invited_count, payload, contrib, solo_formed, circle_id)
         };
         if let Some(members) = solo_formed {
             self.inner
                 .lock()
                 .await
                 .events
-                .send(Event::CircleFormed { members })
+                .send(Event::CircleFormed { circle_id, members })
                 .ok();
         }
         // 开台公告只走一跳：名单=发起者直连对端。扇出追随誓言——
@@ -1715,6 +1716,7 @@ async fn issue_witness_rm(inner: &Arc<Mutex<Inner>>, circle_id: u64, leaver: &st
         if blocked {
             p.events
                 .send(Event::CircleConflict {
+                    circle_id,
                     detail: format!(
                         "[{leaver}] 的离席补话被扣下：她 30 秒内还在圈内说话。\
                          若确认她该离席，请重跑 /circle 点名重聚。"
@@ -1734,7 +1736,7 @@ async fn issue_witness_rm(inner: &Arc<Mutex<Inner>>, circle_id: u64, leaver: &st
         let (members, change) = g.apply_rm(leaver, &witness_row);
         p.gathering = Some(g);
         p.events
-            .send(Event::CircleRekeyed { members, change })
+            .send(Event::CircleRekeyed { circle_id, members, change })
             .ok();
         frame
     };
@@ -1783,11 +1785,14 @@ fn roster_frame_of(g: &Gathering) -> Vec<u8> {
 /// ——fork 语义，settled 2026-10-16：签名即承诺、等批准=表决=同步机
 /// 复活）→ 泛洪 ADD → 0x12 座次表递给新人。
 async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[u8]) {
+    // 圈号从回执行字节解（行首 8B；坏帧按 0 记——拒绝事件仍要响亮）
+    let body_cid = u64::from_be_bytes(body[..body.len().min(8)].try_into().unwrap_or([0u8; 8]));
     let outcome = {
         let mut p = inner.lock().await;
         let Some(bring) = p.pending_brings.get(&candidate_line).cloned() else {
             p.events
                 .send(Event::CircleRejected {
+                    circle_id: body_cid,
                     detail: "收到一份没约过的落座回执——拒收。".into(),
                 })
                 .ok();
@@ -1797,6 +1802,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
         let Some(row) = crate::circle::RosterRow::parse_verified(body, bring.circle_id) else {
             p.events
                 .send(Event::CircleRejected {
+                    circle_id: bring.circle_id,
                     detail: "落座回执的自署验不过——伪造行进不了名单（P-04）。".into(),
                 })
                 .ok();
@@ -1809,6 +1815,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
         {
             p.events
                 .send(Event::CircleConflict {
+                    circle_id: bring.circle_id,
                     detail: format!(
                         "落座回执自称〔{}〕，与拟名〔{exp}〕不符——回执丢弃，\
                          待座保留；放行就重跑 /bring（改拟名或不带拟名）。",
@@ -1822,6 +1829,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
             let Some(g) = p.gathering.as_mut() else {
                 p.events
                     .send(Event::CircleRejected {
+                        circle_id: bring.circle_id,
                         detail: "圈子已经散了——这次领人作废，重新 /bring。".into(),
                     })
                     .ok();
@@ -1830,6 +1838,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
             if g.circle_id != bring.circle_id || g.key.is_none() {
                 p.events
                     .send(Event::CircleRejected {
+                        circle_id: bring.circle_id,
                         detail: "圈子已经变了（点名过？）——重新看座。".into(),
                     })
                     .ok();
@@ -1839,6 +1848,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
             if row.name == g.my_row.name || g.members.contains_key(&row.name) {
                 p.events
                     .send(Event::CircleRejected {
+                        circle_id: bring.circle_id,
                         detail: format!("〔{}〕这名字已在桌上——入席拒收。", row.name),
                     })
                     .ok();
@@ -1848,6 +1858,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
             if g.r_collides(&row.r[..]) {
                 p.events
                     .send(Event::CircleRejected {
+                        circle_id: bring.circle_id,
                         detail: format!(
                             "〔{}〕的 r 与现有成员碰撞——响亮拒绝，不静默去重（P-12）。",
                             row.name
@@ -1901,7 +1912,7 @@ async fn complete_bring(inner: &Arc<Mutex<Inner>>, candidate_line: u64, body: &[
             .get(&candidate_line)
             .map(|c| (c.cipher.clone(), c.writer.clone()));
         p.events
-            .send(Event::CircleRekeyed { members, change: format!("{change}（{alias_name} 经我入席）") })
+            .send(Event::CircleRekeyed { circle_id: bring.circle_id, members, change: format!("{change}（{alias_name} 经我入席）") })
             .ok();
         (add_frame, roster_frame, send_target)
     };
@@ -1947,6 +1958,7 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
                 let p = inner.lock().await;
                 p.events
                     .send(Event::CircleRejected {
+                        circle_id,
                         detail: "座次表里有验不过的名单行——拒收。".into(),
                     })
                     .ok();
@@ -1958,6 +1970,7 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
         let p = inner.lock().await;
         p.events
             .send(Event::CircleRejected {
+                circle_id,
                 detail: "座次表残缺——拒收。".into(),
             })
             .ok();
@@ -1972,6 +1985,7 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
                 let p = inner.lock().await;
                 p.events
                     .send(Event::CircleRejected {
+                        circle_id,
                         detail: "座次表里有同名或同 r 的行——响亮拒绝（P-12）。".into(),
                     })
                     .ok();
@@ -1989,6 +2003,7 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
     let Some(mine) = rows.iter().find(|r| r.sig_pk == sig.verifying_key()) else {
         p.events
             .send(Event::CircleRejected {
+                circle_id,
                 detail: "座次表里没有你的座位——拒收。".into(),
             })
             .ok();
@@ -1997,6 +2012,7 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
     if mine.name != my_sent_row.name || &mine.r[..] != &my_sent_row.r[..] {
         p.events
             .send(Event::CircleRejected {
+                circle_id,
                 detail: "座次表里你的座位与你递的落座不符——拒收。".into(),
             })
             .ok();
@@ -2053,7 +2069,7 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
     });
     p.seat_offers.remove(&line);
     p.events
-        .send(Event::CircleFormed { members: headcount })
+        .send(Event::CircleFormed { circle_id, members: headcount })
         .ok();
     drop(p); // 先放锁——send_line_proofs 内部要再拿（不可重入）
     // P16 三发之一（成键后）：座次表入座即刻成键——向自己的绑定线
@@ -2334,6 +2350,7 @@ async fn handle_contribution(
         // P-12：r 碰撞响亮拒绝（无声去重 = 无声驱逐）
         if g.r_collides(&row.r[..]) {
             ev = Some(Event::CircleRejected {
+                circle_id,
                 detail: format!(
                     "〔{}〕的凑话 r 与现有成员碰撞——响亮拒绝，不静默去重（P-12）。",
                     row.name
@@ -2343,6 +2360,7 @@ async fn handle_contribution(
         // P-03：名单外的名字拒收（响亮）——凑话完成由名单说了算
         } else if !g.on_roster(&row.name) {
             ev = Some(Event::CircleRejected {
+                circle_id,
                 detail: format!(
                     "〔{}〕不在这张桌上——名单外凑话拒收（P-03）。",
                     row.name
@@ -2361,6 +2379,7 @@ async fn handle_contribution(
             } else if direct_claim {
                 // 见证裁决：直连声明取代暂定（这条线对面就是她本人）
                 ev = Some(Event::CircleConflict {
+                    circle_id,
                     detail: format!(
                         "名字〔{}〕有两份名单行：直连声明取代先到的暂定行（P-05 裁决）。",
                         row.name
@@ -2371,6 +2390,7 @@ async fn handle_contribution(
                 // 转述到达的对峙：保留暂定、响亮冲突——转发出去，
                 // 让她的名字绑定线裁决
                 ev = Some(Event::CircleConflict {
+                    circle_id,
                     detail: format!(
                         "名字〔{}〕有两份名单行对峙：暂保留先到的，等直连声明裁决（P-05）。",
                         row.name
@@ -2400,7 +2420,7 @@ async fn handle_contribution(
         p.events.send(e).ok();
     }
     if let Some(members) = formed {
-        p.events.send(Event::CircleFormed { members }).ok();
+        p.events.send(Event::CircleFormed { circle_id, members }).ok();
     }
     drop(p);
     // 信念路由转发（除来源线）
@@ -2849,6 +2869,7 @@ async fn ear(
                                         let p = inner.lock().await;
                                         p.events
                                             .send(Event::CircleMumble {
+                                                circle_id,
                                                 from: their_name.clone(),
                                             })
                                             .ok();
@@ -2859,6 +2880,7 @@ async fn ear(
                                     let p = inner.lock().await;
                                     p.events
                                         .send(Event::CircleMumble {
+                                            circle_id,
                                             from: their_name.clone(),
                                         })
                                         .ok();
@@ -2902,6 +2924,7 @@ async fn ear(
                                                 let p = inner.lock().await;
                                                 p.events
                                                     .send(Event::CircleRejected {
+                                                        circle_id,
                                                         detail: "一份 ADD 的新人行自署验不过——\
                                                                  伪造行进不了名单（P-04）。"
                                                             .into(),
@@ -2926,6 +2949,7 @@ async fn ear(
                                             let p = inner.lock().await;
                                             p.events
                                                 .send(Event::CircleRejected {
+                                                    circle_id,
                                                     detail: "一份 ADD 的引荐人行自署验不过——拒收。"
                                                         .into(),
                                                 })
@@ -2971,6 +2995,7 @@ async fn ear(
                                     if !intro_known {
                                         p.events
                                             .send(Event::CircleRejected {
+                                                circle_id,
                                                 detail: format!(
                                                     "〔{}〕不在名单上或嗓音对不上，却署了一份 ADD——\
                                                      外人冒引荐人，拒收。",
@@ -2996,6 +3021,7 @@ async fn ear(
                                     if !receipt_ok {
                                         p.events
                                             .send(Event::CircleRejected {
+                                                circle_id,
                                                 detail: format!(
                                                     "署名〔{}〕的引荐收据验不过——伪造 ADD 拒收。",
                                                     introducer_row.name
@@ -3016,6 +3042,7 @@ async fn ear(
                                         if !rotated {
                                             p.events
                                                 .send(Event::CircleRejected {
+                                                    circle_id,
                                                     detail: format!(
                                                         "〔{}〕引荐入席没换气（P-13：必须旋转 r）——拒收。",
                                                         introducer_row.name
@@ -3066,7 +3093,7 @@ async fn ear(
                                     };
                                     if let Some(detail) = rejected {
                                         p.events
-                                            .send(Event::CircleRejected { detail })
+                                            .send(Event::CircleRejected { circle_id, detail })
                                             .ok();
                                         drop(p);
                                         // P-15：契约类拒收（名字冲突/r 碰撞/
@@ -3087,7 +3114,7 @@ async fn ear(
                                         g.apply_add(&newcomer_row, &introducer_row)
                                     };
                                     p.events
-                                        .send(Event::CircleRekeyed { members, change })
+                                        .send(Event::CircleRekeyed { circle_id, members, change })
                                         .ok();
                                     drop(p);
                                     // 信念路由转发
@@ -3121,6 +3148,7 @@ async fn ear(
                                     let p = inner.lock().await;
                                     p.events
                                         .send(Event::CircleRejected {
+                                            circle_id,
                                             detail: "一份补话的名单行自署验不过——拒收。".into(),
                                         })
                                         .ok();
@@ -3160,6 +3188,7 @@ async fn ear(
                                 if !witness_ok {
                                     p.events
                                         .send(Event::CircleRejected {
+                                            circle_id,
                                             detail: format!(
                                                 "〔{}〕不在名单上或嗓音对不上，却署了一份补话——\
                                                  外人冒见证人，拒收。",
@@ -3180,6 +3209,7 @@ async fn ear(
                                 if !verified {
                                     p.events
                                         .send(Event::CircleRejected {
+                                            circle_id,
                                             detail: format!(
                                                 "署名〔{}〕的补话整帧验签不过——伪造补话拒收。",
                                                 witness_row.name
@@ -3194,6 +3224,7 @@ async fn ear(
                                 if collide {
                                     p.events
                                         .send(Event::CircleRejected {
+                                            circle_id,
                                             detail: "补话携带的 r 与现有成员碰撞，响亮拒绝（P-12）。".into(),
                                         })
                                         .ok();
@@ -3206,6 +3237,7 @@ async fn ear(
                                 if leaver != g.my_row.name && g.presence_blocked(leaver) {
                                     p.events
                                         .send(Event::CircleConflict {
+                                            circle_id,
                                             detail: format!(
                                                 "〔{leaver}〕 的离席补话被扣下：\
                                                  她 30 秒内还在圈内说话（RM 在场辩护）。\
@@ -3218,7 +3250,7 @@ async fn ear(
                                 // 应用：条件删除 + 无条件行替换（幂等收敛）
                                 let (members, change) = g.apply_rm(leaver, &witness_row);
                                 p.events
-                                    .send(Event::CircleRekeyed { members, change })
+                                    .send(Event::CircleRekeyed { circle_id, members, change })
                                     .ok();
                                 drop(p);
                                 // 信念路由转发（leaver 已除名——断递，P-04）
@@ -3301,6 +3333,7 @@ async fn ear(
                                 let Some((_, signer_pk)) = signer else {
                                     p.events
                                         .send(Event::CircleRejected {
+                                            circle_id,
                                             detail: format!(
                                                 "自称〔{leaver}〕的署名告退验不过——\
                                                  伪造告别拒收（P-01）。"

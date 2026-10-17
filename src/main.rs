@@ -489,24 +489,26 @@ fn render(ev: Event) {
         Event::SecretChained { with } => {
             eprintln!("和 [{}] 的暗号链续上了：下一场免念。", safe(&with));
         }
-        Event::CircleFormed { members } => {
-            eprintln!("圈子铸成了：名单 {members} 人全部自署到场，屋里的话开讲（/gsay）。");
-        }
-        Event::CircleMumble { from } => {
+        Event::CircleFormed { circle_id, members } => {
             eprintln!(
-                "[{}] 转来一句圈里解不开的话（响亮分歧：你们的信念分岔了）——\
+                "圈子铸成了（圈 {circle_id:x}）：名单 {members} 人全部自署到场，屋里的话开讲（/gsay）。"
+            );
+        }
+        Event::CircleMumble { circle_id, from } => {
+            eprintln!(
+                "[{}] 转来一句圈 {circle_id:x} 里解不开的话（响亮分歧：你们的信念分岔了）——\
                  修复路径永远是点名：重跑 /circle。",
                 safe(&from)
             );
         }
-        Event::CircleRekeyed { members, change } => {
-            eprintln!("圈子换了新钥匙（{change}），现在 {members} 人在座。");
+        Event::CircleRekeyed { circle_id, members, change } => {
+            eprintln!("圈 {circle_id:x} 换了新钥匙（{change}），现在 {members} 人在座。");
         }
-        Event::CircleRejected { detail } => {
-            eprintln!("圈子响亮拒绝：{}", safe(&detail));
+        Event::CircleRejected { circle_id, detail } => {
+            eprintln!("圈 {circle_id:x} 响亮拒绝：{}", safe(&detail));
         }
-        Event::CircleConflict { detail } => {
-            eprintln!("圈内有冲突（人类裁决）：{}", safe(&detail));
+        Event::CircleConflict { circle_id, detail } => {
+            eprintln!("圈 {circle_id:x} 有冲突（人类裁决）：{}", safe(&detail));
         }
         Event::SeatOffered { from, table } => {
             eprintln!(
