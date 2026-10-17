@@ -1,0 +1,79 @@
+# Android FFI 库（P5）：四 ABI 矩阵构建 + 两项直测的常驻断言。
+# 断言（owner 直测脚本化——发布物身份不再依赖一次性人检）：
+# ① nm -D 恰 12 个 e2ee_* T 符号且名单一致（ABI 冻结面）；
+# ② llvm-readelf LOAD p_align：64 位目标全 0x4000（16KB——NDK r28 起默认，
+#    16KB 页设备兼容）；32 位目标（ELF32，无 16KB 页设备形态）≥ 0x1000，
+#    实测值如实入档（README_AGENT verify.android_build——裁决
+#    2026_10_17_p5_completion_scope：不强行加旗标）。
+name: android
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  API_LEVEL: "24"
+
+jobs:
+  android-ffi:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { abi: arm64-v8a,   triple: aarch64-linux-android,   min-align: 16384 }
+          - { abi: armeabi-v7a, triple: armv7-linux-androideabi, min-align: 4096 }
+          - { abi: x86_64,      triple: x86_64-linux-android,    min-align: 16384 }
+          - { abi: x86,         triple: i686-linux-android,      min-align: 4096 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - name: 安装 NDK r28b（与本地验证同一发布物）
+        run: |
+          curl -sL -o ndk.zip https://dl.google.com/android/repository/android-ndk-r28b-linux.zip
+          unzip -q ndk.zip -d "$RUNNER_TEMP/ndk"
+          printf 'ANDROID_NDK_HOME=%s\n' "$RUNNER_TEMP/ndk/android-ndk-r28b" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - name: 安装 cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: 构建 libe2ee.so（${{ matrix.abi }}）
+        run: cargo ndk -t ${{ matrix.abi }} -P ${{ env.API_LEVEL }} -o dist build --release -p e2ee-ffi
+      - name: 断言：12 个 e2ee_* 导出符号（名单一致）
+        run: |
+          so="dist/${{ matrix.abi }}/libe2ee.so"
+          nm -D "$so" | grep ' T e2ee_' | awk '{print $3}' | LC_ALL=C sort > /tmp/got.txt
+          printf '%s\n' \
+            e2ee_await_secret e2ee_bye e2ee_dial e2ee_last_error e2ee_leave \
+            e2ee_local_addr e2ee_person_create e2ee_person_create_hidden \
+            e2ee_person_destroy e2ee_poll e2ee_speak e2ee_version \
+            | LC_ALL=C sort > /tmp/want.txt
+          diff -u /tmp/want.txt /tmp/got.txt
+          echo "符号断言通过：$(wc -l < /tmp/got.txt) 个 e2ee_* 导出"
+      - name: 断言：LOAD p_align ≥ ${{ matrix.min-align }}（${{ matrix.triple }}）
+        run: |
+          so="dist/${{ matrix.abi }}/libe2ee.so"
+          readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          aligns=$("$readelf" -lW "$so" | awk '$1=="LOAD" {print $NF}' | sort -u)
+          echo "LOAD 段对齐实测：$(echo $aligns)"
+          ok=1
+          for a in $aligns; do
+            if (( a < ${{ matrix.min-align }} )); then
+              echo "对齐不足：$a < ${{ matrix.min-align }}"
+              ok=0
+            fi
+          done
+          [ "$ok" = 1 ] || exit 1
+          echo "对齐断言通过：全部 LOAD ≥ ${{ matrix.min-align }}"
+      - name: 产物上传（workflow artifact——发布物随 release 上传，此处供核对）
+        uses: actions/upload-artifact@v4
+        with:
+          name: libe2ee-${{ matrix.abi }}
+          path: dist/${{ matrix.abi }}/libe2ee.so
+          if-no-files-found: error

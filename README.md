@@ -125,12 +125,12 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 | `/dial <addr> [secret]`                   | Reach out to someone; with a secret, both sides must match.                                            |
 | `/await <secret>`                         | Arm a one-shot secret: the next arrival must match (verified then burned — port scans can't waste it). |
 | `/meet <teahouse-addr> <room> [secret]`   | Meet a pre-agreed person through a teahouse (both pick the same room number).                          |
-| `/punch <introducer-addr> <tag> [secret]` | Attempt a *direct* line through a UDP hole punch (both register the same tag).                         |
+| `/punch <introducer-addr> [tag] [secret]` | Attempt a *direct* line through a UDP hole punch. Omit the tag and a fresh 128-bit one is generated and shown (Crockford base32 — relay it out-of-band); a short explicit tag draws a loud warning but proceeds (a secret still compensates via PAKE). |
 | `/file <path>`                            | Hand a file (≤32 MB) to the focused conversation.                                                      |
 | `/talk <id\|name>`                        | Switch attention among parallel conversations.                                                         |
 | `/list`                                   | Who's currently connected to you.                                                                      |
 | `/card`                                   | Print your name and dial address for every network interface.                                          |
-| `/circle [closed\|open]`                  | Gather a circle from everyone currently connected; re-run inside a circle = roll call (the repair path). Multi-person defaults to a closed table, solo to an open stage. |
+| `/circle [closed\|open] [name1 name2 …]`  | Gather a circle from everyone currently connected; name specific lines instead and only those are invited (a selective circle — old tables stay seated). Re-run inside a circle = roll call (the repair path). Multi-person defaults to a closed table, solo to an open stage. |
 | `/gsay <text>`                            | Speak in the circle — signed, encrypted once, everyone receives.                                       |
 | `/bring [expected-name]`                  | Introduce someone to the table: hand a seat skeleton to the focused conversation. With a name, an expectation gate opens. |
 | `/sit [name]`                             | Take a seat in answer to an offer (the seat signature must be triggered by the person themselves).     |
