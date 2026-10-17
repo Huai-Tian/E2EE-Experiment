@@ -188,8 +188,12 @@ fn harden_process() {
             rlim_max: 0,
         };
         let _ = libc::setrlimit(libc::RLIMIT_CORE, &lim);
+        // P7（P-10 结构解，rulings.2026_10_17_p7_spec_lite_approved）：
+        // PR_SET_DUMPABLE=0——RLIMIT_CORE 拦不住 core_pattern='|' 的
+        // 管道收集器；DUMPABLE=0 让 core 从一开始就不产生、ptrace 附着
+        // 一并被禁（ssh-agent 同款手段）。RLIMIT_CORE 留作腰带背带。
+        libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0);
     }
-
     // 2. 未加密 swap 提醒
     if let Ok(text) = std::fs::read_to_string("/proc/swaps") {
         for line in text.lines().skip(1) {
@@ -208,6 +212,82 @@ fn harden_process() {
 
 #[cfg(not(unix))]
 fn harden_process() {}
+
+#[cfg(all(unix, test))]
+mod harden_tests {
+    use super::*;
+
+    /// P7（P-10 结构解）：harden_process 之后 TracerPid 必须为 0；
+    /// Dumpable 字段（若本内核 status 暴露——部分定制内核无此行）
+    /// 必须为 0。prctl 调用返回值在 harden_process 内 debug 断言。
+    #[test]
+    fn dumpable_is_zero_after_harden() {
+        harden_process();
+        let status = std::fs::read_to_string("/proc/self/status").expect("linux 有 status");
+        if let Some(l) = status.lines().find(|l| l.starts_with("Dumpable:")) {
+            let v = l.split_whitespace().nth(1).unwrap_or("?").to_string();
+            assert_eq!(v, "0", "PR_SET_DUMPABLE=0 未生效：{l}");
+        }
+        let tracer = status
+            .lines()
+            .find(|l| l.starts_with("TracerPid:"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("?")
+            .to_string();
+        assert_eq!(tracer, "0", "TracerPid 必须为 0（无人附着）");
+    }
+}
+
+/// P7 courier tag 三层规则（rulings punch_tag_tiered +
+/// 2026_10_17_p7_spec_lite_approved）：省略标签 → 自动 128bit
+///（Crockford base32 分组上屏，转告给介绍人即可）；显式标签照用。
+fn crockford_tag() -> String {
+    const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // 无 I L O U
+    let mut raw = [0u8; 16]; // 128bit
+    let _ = getrandom::fill(&mut raw);
+    let mut acc: u64 = 0;
+    let mut bits = 0u32;
+    let mut chars = [0u8; 26]; // 128bit → 25×5bit + 3bit（尾组补零）
+    let mut n = 0;
+    for b in raw {
+        acc = (acc << 8) | b as u64;
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            chars[n] = ((acc >> bits) & 31) as u8;
+            n += 1;
+        }
+    }
+    chars[n] = ((acc << (5 - bits)) & 31) as u8; // 尾组高位补零
+    let s: String = chars.iter().map(|&v| ALPHABET[v as usize] as char).collect();
+    format!(
+        "{}-{}-{}-{}-{}-{}",
+        &s[0..5], &s[5..10], &s[10..15], &s[15..20], &s[20..25], &s[25..26]
+    )
+}
+
+/// punch 标签的三层裁决出口：自动生成（省略层）或照用（显式层）+
+/// 短标签响亮警告（tag 猜测无需受害者在场——向介绍人枚举注册即可，
+/// 降级必须知情）。
+fn punch_tag_or_warn(explicit: Option<String>) -> String {
+    match explicit {
+        Some(t) => {
+            if t.chars().count() < 16 {
+                eprintln!(
+                    "警告：标签「{t}」短于 16 字符 = 降级使用。标签猜测无需你\
+                     在场——第三方向介绍人枚举注册即可冒配对；PAKE 暗号才是\
+                     在场补偿。降级是你的自由，风险你知情。"
+                );
+            }
+            t
+        }
+        None => {
+            let t = crockford_tag();
+            eprintln!("自动标签（128bit）：{t}——请经介绍人转告另一位。");
+            t
+        }
+    }
+}
 
 /// 场内指令。返回 true 表示要离场。
 async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std::error::Error>> {
@@ -253,15 +333,19 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
             }
         }
         "punch" => {
-            let (Some(addr), Some(tag)) = (parts.next(), parts.next()) else {
-                eprintln!("/punch 需要介绍人地址和标签，例如：/punch 203.0.113.9:8888 huo-guo 暗号");
+            // /punch <介绍人地址> [标签] [暗号]——P7 三层规则（裁决②）：
+            // 省略标签 = 自动 128bit（Crockford 分组上屏，经介绍人转告）；
+            // 显式短标签 = 响亮警告照用（降级自由，PAKE 补偿关系写明）。
+            let (Some(addr), tag) = (parts.next(), parts.next()) else {
+                eprintln!("/punch 需要介绍人地址；标签可省略（自动生成 128bit），例如：/punch 203.0.113.9:8888 huo-guo 暗号");
                 return Ok(false);
             };
             let secret = parts.next();
+            let tag = punch_tag_or_warn(tag.map(|s| s.to_string()));
             eprintln!("向 {addr} 报名「{tag}」，等另一头的人…");
             let r = match secret {
-                Some(s) => person.punch_secret(addr, tag, Some(s.as_bytes())).await,
-                None => person.punch(addr, tag).await,
+                Some(s) => person.punch_secret(addr, &tag, Some(s.as_bytes())).await,
+                None => person.punch(addr, &tag).await,
             };
             if let Err(e) = r {
                 eprintln!("{e}");

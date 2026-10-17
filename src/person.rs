@@ -399,6 +399,11 @@ struct Gathering {
     key: Option<Zeroizing<[u8; 32]>>,
     /// 我的发言计数（nonce 唯一性；跨聚首不重置，防重放的唯一时间性来源）
     counter: u64,
+    /// P7 水位（rulings.2026_10_17_p7_spec_lite_approved）：每发送者
+    /// 标签 → 已应用的最大 counter——水位下早帧（重放/定位噪音）静默
+    /// 丢弃（噪音无传播权）；换气清账（新钥新计数空间，apply_rm/
+    /// apply_add/try_complete 尾）。
+    counter_watermark: HashMap<[u8; 4], u64>,
     /// 在场辩护记账：名字 → 最近一次已验签发言的本地到达时刻。
     /// 本地挂钟、不落盘、不进协议（判定输入 = 本地证据 ∪ 任何线
     /// 到达的已验签发言——泛洪天然把在场证明送上门）。
@@ -492,6 +497,8 @@ impl Gathering {
         let members = all.len();
         self.key = Some(Zeroizing::new(crate::circle::derive_group_key(&all)));
         self.invited = None; // 信念从「名单」转为「成员」
+        // P7 水位清账：铸钥 = 新计数空间
+        self.counter_watermark.clear();
         Some(members)
     }
 
@@ -540,6 +547,8 @@ impl Gathering {
         all.push(&self.my_row.r[..]);
         let members = all.len();
         self.key = Some(Zeroizing::new(crate::circle::derive_group_key(&all)));
+        // P7 水位清账：新钥 = 新计数空间（旧水位对新 counter 全错）
+        self.counter_watermark.clear();
         let change = if removed {
             format!("{leaver} 离席")
         } else {
@@ -595,6 +604,8 @@ impl Gathering {
         all.push(&self.my_row.r[..]);
         let members = all.len();
         self.key = Some(Zeroizing::new(crate::circle::derive_group_key(&all)));
+        // P7 水位清账：ADD 换气 = 新计数空间
+        self.counter_watermark.clear();
         (members, format!("{} 入席", newcomer.name))
     }
 }
@@ -1393,6 +1404,7 @@ impl Person {
                 genesis_verified: true,
                 key: None,
                 counter: 0,
+                counter_watermark: HashMap::new(),
                 presence: HashMap::new(),
                 seen_bye: std::collections::HashSet::new(),
                 left_voices: HashMap::new(),
@@ -2142,6 +2154,7 @@ async fn handle_seat_roster(inner: &Arc<Mutex<Inner>>, line: u64, body: &[u8]) {
         genesis_verified: true,
         key: Some(key),
         counter: 0,
+        counter_watermark: HashMap::new(),
         presence: HashMap::new(),
         seen_bye: std::collections::HashSet::new(),
         left_voices: HashMap::new(),
@@ -2286,6 +2299,7 @@ async fn join_genesis(
             genesis_verified: false,
             key: None,
             counter: 0,
+            counter_watermark: HashMap::new(),
             presence: HashMap::new(),
             seen_bye: std::collections::HashSet::new(),
             left_voices: HashMap::new(),
@@ -2850,6 +2864,9 @@ async fn ear(
                                 );
                                 let tag: [u8; 4] =
                                     body[8..12].try_into().expect("定长切4字节");
+                                let counter = u64::from_be_bytes(
+                                    body[12..20].try_into().expect("定长切8字节"),
+                                );
                                 // 去重键取（标签‖计数）：同一句话只过一次闸
                                 let fk = flood_key(circle_id, &body[8..20]);
                                 let mut p = inner.lock().await;
@@ -2860,14 +2877,29 @@ async fn ear(
                                     p.flood_seen.clear();
                                 }
                                 p.flood_seen.insert(fk);
+                                // P7 水位门（rulings.2026_10_17_p7_spec_lite_approved）：
+                                // 同发送者 counter ≤ 已应用水位 = 重放/定位噪音
+                                // ——静默丢弃（噪音无传播权）；换气清水位，
+                                // 新计数空间照常应用。
+                                if let Some(g) = p.gatherings.get(&circle_id)
+                                    && !crate::circle::counter_admits(
+                                        g.counter_watermark.get(&tag).copied(),
+                                        counter,
+                                    )
+                                {
+                                    continue;
+                                }
                                 drop(p);
 
                                 // 双闸验证：第一闸（子钥解密）锁内找说话人
                                 let mut spoken: Option<(String, Zeroizing<Vec<u8>>)> = None;
                                 {
-                                    let p = inner.lock().await;
-                                    if let Some(g) = p.gatherings.get(&circle_id) {
+                                    let mut p = inner.lock().await;
+                                    if let Some(g) = p.gatherings.get_mut(&circle_id) {
                                         if let Some(k) = g.key.as_ref() {
+                                            // P7 水位记账（解密成功即消费该 counter——
+                                            // 重放同 counter 帧撞水位静默丢弃）
+                                            g.counter_watermark.insert(tag, counter);
                                                 // 按署名标签找说话的人（子钥即署名——
                                                 // 只有贡献对的人的子钥能开这把锁）
                                                 for m in g.members.values() {
@@ -4202,6 +4234,7 @@ mod tests {
             genesis_verified: true,
             key: None,
             counter: 0,
+            counter_watermark: HashMap::new(),
             presence: HashMap::new(),
             seen_bye: std::collections::HashSet::new(),
             left_voices: HashMap::new(),

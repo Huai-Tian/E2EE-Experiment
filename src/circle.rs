@@ -187,15 +187,39 @@ pub fn sender_tag_of(r: &[u8]) -> [u8; 4] {
     sender_tag(r)
 }
 
+/// P-11 分桶填充（P7·rulings.2026_10_17_p7_spec_lite_approved）：
+/// 密文载荷长度归一到档位（pad→norm→max）——观测面=攻击面：同档
+/// 不同明文 ⇒ 同外层长度，尺寸指纹破。档内真长前缀 4B 由 seal 写入、
+/// open 剥出（收端无损还原）；顶档之上 = max 层，原长 + 8..=16 随机
+/// 抖动（破『同档同长』的二次指纹）。运输层 TCP/MSS 吸收变长。
+pub(crate) fn padded_len(plain_len: usize) -> usize {
+    const TIERS: [usize; 8] = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768];
+    let mut seed = [0u8; 1];
+    let _ = getrandom::fill(&mut seed);
+    let jitter = 8 + (seed[0] % 9) as usize; // 8..=16
+    let body = plain_len + 4; // 真长前缀（u32）
+    for t in TIERS {
+        if body + jitter <= t {
+            return t;
+        }
+    }
+    body + jitter
+}
+
 /// 用子钥加密一句话，返回可扇出的群密文：nonce ‖ AEAD。
 /// counter 由调用者递增，保证同一发送者 nonce 永不重复。
+/// P-11：载荷 = 真长 4B ‖ 明文 ‖ 桶填充——外层长度只露档位。
 pub fn seal(subkey: &[u8; 32], counter: u64, r: &[u8], text: &[u8]) -> Vec<u8> {
+    let padded = padded_len(text.len());
+    let mut buf = vec![0u8; padded];
+    buf[..4].copy_from_slice(&(text.len() as u32).to_be_bytes());
+    buf[4..4 + text.len()].copy_from_slice(text);
     let cipher = ChaCha20Poly1305::new_from_slice(subkey).expect("32 字节恒成立");
     let mut nonce = [0u8; NONCE_LEN];
     nonce[..8].copy_from_slice(&counter.to_be_bytes());
     nonce[8..].copy_from_slice(&sender_tag(r));
     let ct = cipher
-        .encrypt(&nonce.into(), Payload { msg: text, aad: &nonce })
+        .encrypt(&nonce.into(), Payload { msg: &buf, aad: &nonce })
         .expect("加密不应失败");
     let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
     out.extend_from_slice(&nonce);
@@ -204,18 +228,74 @@ pub fn seal(subkey: &[u8; 32], counter: u64, r: &[u8], text: &[u8]) -> Vec<u8> {
 }
 
 /// 用子钥解开群密文。失败 = 说话的人不对、或密文被动过。
+/// 返回剥离填充后的明文（真长前缀由 seal 写入）。
 pub fn open(subkey: &[u8; 32], blob: &[u8]) -> Option<Vec<u8>> {
     if blob.len() < NONCE_LEN {
         return None;
     }
     let (nonce, ct) = blob.split_at(NONCE_LEN);
     let cipher = ChaCha20Poly1305::new_from_slice(subkey).expect("32 字节恒成立");
-    cipher
+    let buf = cipher
         .decrypt(
             nonce[..NONCE_LEN].try_into().ok()?,
             Payload { msg: ct, aad: nonce },
         )
-        .ok()
+        .ok()?;
+    if buf.len() < 4 {
+        return None;
+    }
+    let n = u32::from_be_bytes(buf[..4].try_into().ok()?) as usize;
+    if 4 + n > buf.len() {
+        return None;
+    }
+    Some(buf[4..4 + n].to_vec())
+}
+
+/// P7 水位判定（纯函数，单元可测）：counter ≤ 该发送者已应用水位 =
+/// 重放/定位噪音（静默丢弃——噪音无传播权）；counter > 水位（含首帧
+/// None）= 正常应用。水位随换气清账（新钥新计数空间）。
+pub fn counter_admits(watermark: Option<u64>, counter: u64) -> bool {
+    !watermark.is_some_and(|w| counter <= w)
+}
+
+#[cfg(test)]
+mod p7_tests {
+    use super::*;
+
+    /// P-11 尺寸指纹破：同档不同明文 ⇒ 同外层长度；跨档 ⇒ 高档位。
+    #[test]
+    fn p7_pad_同档同长_跨档升位() {
+        let k = [1u8; 32];
+        let r = [7u8; 32];
+        let a = seal(&k, 1, &r, b"ab"); // 2B → 256 档
+        let b = seal(&k, 2, &r, &[b'x'; 200]); // 200B → 同 256 档
+        let c = seal(&k, 3, &r, &[b'y'; 300]); // 300B → 512 档
+        assert_eq!(a.len(), b.len(), "同档同长（尺寸指纹破）");
+        assert!(c.len() > a.len(), "跨档升位");
+        // 档位 = 2 的幂 + AEAD 16 + nonce 12
+        assert_eq!(a.len(), 12 + 256 + 16);
+    }
+
+    /// P-11 填充无损：真长前缀还原，各长度边界照常。
+    #[test]
+    fn p7_pad_roundtrip_真长还原() {
+        let k = [2u8; 32];
+        let r = [9u8; 32];
+        for len in [0usize, 1, 100, 252, 253, 300, 1000] {
+            let text: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+            let blob = seal(&k, 5, &r, &text);
+            assert_eq!(open(&k, &blob).expect("开"), text, "len={len}");
+        }
+    }
+
+    /// P7 水位：首帧恒过；水位上重放/水位下早帧拒；水位上新帧过。
+    #[test]
+    fn p7_水位_admits() {
+        assert!(counter_admits(None, 0), "首帧恒过");
+        assert!(counter_admits(Some(5), 6), "水位上新帧");
+        assert!(!counter_admits(Some(5), 5), "水位上重放");
+        assert!(!counter_admits(Some(5), 3), "水位下早帧");
+    }
 }
 
 /// SAS 对词（1:1·slice-5）：从 Noise transcript 哈希派生的 12 位数字
