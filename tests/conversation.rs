@@ -621,6 +621,97 @@ async fn 出生无喊话耳_删除面守卫() {
 }
 
 #[tokio::test]
+async fn 快照后新线_零圈帧_从第一帧起() {
+    // rulings.2026_10_17_flood_frame_all_migration 的结构断言：
+    // 0x0F 扇出追随誓言（快照绑定集），快照之后接入的线收到圈帧
+    // 数恰为零——**从第一帧起**（含创世帧），不只靠函数删除的事实。
+    // 观测边界（如实入档）：漂移窗孤儿 0x0F 在收端被名单检查静默
+    // 丢弃（invited 不含她 → continue，无事件），Event 流层面新旧
+    // 实现同绿——红绿自证对本迁移**不适用**（差异在 wire 层：旧
+    // flood_frame_all 把帧发到誓言外的线，P-02 精神面暴露 circle_id；
+    // 迁移在源头不发，一致性破洞封死——owner 裁决明说这是非机密性
+    // 破洞）。本测试钉的是事件流可见的不变量：无绑定的线从第一帧
+    // 起零圈事件（连 mumble 都没有——根本收不到任何可解/不可解的
+    // 圈载荷）；对照面：点名（新誓言集）合法纳入后全通。构造：
+    // A-B 在座成圈 → Dave 快照后拨入（旧圈零帧）→ 点名（誓言集
+    // 纳入 Dave）→ 三人全通。
+    let (alice, mut alice_ev, _a) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
+    // A-B 在座
+    alice.dial(&bob_addr).await.expect("A-B");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+    // A 开台（名单 [Alice, Bob]——快照此刻落定，绑定=A-B 线）
+    let n = alice.form_circle().await.expect("开台");
+    assert_eq!(n, 2);
+    // 成圈先行（确保创世/凑话/成钥全都已经过 Dave 之前的时间窗）
+    for ev in [&mut alice_ev, &mut bob_ev] {
+        let m = expect(ev, formed).await;
+        assert_eq!(m, 2);
+    }
+    // 快照后新线：Dave 拨入 A——她不在旧圈誓言集（无绑定），旧圈
+    // 的一切圈帧与她无关；迁移后扇出只认绑定，她的线零圈帧
+    let (dave, mut dave_ev, dave_addr) = spawn_person("Dave").await;
+    let _ = dave_addr;
+    alice.dial(&dave_addr).await.expect("A-D（快照后新线）");
+    expect(&mut alice_ev, met).await;
+    expect(&mut dave_ev, met).await;
+    // **零圈帧窗口**：旧圈在此期间存在且活跃（A/B 的凑话回声、
+    // 任何重发路径若误触她的线都会在这里暴露）——纯静默 1.5s
+    //（连 mumble 都没有：收不到圈载荷才叫零帧，收到了解不开是
+    // mumble——两者在事件流上可区分）
+    assert_quiet(&mut dave_ev, 1500, |ev| {
+        matches!(
+            ev,
+            Event::CircleFormed { .. }
+                | Event::CircleMumble { .. }
+                | Event::CircleRekeyed { .. }
+                | Event::CircleRejected { .. }
+                | Event::CircleConflict { .. }
+                | Event::SeatOffered { .. }
+                | Event::Heard { .. }
+        )
+    })
+    .await;
+    // 触发全部圈帧类型：点名（新 0x0F 扇出——同一代码路径覆盖创世
+    // 与点名，owner 裁决原文）+ 圈内发言。点名名单扫 A 的当前会话
+    // =[Alice,Bob,Dave]——Dave 经**点名的誓言语义**合法入席（快照
+    // 此刻含她的线），拿到绑定与创世是授予而非泄漏
+    alice.form_circle().await.expect("点名（新 0x0F 扇出）");
+    for ev in [&mut alice_ev, &mut bob_ev, &mut dave_ev] {
+        let m = expect(ev, formed).await;
+        assert_eq!(m, 3, "点名重聚（Dave 经点名誓言合法入席）");
+    }
+    alice.circle_speak("quan li de hua").await.expect("A 圈内说");
+    let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+    assert_eq!(got.1, "quan li de hua", "圈内照常（功能面无损）");
+    // 旧圈（快照=[Alice,Bob]）的整个生命周期已在上半段走完：Dave
+    // 的线在创世/凑话/成钥期间**零圈帧**——从第一帧起（她只见过
+    // 1:1 世界的 Met，上半段 quiet 窗口已验）。点名单独验证：新圈
+    // 3 人誓言集（Dave 在内）→ 她此刻合法拿到绑定与创世——这恰是
+    // 对照：迁移后的扇出=誓言集，圈内成员全通。功能对照：三人圈
+    // 双向说话（先 expect 后 quiet——quiet 会消费窗口内事件，
+    // Heard 不能落在 quiet 窗口里）
+    let got = expect(&mut dave_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+    assert_eq!(got.1, "quan li de hua", "Dave 在点名新圈里照常收听（誓言集成员）");
+    assert_quiet(&mut dave_ev, 1000, |ev| {
+        matches!(
+            ev,
+            Event::CircleMumble { .. }
+                | Event::CircleRekeyed { .. }
+                | Event::CircleRejected { .. }
+                | Event::CircleConflict { .. }
+        )
+    })
+    .await;
+    // 对照收尾：Bob（快照集成员）在点名后仍双向可达——迁移没有
+    // 收紧在座者的任何东西
+    bob.circle_speak("wo zhao chang").await.expect("B 回");
+    let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Bob")).await;
+    assert_eq!(got.1, "wo zhao chang");
+}
+
+#[tokio::test]
 async fn 开放台_不续链_陌生来客不被锁() {
     // 台席：关闭续链（--no-chain 的库面）——对陌生人常开的接收方
     let (desk, mut desk_ev, desk_addr) = spawn_person("Desk").await;

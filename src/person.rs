@@ -1277,8 +1277,11 @@ impl Person {
                 .send(Event::CircleFormed { members })
                 .ok();
         }
-        // 开台公告只走一跳：名单=发起者直连对端，天然 direct-lock
-        flood_frame_all(&self.inner, frame_kind::GENESIS, &genesis_frame).await;
+        // 开台公告只走一跳：名单=发起者直连对端。扇出追随誓言——
+        // 只走刚写下的快照绑定集（rulings.2026_10_17_flood_frame_all_migration：
+        // 全对话泛洪家族的最后残骸已删；漂移窗内新到的线得零帧而非
+        // 一帧孤儿 0x0F——她的名字本不在署名名单上，结构上更诚实）
+        belief_flood(&self.inner, None, frame_kind::GENESIS, &genesis_frame).await;
         // 我的自署行泛洪出去（一人圈 = 无线可发，已就地成钥）
         belief_flood(&self.inner, None, frame_kind::CONTRIB_V2, &contrib_frame).await;
         Ok(invited_count)
@@ -1450,23 +1453,6 @@ impl Person {
             return Err(PersonError::NoSasChannel);
         }
         Ok(SasReport { p2p, circle })
-    }
-}
-
-/// 泛洪一帧圈子载荷给**全部在场对话**（信念名单不设限的场合专用——
-/// 目前只有 0x0F 开台公告：名单=发起者直连对端，只走一跳，天然
-/// direct-lock）。payload 不含帧类型字节——kind 单独传，由 send_typed
-/// 统一打包。外层逐线独立 Noise 信封（e2ee-only-transit 不变量不变）。
-async fn flood_frame_all(inner: &Arc<Mutex<Inner>>, kind: u8, payload: &[u8]) {
-    let targets: Vec<_> = {
-        let p = inner.lock().await;
-        p.convos
-            .values()
-            .map(|c| (c.cipher.clone(), c.writer.clone()))
-            .collect()
-    };
-    for (cipher, writer) in targets {
-        let _ = send_typed(&cipher, &writer, kind, payload).await;
     }
 }
 
