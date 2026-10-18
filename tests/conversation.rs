@@ -679,7 +679,7 @@ async fn 快照后新线_零圈帧_从第一帧起() {
                 | Event::Heard { .. }
         )
     })
-    .await;
+        .await;
     // 触发全部圈帧类型：点名（新 0x0F 扇出——同一代码路径覆盖创世
     // 与点名，owner 裁决原文）+ 圈内发言。点名名单扫 A 的当前会话
     // =[Alice,Bob,Dave]——Dave 经**点名的誓言语义**合法入席（快照
@@ -710,7 +710,7 @@ async fn 快照后新线_零圈帧_从第一帧起() {
                 | Event::CircleConflict { .. }
         )
     })
-    .await;
+        .await;
     // 对照收尾：Bob（快照集成员）在点名后仍双向可达——迁移没有
     // 收紧在座者的任何东西
     bob.circle_speak("wo zhao chang").await.expect("B 回");
@@ -1137,7 +1137,7 @@ async fn 署名告别_创作者离场_双见证各自换钥_点名重聚() {
     assert_quiet(&mut carol_ev, 1500, |ev| {
         matches!(ev, Event::Heard { .. } | Event::CircleMumble { .. })
     })
-    .await;
+        .await;
     // 点名：Carol 重跑 /circle——她的会话只剩 Bob（Alice 的线已告别）
     // ⇒ 新圈 2 人；Carol 的快照绑 C-B Name(Bob)，Bob 经 0x0F 送达绑
     // B-C Qualified{via:Carol}——直连点亮
@@ -1616,7 +1616,7 @@ async fn 拒入者_零圈帧_骨架无r() {
                 | Event::Heard { .. }
         )
     })
-    .await;
+        .await;
 }
 
 // ── v3 slice-5 对词（/word·SAS）──────────────────────────────────
@@ -1861,7 +1861,7 @@ async fn 在场辩护_还在说话的人掉线_补话被扣下() {
                         None
                     }
                 })
-                .await;
+                    .await;
                 if is_met {
                     saw_met = true;
                 } else {
@@ -1904,7 +1904,7 @@ async fn 在场辩护_还在说话的人掉线_补话被扣下() {
     assert_quiet(&mut bob_ev, 1500, |ev| {
         matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
     })
-    .await;
+        .await;
     assert_quiet(&mut alice_ev, 1500, |ev| matches!(ev, Event::CircleRekeyed { .. })).await;
     // 旧钥照说（被保护的人还在名单上——她只是掉线了）
     alice.circle_speak("jiu yue zhao shuo").await.expect("说");
@@ -2328,7 +2328,7 @@ async fn 迟到告别_墓碑验签_义务守卫幂等() {
             Event::CircleRekeyed { .. } | Event::CircleConflict { .. } | Event::CircleRejected { .. }
         )
     })
-    .await;
+        .await;
     // 圈已散（独守者无人可说）；名单验态：Carol 在墓碑里
     let snapshot = alice.roster_snapshot().await.expect("名单");
     assert!(snapshot.iter().all(|r| r.name != "Carol"), "Carol 已除名");
@@ -2370,7 +2370,7 @@ async fn P15_圈外自报名_零圈帧() {
                 | Event::Heard { .. }
         )
     })
-    .await;
+        .await;
     // 绑定面取证：Bob 的绑定里没有这条冒名线（只有 B-A 资格线）
     let bindings = bob.line_bindings_debug().await.expect("绑定");
     assert!(
@@ -2603,7 +2603,7 @@ async fn P15_spec_b_前成员重放座次表_缺旋转r_无钥() {
     assert_quiet(&mut dave_ev, 1500, |ev| {
         matches!(ev, Event::Heard { .. } | Event::CircleMumble { .. })
     })
-    .await;
+        .await;
     // D 在幻影桌说话 → C 听见（C 有幻影全部材料——复印件的证明）
     dave.circle_speak("huan ying hua").await.expect("D 说");
     let got = expect(&mut carol_ev, |e| heard(e).filter(|(n, _)| n == "Dave")).await;
@@ -3002,11 +3002,11 @@ async fn P15_C_同名重入_crash见证不误逐新任期() {
     assert_quiet(&mut bob_ev, 2000, |ev| {
         matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
     })
-    .await;
+        .await;
     assert_quiet(&mut alice_ev, 1500, |ev| {
         matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
     })
-    .await;
+        .await;
     // v2 无恙：照常说，A 听见（名单里她的行还在）
     carol2.circle_speak("xin ren qi hao hao de").await.expect("v2 说");
     let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
@@ -3050,7 +3050,7 @@ async fn P16_镜子1_谎报名线_成键后熄灭() {
     // 的线（窗口锚成键后熄 + 她的锚不在信念）零密封帧**——修复前
     //（无严格档）：名字 ∈ 信念 ⇒ 两条线都持续路由——输赢双方都能
     // 持续旁听。红绿自证：关掉 keyed 判定本测试必须红。
-    let (alice, mut alice_ev, bob, mut bob_ev, _carol, mut carol_ev) = three_mesh().await;
+    let (alice, mut alice_ev, bob, mut bob_ev, carol, mut carol_ev) = three_mesh().await;
     for ev in [&mut alice_ev, &mut bob_ev, &mut carol_ev] {
         expect(ev, formed).await;
     }
@@ -3093,25 +3093,52 @@ async fn P16_镜子1_谎报名线_成键后熄灭() {
             }
         }
     }
-    // 占位感知断言：B 的圈里 "Alice" 行的 pk 决定 A 的话可解与否——
-    // 占位=真 A（她的 r 在 B 的钥里）⇒ heard；占位=fake（r 不同）⇒
-    // mumble（T1 分叉响亮——P-05 对峙的已知世界，点名裁决）
+    // 占位感知断言（P18 案二残段修复，owner 定罪 2026-10-18）：
+    // P-05 分岔世界语义——多径泛洪下各方的名单可独立分岔，听感随
+    // 各自名单（钥匙随名单）、响亮冲突、点名收敛（A4）。B 与 C 的
+    // 「Alice」行占位者**无因果关系**：真 A 的直连声明只作用于
+    // A-B 线上的 B（快照 Name 绑定）；C 的占位由 B 的转发序（= 两行
+    // 到达 B 的序）独立决定——「真行后到 B 触发取代（holder=true）
+    // 而 fake 行先转发到 C 即占位」的时序完全合法。此前此处替 C
+    // 假设了与 B 相同的信念（CI run #33 红的根因即此盲点）——
+    // 现改为每人独立判定。
+    let a_pk = {
+        let a_rows = alice.roster_snapshot().await.expect("A 快照");
+        a_rows.iter().find(|r| r.name == "Alice").unwrap().sig_pk
+    };
     let holder_is_real_a = {
         let rows = bob.roster_snapshot().await.expect("B 快照");
         let holder = rows.iter().find(|r| r.name == "Alice").unwrap();
-        let a_rows = alice.roster_snapshot().await.expect("A 快照");
-        let a_new = a_rows.iter().find(|r| r.name == "Alice").unwrap();
-        holder.sig_pk == a_new.sig_pk
+        holder.sig_pk == a_pk
+    };
+    let carol_holder_is_real_a = {
+        let rows = carol.roster_snapshot().await.expect("C 快照");
+        let holder = rows.iter().find(|r| r.name == "Alice").unwrap();
+        holder.sig_pk == a_pk
     };
     alice.circle_speak("mi feng de hua").await.expect("A 说");
     if holder_is_real_a {
         let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
-        assert_eq!(got.1, "mi feng de hua", "真 A 占位：圈内照常");
-        let got = expect(&mut carol_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
-        assert_eq!(got.1, "mi feng de hua");
+        assert_eq!(got.1, "mi feng de hua", "真 A 占位（B）：圈内照常");
     } else {
         let m = expect(&mut bob_ev, mumble).await;
-        assert_eq!(m, "Alice", "fake 占位：A 的话 B 解不开（T1 响亮，点名裁决）");
+        assert_eq!(m, "Alice", "fake 占位（B）：A 的话 B 解不开（T1 响亮，点名裁决）");
+    }
+    // C 独立判定：C 名单里的占位行是谁，C 的听感就是谁的世界——
+    // 真行 ⇒ C 的钥含真 A 的 r，子钥可解（heard）；fake 行 ⇒ 钥匙随
+    // 名单配 fake 的 r，A 的话必解不开（mumble，T1 响亮——A 的话
+    // 只走 A 的绑定线 A-B，C 经 B 中继收到，from=转发线对端 Bob；
+    // 点名收敛，A4）
+    if carol_holder_is_real_a {
+        let got = expect(&mut carol_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
+        assert_eq!(got.1, "mi feng de hua", "真 A 占位（C）：C 的信念配真行，照常听见");
+    } else {
+        let m = expect(&mut carol_ev, mumble).await;
+        assert_eq!(
+            m, "Bob",
+            "fake 占位（C）：C 的信念配 fake 行——A 的话 C 解不开\
+             （T1 响亮，点名收敛）"
+        );
     }
     // fake 的事件面（胜负无关断言）：围栏窗口的合法事件放行（她的
     // 自动 join/formed——「集齐即得首代 K」已接受价格；P-05 对峙
@@ -3191,11 +3218,11 @@ async fn P16_镜子2_同名复用_pk锚不混淆() {
     assert_quiet(&mut bob_ev, 2000, |ev| {
         matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
     })
-    .await;
+        .await;
     assert_quiet(&mut alice_ev, 1500, |ev| {
         matches!(ev, Event::CircleRekeyed { .. } | Event::CircleConflict { .. })
     })
-    .await;
+        .await;
     // v2 照常说
     carol2.circle_speak("pk bu hun xiao").await.expect("v2 说");
     let got = expect(&mut alice_ev, |e| heard(e).filter(|(n, _)| n == "Carol")).await;
@@ -3242,7 +3269,7 @@ async fn P16_撤销统一_行删即熄_幂等重放无害() {
     assert_quiet(&mut carol_ev, 1500, |ev| {
         matches!(ev, Event::Heard { .. } | Event::CircleMumble { .. })
     })
-    .await;
+        .await;
     // 重放 C 的历史 0x13（A 侧绑定已熄——重放到 A 的 C 线：验签用
     // 当前名单试钥——C 的行已删+墓碑不在试钥面 → 当没听见；即便
     // 重放早于 RM（锚已定）也只是幂等空转）：零状态变化零事件
@@ -3275,7 +3302,7 @@ async fn P16_撤销统一_行删即熄_幂等重放无害() {
     assert_quiet(&mut bob_ev, 1500, |ev| {
         matches!(ev, Event::CircleRejected { .. } | Event::CircleMumble { .. })
     })
-    .await;
+        .await;
 }
 
 #[cfg(feature = "rogue")]
@@ -3310,7 +3337,7 @@ async fn P16_circle_bye按pk_冒名线零圈告别帧() {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !(saw_left && saw_rekey)
         && let Ok(Some(ev)) =
-            timeout(deadline.saturating_duration_since(Instant::now()), alice_ev.recv()).await
+        timeout(deadline.saturating_duration_since(Instant::now()), alice_ev.recv()).await
     {
         match &ev {
             Event::Left { name, .. } if name == "Bob" => saw_left = true,
@@ -3332,7 +3359,7 @@ async fn P16_circle_bye按pk_冒名线零圈告别帧() {
                 | Event::SeatOffered { .. }
         )
     })
-    .await;
+        .await;
 }
 
 #[cfg(feature = "rogue")]
