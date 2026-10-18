@@ -2,6 +2,12 @@
 //!
 //! 每个测试都是同一台机器上的一场小型相遇。
 
+// P 系列判例命名（P16_镜子1、P15_spec_a 等）与中文测试名是**刻意的**
+// （owner 裁决 2026-10-18：判例编号对齐 attack_precedents 的 P-nn 档案，
+// 语义文档即测试名）。non_snake_case 整档豁免；单测侧同族警告的处置
+// 锁定见 README_AGENT（src/person.rs 单点 allow，禁改名禁 [lints]）。
+#![allow(non_snake_case)]
+
 use e2ee::{Event, LeaveReason, Person};
 use e2ee::person::{SEATS_CLOSED, SEATS_OPEN};
 // 判例注入面：feature 门控（缺 feature 时库不编译它，canary 响亮提示）
@@ -658,7 +664,7 @@ async fn 快照后新线_零圈帧_从第一帧起() {
     }
     // 快照后新线：Dave 拨入 A——她不在旧圈誓言集（无绑定），旧圈
     // 的一切圈帧与她无关；迁移后扇出只认绑定，她的线零圈帧
-    let (dave, mut dave_ev, dave_addr) = spawn_person("Dave").await;
+    let (_dave, mut dave_ev, dave_addr) = spawn_person("Dave").await;
     let _ = dave_addr;
     alice.dial(&dave_addr).await.expect("A-D（快照后新线）");
     expect(&mut alice_ev, met).await;
@@ -2940,7 +2946,7 @@ async fn P15_C_同名重入_crash见证不误逐新任期() {
     // apply_add 内，先于引荐人 complete_bring 写入 v2 的新绑定
     //（调用结构保证）；v2 自己的新绑定（引荐人线 Name(Carol)）在
     // 清除后存活。
-    let (alice, mut alice_ev, bob, mut bob_ev) = two_open_circle().await;
+    let (_alice, mut alice_ev, bob, mut bob_ev) = two_open_circle().await;
     // v1 经 mortal 线入席（杀线不杀进程——线死时点可控）
     let (carol1, mut _carol1_ev, carol1_addr) = spawn_person("Carol").await;
     let (c1proxy, c1task) = mortal_proxy(&carol1_addr).await;
@@ -3177,7 +3183,7 @@ async fn P16_镜子2_同名复用_pk锚不混淆() {
     // ——按 pk 根本不可能混淆（v1 的锚随 v1 行删已熄；v2 是另一把
     // pk）。红绿自证：把 witness_ctx 改回按名字查（P15 语义）本测试
     // 必须红（v1 名命中 members 里的 v2 → 无据 RM 逐出 v2）。
-    let (alice, mut alice_ev, bob, mut bob_ev) = two_open_circle().await;
+    let (_alice, mut alice_ev, bob, mut bob_ev) = two_open_circle().await;
     // v1 经 mortal 线入席
     let (carol1, mut _c1ev, c1_addr) = spawn_person("Carol").await;
     let (c1proxy, c1task) = mortal_proxy(&c1_addr).await;
@@ -3314,7 +3320,7 @@ async fn P16_circle_bye按pk_冒名线零圈告别帧() {
     // 签名）。P16：targets 按锚判定——冒名线无锚（成键后窗口锚熄）
     // ⇒ 零圈帧。注意边界：leave() 的 1:1 空帧道别发给全部 convos
     //（含冒名线）——那是 1:1 世界的行为（P16 不碰），合法收到。
-    let (alice, mut alice_ev, bob, mut bob_ev, _carol, _carol_ev) = three_mesh().await;
+    let (_alice, mut alice_ev, bob, mut bob_ev, _carol, _carol_ev) = three_mesh().await;
     for ev in [&mut alice_ev, &mut bob_ev] {
         expect(ev, formed).await;
     }
@@ -3609,7 +3615,7 @@ async fn P6_外换钥_内圈照常() {
 /// → B 拨入 → /bring 看座 → /sit 落座 → 内圈 Rekeyed(3) → 内圈说话。
 #[tokio::test]
 async fn P6_内圈入席流_solo_subset_全走位() {
-    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (alice, mut alice_ev, _alice_addr) = spawn_person("Alice").await;
     let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
     let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
     // A solo subset（空 targets = 只邀自己 = 舞台内圈）
@@ -3890,7 +3896,7 @@ async fn P6_pk锚按圈_圈间独立() {
 async fn P6_共线中继_两圈经一继_连通性自愈() {
     let (alice, mut alice_ev, _) = spawn_person("Alice").await;
     let (bob, mut bob_ev, bob_addr) = spawn_person("Bob").await;
-    let (carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
+    let (_carol, mut carol_ev, carol_addr) = spawn_person("Carol").await;
     // B—(代理)—C：C 的唯一线（两圈共享的中继段）
     let (cproxy, ctask) = mortal_proxy(&carol_addr).await;
     bob.dial(&cproxy).await.expect("B-(代理)-C");

@@ -855,6 +855,48 @@ pending_work:
     landed: "person.rs：enum LineBinding{Name,Qualified{via,peer}}（points_to 归一判定——Qualified 读 peer）+ Gathering.line_bindings（取代 aliases）；belief_flood 只认绑定（Name 过行名信念检查；Qualified 过对端键 peer 信念检查——授予=协议行为，熄灭=信念检查）；form_circle 快照全量绑定；GENESIS 处理器 direct-lock 退役 + 同圈重放闸（先于一切）+ join_genesis(src_line) 送达绑定 Qualified{via:帧内 creator, peer:送达线 0x05 捕获}；handle_contribution 签名改 src_line（暂存保线号——P-05 直连声明判定与转发排除读它，非逆向路径学习）+ P-05 直连声明读 Name 绑定；complete_bring 绑 Name(0x11 行名)；handle_seat_roster 绑 Qualified{via:引荐人 hint, peer:hint}；bye/crash 见证判定读 points_to（peer）；apply_rm 急切撤 Qualified{peer:leaver} + apply_add 同名清账 Name+Qualified{peer}（先于引荐人写新绑定）；ADD 契约类拒收照转。测试：单元（线绑定_生死周期_对端键熄灭_授予键留溯源——含过度撤销消失断言）+ P15_圈外自报名_零圈帧 + P15_spec_a_转发创世（确定性载体构造：直发被扣→转发送达→放行重放不授绑）+ P15_spec_b_前成员重放（mortal proxy 杀线不杀进程：僵尸桌 bring 幻影圈 + 旋转不变量断言 + 旧材料无钥 + P-03 拒收）+ P15_B_转发资格线_对端离席熄灭_除名者零圈帧（复审阻断项 B 回归：转发者离席熄灭+RM 帧不泄漏+幸存者同钥+点名自愈）+ P15_C_同名重入_crash见证不误逐新任期（复审收尾项 C：v1 线死无据 RM、v2 新绑定存活）+ 既有测试按新拓扑语义重写（署名告别→创作者离场双见证/点名点亮 B-C；在场辩护→唯一绑定线见证；点名→单 RM 收敛；迟到告别→双代理线确定性构造）"
     landing_audit_2026_10_17: "owner 复审：主体接受、三附带修复追认、union 同构论证修正（crash 的 union=幂等冗余见证，义务守卫兜住）；阻断项 B（via 键撤销=A3 回归）+ 收尾项 A（中继反向未入档）+ 收尾项 C（名字复用×crash 见证缺测试）三项裁决，关闭条件全达成（B 修复落地自证 + A 入档对账 routing.relay_asymmetry + C 作用域+测试）；残余面（谎报 peer 名、pk 锚定提案）入档 known_limitations.p15_fake_name_peer_residual 与 rulings 尾段——后续裁决已落地：关闭见 rulings.2026_10_17_p15_closure_granted，pk 锚定方向性批准立 P16"
 
+  P19_release_hygiene_ii:                    # 发布前二期清洗（owner 立项 2026-10-18，tag v3.0.0 终局门收尾）——与安全扫描清账（security_scan_clearance）同 push 分两 commit
+    status: closed-2026-10-18                # 死助手扫荡零孤儿 + 警告消音（conversation 33→0）+ 复扫三项全零 + src 零改动兑现（四 ABI 与 sha 不变，e9c12f0 批继续有效）
+    depends: []
+    landed: >-
+      判据（owner）：清『功能或问题已解决、不再有存在意义』的代码；在职的
+      不清（运行时健康、测试依赖、语义文档均在职——main.rs/courier.rs 的
+      79 处 eprintln = CLI 产品文案、person.rs:325 的 allow(dead_code) =
+      rogue 注入面、roster_snapshot/line_bindings_debug 观测面 = 正式审计
+      面，全部留）。三裁决：① 清洗在 tag 前做，预计只动 tests/ → 产物与
+      sha 不变；② 观测面 API 不门控不清除（名单是本地信念态非秘密，P16
+      全锚同步与名单语义断言在职依赖）；③ tests/conversation.rs 顶部
+      #![allow(non_snake_case)] + 注释（P 系列中文判例命名是刻意的）。
+      落地（仅 tests/conversation.rs，src 零改动）：顶部 #![allow(
+      non_snake_case)] + 注释（裁决③——判例编号对齐 attack_precedents
+      的 P-nn 档案，语义文档即测试名）；6 处 unused variable `_` 前缀
+      改名（dave@快照后新线 / alice@P15_C、P16_镜子2、P16_circle_bye /
+      alice_addr@P6_内圈入席流 / carol@P6_共线中继——`_name` 绑定仍持有
+      值至作用域尾，Person 不提前 drop，语义零变化）。
+      死助手扫荡（P17 删除与 P18 改写后的孤儿检查）：22 个本地 helper
+      （expect/met/free_port/spawn_person/spawn_teahouse/left/rekeyed/
+      formed/heard/three_mesh/seat_offered/rejected/conflict/assert_quiet/
+      two_open_circle/mumble/delaying_proxy/mortal_proxy/wait_anchored/
+      wait_anchored_specific/formed_c/rekeyed_c）逐一引用计数 + 低计数
+      候选人工核验（区分定义/注释/.expect() 方法调用/局部变量撞名）——
+      全部在职零孤儿（最低 wait_anchored_specific 亦有 1 真实调用点）；
+      pq.rs 无本地 helper。
+      复扫三项（HEAD 7253b8f）：src/ 打印探针（eprintln!/println!/dbg!，
+      排除 main.rs/courier.rs 产品文案）零命中；src/+tests/ TODO/FIXME
+      零命中；git status 干净。
+      警告计数 before/after（cargo test --release --features rogue
+      --no-run，CARGO_TERM_COLOR=never 计数）：before 34 = conversation
+      33（27 non_snake_case + 6 unused variable）+ lib test 1；after 1
+      = 仅 src/person.rs:4529 单测名 non_snake_case。src:4529 处置裁决
+      （owner 2026-10-18）：cfg(test) 零 ABI、P2 遗留非本轮引入，本轮
+      红线不动；修法锁定 = 该 fn 单点 #[allow(non_snake_case)] + 注释
+      （禁改名——判例术语 RM；禁 Cargo.toml [lints]——过宽），待未来
+      触碰 src 的 slice 顺带处理。
+      验证（2026-10-18 本侧，HEAD 7253b8f + 本轮 tests 改动）：rogue
+      全量 92 全绿（20 单元 + 1 dumpable + 70 集成 + 1 pq）；无 feature
+      50 绿 + canary 恰一红；压力 10 轮（--skip 五十人）69×10 全过
+      0 flaky；YAML 自检过。
+
   research_track:                            # 非代码轨——论文工作，不阻塞任何 P 项；细节另档
     note: "T1-T5 Tamarin 形式化（P3 落地后建模）；取证测量论文（Signal/Telegram/Briar/本系统 本地残留对比）；trilemma 以猜想形态入论文一。README 不承载研究细节。"
 
