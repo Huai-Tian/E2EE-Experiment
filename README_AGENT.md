@@ -732,7 +732,7 @@ pending_work:
       （812,408 B）/ x86_64 94c1469c…d37f（1,285,288 B）/ x86 ff05f637…92ee
       （1,274,880 B）；SHA256SUMS.txt 重出（5fab87b9…0d4f）随产物目录交付。
   P18_windows_hang:                        # test-windows 悬挂定罪（owner 立项 2026-10-17，tag 阻塞）——双案定罪 rulings.2026_10_17_p18_windows_hang_convicted；修复授权 rulings.2026_10_17_key_follows_roster
-    status: fixed-2026-10-17               # 双案修复落地，本侧全套验证绿——关闭门=CI test-windows 两案绿（owner push 后 Actions 裁决；本沙箱无 GitHub 凭据，发布门控继续）
+    status: fixed-2026-10-18               # 案一/案二 2026-10-17 + 案二残段（P16_镜子1 跨人听感盲点，owner 定罪 2026-10-18）同日落地——关闭门=CI 7/7 全绿（test-windows 的 P16_镜子1 必绿=终局裁决门）；tag v3.0.0 指向最终全绿 commit（owner push 后 Actions 裁决；本沙箱无 GitHub 凭据，发布门控继续）
     depends: []                            # 案一=纯测试层；案二=凑话替换路径补齐（钥匙随名单），无 wire 变更
     landed: >-
       案一（在场辩护=测试层竞态，库无恙）：Carol 的圈经 C-A 一线即凑齐（多径泛洪
@@ -782,6 +782,43 @@ pending_work:
       被外部重置（E0463/no such command——重装 rust-std 四 target + cargo-
       ndk 后恢复）；不影响产物正确性（重建后符号/对齐/契约全验），但沙箱环境
       的非持久性入档备查。
+      案二残段收尾（owner 侧定罪 2026-10-18，本侧落地同日；定罪段全文照录）：
+      Owner 侧 Windows 插桩 + CI 日志交叉定罪完成：CI run #33 唯一红 =
+      P16_镜子1，挂点 tests/conversation.rs:3110（holder=true 分支的
+      expect(carol_ev, heard) 烧穿预算）。根因：Bob 与 Carol 的 Alice 行
+      占位者可独立分岔（多径泛洪 + P-05「转述不取代转述」：真 A 凑话后到
+      Bob 触发 REKEY(replace) 使 holder=true，但 fake 行先转发到 Carol 即
+      占位——Carol 名单=fake 行，钥匙随名单 → A 发言 Carol 必 mumble，
+      事件流再无 heard → 饿死）。本机 debug 过 = 双时序彩票抽中安全面
+      （真行先到 Carol + holder=false 走 else 不 expect Carol）；CI release
+      抽中双反面。库行为完全正确（每人配自己信念的钥、mumble 响亮、点名
+      收敛可达）——纯测试断言盲点：行 3107 只给 Bob 做了 holder 分支，
+      行 3110 替 Carol 假设了与 Bob 相同的信念。
+      残段修复（仅 tests/conversation.rs，src 零改动）：Bob/Carol 各自独立
+      判定占位——A 自报行 pk 为基准，carol.roster_snapshot() 的 Alice 行
+      独立对比；真行 → expect(heard)、fake 行 → expect(mumble)（A 的话
+      只走 A 的绑定线 A-B，C 经 B 中继收到，from=Bob）；注释承载 P-05
+      分岔世界语义（多径泛洪下各方名单可异、听感随各自名单、响亮冲突+
+      点名收敛）。同模式扫荡（盲点类=「对峙世界里对第三方 expect(heard)
+      而不查第三方名单」）逐条判定：P16_镜子2 免疫（v2 发言在 ADD 收敛
+      〔rekeyed(3)×2 + formed(3) 事件面〕之后，v1/v2 从未同时在名单）；
+      P05_同名对峙 免疫（断言者=占位者本人 Bob；伪造行走未绑线=转述，
+      转述不取代 ⇒ 占位确定保留真行，零时序依赖；且无第三方 heard 断言）；
+      P16_乱序容错 免疫（无对峙源——名字唯一；heard 在点名收敛+全锚
+      之后）；署名告别_创作者离场 免疫（临别赠言处于无对峙世界；T1 分叉
+      段本就用 assert_quiet 而非 expect——本盲点类的正面范本）；追加扫荡
+      P15_C_同名重入 免疫（v2 发言在 ADD 收敛后，v1 已删 v2 已入席，无
+      共存窗口）。验证（2026-10-18 本侧）：P16_镜子1 单跑 8 轮全绿（2.85s
+      稳定）；rogue 全量 92 全绿 = 20 单元 + 1 dumpable + 70 集成（含
+      五十人，本轮环境绿）+ 1 pq；无 feature 50 绿 + canary 恰一红；压力
+      10 轮（--skip 五十人）69×10 全过 0 flaky（36.19-36.27s/轮，方差
+      <0.3%，失败输出逐轮留存）；YAML 自检过。ABI：纯 tests/ 变更 → src
+      零字节变动 → 产物不变——以 e9c12f0 的四 ABI 产物为准（sha 清单见
+      上段；沙箱产物文件随环境重置丢失〔环境注记同族〕，产物形态由 CI
+      android.yml 常驻断言在 owner push 后重建复验）。发布序列（终局）：
+      owner push → CI 7/7 全绿（test-windows 的 P16_镜子1 必绿=终局
+      裁决门）→ tag v3.0.0 指向该全绿 commit → release artifacts（四
+      ABI + SHA256SUMS + Linux/Windows 构建物）随 tag 上传。
   P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17；落地复审 2026-10-17 闭环；关闭裁决 2026-10-17）
     status: closed-2026-10-17               # LANDED + 复审三项闭环（rulings.2026_10_17_p15_landing_audit）+ 关闭裁决（rulings.2026_10_17_p15_closure_granted：B/A/C 全接受，P-15 关闭，P3 全板完成；自证红/绿入档为安全修复落地标配；『Noise remote static』勘误；pk 锚定方向性批准 → P16）。71 测试：16 单元 + 54 集成 + 1 pq
     depends: []
