@@ -7,7 +7,7 @@ description = "E2EE-Experiment 的 C ABI 门面：把「人」的动词说给任
 # cdylib：产出 libe2ee.so / e2ee.dll（符号在根 crate 的 ffi 语义上）
 [lib]
 name = "e2ee"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "staticlib"]
 path = "src/lib.rs"
 
 [dependencies]
