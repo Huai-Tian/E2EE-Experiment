@@ -170,6 +170,13 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
    **roll call**. Fresh circle id, everyone re-gathers, everything settles.
    The protocol never pretends to be always-consistent; it promises:
    **disagreement is always heard, repair is always available.**
+7. **Several tables** — one person may sit at several tables at once:
+   `/circle name1 name2 …` invites only those lines and keeps every old
+   table seated; the new table becomes the current seat. Each table has
+   its own key and its own word; one table cannot hear another. Two
+   people sharing a single line may belong to different tables. Only a
+   no-argument roll call puts the old table down; bare verbs (`/gsay`,
+   `/word`, `/bring`) act on the current seat.
 
 ### Two people behind NAT
 
@@ -248,7 +255,8 @@ live there — read them before touching anything.
 - **Group consistency is by roll call.** Disagreement never hides — an
   undecipherable line surfaces loudly as a "mumble"; any member re-runs
   `/circle` to re-gather. When the hub of a star leaves, the rest re-gather
-  by roll call. One circle per process at a time.
+  by roll call. One person may sit at several tables at once — bare verbs
+  act on the current seat (see *Several tables* above).
 - **Cross-version: chat still works, circles don't.** The size-padded chat
   frame is invisible to older builds (silently skipped, no garbage);
   old→new still reads fine; but 3.0.0's circle frame layouts are
