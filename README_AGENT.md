@@ -632,6 +632,36 @@ known_limitations:
   nested_no_prior_art: "serverless nested circles have no known prior art — experimental label stays until hardened"
 
 # ───────────────────────────────────────────────────────────────
+# SECURITY SCAN CLEARANCE — CodeQL 18 项定性归档（owner 直读定罪
+# 2026-10-18，tag v3.0.0 前发布门）。结论：全部误报/测试数据，零真实
+# 漏洞。Security 页逐项 dismiss：A/C 桶 "Used in tests"、B 桶
+# "False positive"。
+# ───────────────────────────────────────────────────────────────
+
+security_scan_clearance:
+  scan: codeql                               # 18 项 Critical；owner 侧直读全部 18 个标位点
+  verdict: zero-real-vulnerabilities         # 全部误报/测试数据
+  bucket_a:                                  # #23/#24 —— src/circle.rs:268/:282
+    sites: "#23 src/circle.rs:268、#24 src/circle.rs:282"
+    finding: "硬编码密钥类告警——命中 p7_tests 的 P-11 填充单测哑钥（[1u8;32] / [2u8;32]）"
+    adjudication: "#[cfg(test)] 编译期剔除——release 产物（lib/bin/ffi .so）不含一比特；哑钥是『同档同长』长度指纹断言的确定性装置，非密码学用途（真钥恒走 getrandom）"
+    dismiss: "Used in tests"
+  bucket_b:                                  # #7/#9/#10/#11 —— vendor/snow
+    sites: "#7 types.rs:82、#9 cipherstate.rs:18、#10 symmetricstate.rs:69、#11 symmetricstate.rs:102（vendor/snow）"
+    finding: "硬编码密钥/nonce 零初始化类告警——命中 Noise 规范强制字面量"
+    adjudication: "types.rs:82 为 Noise 规范 §4.2 默认 Rekey 算法（现钥加密零缓冲导出新钥——[0;32] 是明文缓冲非密钥）；cipherstate.rs:18 与 symmetricstate.rs:69/:102 为规范规定的 nonce 从 0 起 / 换钥清零。上游 vendored 冻结代码，禁改"
+    dismiss: "False positive"
+  bucket_c:                                  # 其余 12 项 —— vendor/snow default.rs + general.rs
+    sites: "default.rs / general.rs（vendor/snow）——12 项"
+    finding: "硬编码密钥类告警——命中官方测试向量"
+    adjudication: "GCM spec Test Case 13/14 全零钥、RFC 7539 KAT（已知答案测试的定义就是公开固定钥+期望密文）、无状态传输 nonce 语义测试的 0/1337/u64::MAX-2；default.rs 各测试另有 feature 门控、默认编译不进"
+    dismiss: "Used in tests"
+  disposition_map: "18 项全部 dismiss：A 桶 2 项 + C 桶 12 项 = 'Used in tests'；B 桶 4 项 = 'False positive'（owner 在 Security 页逐项执行）"
+  defense_lines:
+    - "vendor/ 为冻结上游快照：未来 re-vendor 触发新告警 → 先定性再处置，禁改 vendor 代码消音（上游 delta 只走 patch.crates-io 路径，见根 Cargo.toml 头注释——snow fork 的 zeroize 补丁即此形态）"
+    - "src/ 库本体 18 项零命中（全落 cfg(test) 与 vendor/）——库本体的密钥材料全走 getrandom，无字面量密钥；与 memory_hygiene.self-owned-secrets 纪律互证"
+
+# ───────────────────────────────────────────────────────────────
 # PENDING WORK — settled board, ordered; P5 parallelizable anytime
 # ───────────────────────────────────────────────────────────────
 
