@@ -762,7 +762,7 @@ pending_work:
       （812,408 B）/ x86_64 94c1469c…d37f（1,285,288 B）/ x86 ff05f637…92ee
       （1,274,880 B）；SHA256SUMS.txt 重出（5fab87b9…0d4f）随产物目录交付。
   P18_windows_hang:                        # test-windows 悬挂定罪（owner 立项 2026-10-17，tag 阻塞）——双案定罪 rulings.2026_10_17_p18_windows_hang_convicted；修复授权 rulings.2026_10_17_key_follows_roster
-    status: fixed-2026-10-18               # 案一/案二 2026-10-17 + 案二残段（P16_镜子1 跨人听感盲点，owner 定罪 2026-10-18）同日落地——关闭门=CI 7/7 全绿（test-windows 的 P16_镜子1 必绿=终局裁决门）；tag v3.0.0 指向最终全绿 commit（owner push 后 Actions 裁决；本沙箱无 GitHub 凭据，发布门控继续）
+    status: fixed-2026-10-18               # 案一/案二 2026-10-17 + 案二残段（跨人听感盲点）+ 案三（分支快照竞态 + 中继归属假设，owner 定罪 2026-10-18，2951bda CI 红迹）——P16_镜子1 三代修复终局=无序结果收集。关闭门=CI 7/7 全绿（test-windows 的 P16_镜子1 必绿=终局裁决门）；tag v3.0.0 指向最终全绿 commit（owner push 后 Actions 裁决；本沙箱无 GitHub 凭据，发布门控继续）
     depends: []                            # 案一=纯测试层；案二=凑话替换路径补齐（钥匙随名单），无 wire 变更
     landed: >-
       案一（在场辩护=测试层竞态，库无恙）：Carol 的圈经 C-A 一线即凑齐（多径泛洪
@@ -849,6 +849,40 @@ pending_work:
       owner push → CI 7/7 全绿（test-windows 的 P16_镜子1 必绿=终局
       裁决门）→ tag v3.0.0 指向该全绿 commit → release artifacts（四
       ABI + SHA256SUMS + Linux/Windows 构建物）随 tag 上传。
+      案三（P16_镜子1 分支快照竞态 + 中继归属假设，owner 定罪 2026-10-18，
+      2951bda CI 红迹 + 本机 trace 推演，无需再插桩）：7253b8f 的每人
+      独立分支修复**语义正确但时序有竞态**——快照名单发生在创世声明仍在
+      飞行时，快照说 X 行 → 分支 expect X 的结果 → 声明随后落地 REKEY
+      翻转 → 实际到达的是另一结果 → expect 饿死烧穿预算。7253b8f 的
+      CI 绿是幸运 interleaving，2951bda 抽中反面（P19 改动语义惰性，
+      非回归）。附带定罪：Carol 分支的 assert from=="Bob" 建立在
+      「A 密封帧只走 A-B 线」的**错误假设**上——owner 本机 trace 明示
+      FLOOD kind=0x0a → convo=2 peer=Carol（A 的 0x0A 扇出走她全部圈
+      线绑定，含直达 A-C）；mumble 归属=收帧线对端，Alice/Bob 皆可能、
+      由到达序定。库行为正确（翻转后到=合法 P-05 世界，点名可修复）。
+      修复（仅 tests/conversation.rs，src 零改动）：新增 collect_
+      speech_outcome 助手——**无序结果收集**：双谓词收结果（Heard〔说话
+      人+文本匹配，本窗口只有 A 发言〕或 Mumble〔不设 from 过滤〕）谁到
+      收谁；途中与结果后的积压里记录 CircleConflict（晚到翻转的合法
+      证据；积压排干的锁序论证：行翻转与 Conflict 入队同 Inner 锁段
+      〔handle_contribution 先决后放〕——终态快照见新行 ⇒ Conflict
+      已入队 ⇒ try_recv 排干必见，无需时间窗）。收完后快照**终态**
+      名单做一致性归档断言（带容差）：heard ⇒ 行 pk==a_pk 或已见
+      Conflict（晚到翻转）；mumble ⇒ 行 pk≠a_pk 或已见 Conflict
+      （mumble 证明解密时刻钥不合，翻转在其后抵达=合法世界）——无
+      Conflict 佐证的矛盾才是 bug。注释承载三重禁令：禁止替运行时
+      假设沉淀时刻、到达顺序、中继路径。a_pk 基准保留（A 自报行恒
+      真，无竞态）。同类扫尾（rg 全测试面「先 roster_snapshot 定
+      分支、再触发事件、按分支 expect」）：12 个调用点逐一判定——
+      P12（材料提取，后续 rejected 确定性）/ 迟到告别（RM 收敛后终态
+      验断）/ P15_spec_b（rekeyed 收敛后验态 + before/after 不变量
+      对照）/ fake 事件面（密封帧到达时事件驱动断言，非分支）全部
+      免疫；全局 rg「let holder/is_*」状态分支模式零残留——唯一
+      同类 = 本测试（已修）。验证（2026-10-18 本侧，release）：
+      P16_镜子1 单跑 **20 轮连续全绿**（2.85-2.86s，方差 <0.4%）；
+      rogue 全量 92 全绿；无 feature 50 绿 + canary 恰一红；压力
+      10 轮（--skip 五十人）0 flaky；YAML 自检过。src 零改动 →
+      四 ABI 产物与 sha（e9c12f0 批）继续有效。
   P15_line_binding_routing:                  # P-15 方向 A（owner 裁决 2026-10-17；落地复审 2026-10-17 闭环；关闭裁决 2026-10-17）
     status: closed-2026-10-17               # LANDED + 复审三项闭环（rulings.2026_10_17_p15_landing_audit）+ 关闭裁决（rulings.2026_10_17_p15_closure_granted：B/A/C 全接受，P-15 关闭，P3 全板完成；自证红/绿入档为安全修复落地标配；『Noise remote static』勘误；pk 锚定方向性批准 → P16）。71 测试：16 单元 + 54 集成 + 1 pq
     depends: []

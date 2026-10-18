@@ -3099,52 +3099,58 @@ async fn P16_镜子1_谎报名线_成键后熄灭() {
             }
         }
     }
-    // 占位感知断言（P18 案二残段修复，owner 定罪 2026-10-18）：
-    // P-05 分岔世界语义——多径泛洪下各方的名单可独立分岔，听感随
-    // 各自名单（钥匙随名单）、响亮冲突、点名收敛（A4）。B 与 C 的
-    // 「Alice」行占位者**无因果关系**：真 A 的直连声明只作用于
-    // A-B 线上的 B（快照 Name 绑定）；C 的占位由 B 的转发序（= 两行
-    // 到达 B 的序）独立决定——「真行后到 B 触发取代（holder=true）
-    // 而 fake 行先转发到 C 即占位」的时序完全合法。此前此处替 C
-    // 假设了与 B 相同的信念（CI run #33 红的根因即此盲点）——
-    // 现改为每人独立判定。
+    // 听感断言（P18 案三终局修复，owner 定罪 2026-10-18）：P-05
+    // 分岔世界 + **快照竞态**——此前（7253b8f 的每人独立分支版）
+    // 语义正确但时序有洞：快照名单发生在创世声明仍在飞行时，快照
+    // 说 X 行 → 分支 expect X 的结果 → 声明随后落地 REKEY 翻转 →
+    // 实际到达另一结果 → expect 饿死烧穿预算（2951bda CI 红）。
+    // 对峙结算**没有可等待的事件面**（多径泛洪无同步点）——正解是
+    // 无序结果收集（collect_speech_outcome）：heard / mumble（不设
+    // from——A 的 0x0A 扇出走她**全部**圈线绑定，B/C 的 mumble 归属
+    // = 收帧线对端，直达线〔owner trace：convo=2 peer=Carol〕与
+    // 中继线皆可能、由到达序定）谁到收谁，**禁止替运行时假设沉淀
+    // 时刻、到达顺序、中继路径**。
     let a_pk = {
         let a_rows = alice.roster_snapshot().await.expect("A 快照");
         a_rows.iter().find(|r| r.name == "Alice").unwrap().sig_pk
     };
-    let holder_is_real_a = {
-        let rows = bob.roster_snapshot().await.expect("B 快照");
-        let holder = rows.iter().find(|r| r.name == "Alice").unwrap();
-        holder.sig_pk == a_pk
-    };
-    let carol_holder_is_real_a = {
-        let rows = carol.roster_snapshot().await.expect("C 快照");
-        let holder = rows.iter().find(|r| r.name == "Alice").unwrap();
-        holder.sig_pk == a_pk
-    };
     alice.circle_speak("mi feng de hua").await.expect("A 说");
-    if holder_is_real_a {
-        let got = expect(&mut bob_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
-        assert_eq!(got.1, "mi feng de hua", "真 A 占位（B）：圈内照常");
-    } else {
-        let m = expect(&mut bob_ev, mumble).await;
-        assert_eq!(m, "Alice", "fake 占位（B）：A 的话 B 解不开（T1 响亮，点名裁决）");
+    // B / C 各自无序收集 + 终态一致性归档：结果证明的是**解密时刻**
+    // 的钥（heard ⇒ 当时行=真 A；mumble ⇒ 当时钥不含真 A 的 r），
+    // 终态快照可能已被晚到的声明翻转——矛盾必伴随响亮 Conflict
+    // （P-05：直连取代 / 对峙都响亮），**无 Conflict 佐证的矛盾
+    // 才是 bug**；翻转后到 = 合法 P-05 世界，点名可修（A4）。
+    let (b_outcome, b_conflict) =
+        collect_speech_outcome(&mut bob_ev, "Alice", "mi feng de hua").await;
+    let b_holder_is_real = {
+        let rows = bob.roster_snapshot().await.expect("B 终态快照");
+        rows.iter().find(|r| r.name == "Alice").unwrap().sig_pk == a_pk
+    };
+    match b_outcome {
+        "heard" => assert!(
+            b_holder_is_real || b_conflict,
+            "B：heard ⇒ 解密时刻行=真 A；终态翻转 ⇒ 必见 Conflict（P-05 晚到取代响亮）"
+        ),
+        _ => assert!(
+            !b_holder_is_real || b_conflict,
+            "B：mumble ⇒ 解密时刻钥不含真 A 的 r；终态=真 A ⇒ 翻转后到 ⇒ 必见 Conflict"
+        ),
     }
-    // C 独立判定：C 名单里的占位行是谁，C 的听感就是谁的世界——
-    // 真行 ⇒ C 的钥含真 A 的 r，子钥可解（heard）；fake 行 ⇒ 钥匙随
-    // 名单配 fake 的 r，A 的话必解不开（mumble，T1 响亮——A 的话
-    // 只走 A 的绑定线 A-B，C 经 B 中继收到，from=转发线对端 Bob；
-    // 点名收敛，A4）
-    if carol_holder_is_real_a {
-        let got = expect(&mut carol_ev, |e| heard(e).filter(|(n, _)| n == "Alice")).await;
-        assert_eq!(got.1, "mi feng de hua", "真 A 占位（C）：C 的信念配真行，照常听见");
-    } else {
-        let m = expect(&mut carol_ev, mumble).await;
-        assert_eq!(
-            m, "Bob",
-            "fake 占位（C）：C 的信念配 fake 行——A 的话 C 解不开\
-             （T1 响亮，点名收敛）"
-        );
+    let (c_outcome, c_conflict) =
+        collect_speech_outcome(&mut carol_ev, "Alice", "mi feng de hua").await;
+    let c_holder_is_real = {
+        let rows = carol.roster_snapshot().await.expect("C 终态快照");
+        rows.iter().find(|r| r.name == "Alice").unwrap().sig_pk == a_pk
+    };
+    match c_outcome {
+        "heard" => assert!(
+            c_holder_is_real || c_conflict,
+            "C：heard ⇒ 解密时刻行=真 A；终态翻转 ⇒ 必见 Conflict（P-05 晚到取代响亮）"
+        ),
+        _ => assert!(
+            !c_holder_is_real || c_conflict,
+            "C：mumble ⇒ 解密时刻钥不含真 A 的 r；终态=真 A ⇒ 翻转后到 ⇒ 必见 Conflict"
+        ),
     }
     // fake 的事件面（胜负无关断言）：围栏窗口的合法事件放行（她的
     // 自动 join/formed——「集齐即得首代 K」已接受价格；P-05 对峙
@@ -3448,6 +3454,62 @@ async fn wait_anchored_specific(p: &Person, their: &str, prefix: &str) -> bool {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     false
+}
+
+/// 听感结果的**无序收集**（P18 案三修复，owner 定罪 2026-10-18）：
+/// 在对峙世界（P-05 分岔）里，快照名单与听感结果之间**没有因果保序**
+/// ——直连声明可在任意时刻落地翻转名单（REKEY/replace），先快照定
+/// 分支、再按分支 expect 结果 = 替运行时假设声明沉淀时刻，竞态必炸
+/// （2951bda CI 红的根因）。正解：双谓词收结果——Heard（说话人+文本
+/// 匹配，本窗口只有这一句发言）或 Mumble（**不设 from 过滤**——
+/// 0x0A 扇出走发送方的**全部**圈线绑定，接收方的 mumble 归属=收帧
+/// 线对端，直达线/中继线皆可能、由到达序定：owner 本机 trace 实证
+/// `FLOOD kind=0x0a → convo=2 peer=Carol`，A-C 直达线同样承载）——
+/// 谁到收谁；途中与结果后的积压里记录 CircleConflict（晚到翻转的
+/// 合法证据）。返回 (结果, 是否见 Conflict)。
+///
+/// 积压排干的锁序论证：行翻转与 Conflict 事件入队同在 Inner 锁段
+/// （handle_contribution 先决后放）——终态快照看到新行 ⇒ Conflict
+/// 已入队 ⇒ try_recv 排干必见，无需时间窗。
+#[cfg(feature = "rogue")]
+async fn collect_speech_outcome(
+    events: &mut UnboundedReceiver<Event>,
+    speaker: &str,
+    text: &str,
+) -> (&'static str, bool) {
+    let budget_ms = std::env::var("E2EE_TEST_EVENT_BUDGET_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15_000);
+    let deadline = Instant::now() + Duration::from_millis(budget_ms);
+    let mut saw_conflict = false;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let ev = timeout(left, events.recv())
+            .await
+            .expect("事件流不应关闭")
+            .expect("事件流不应枯竭");
+        match ev {
+            Event::Heard { name, text: t, .. } if name == speaker && t == text => {
+                while let Ok(ev) = events.try_recv() {
+                    if matches!(ev, Event::CircleConflict { .. }) {
+                        saw_conflict = true;
+                    }
+                }
+                return ("heard", saw_conflict);
+            }
+            Event::CircleMumble { .. } => {
+                while let Ok(ev) = events.try_recv() {
+                    if matches!(ev, Event::CircleConflict { .. }) {
+                        saw_conflict = true;
+                    }
+                }
+                return ("mumble", saw_conflict);
+            }
+            Event::CircleConflict { .. } => saw_conflict = true,
+            _ => {}
+        }
+    }
 }
 
 #[cfg(feature = "rogue")]
