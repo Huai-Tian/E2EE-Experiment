@@ -414,13 +414,16 @@ fn watch_lid_evdev(fire: tokio::sync::mpsc::UnboundedSender<()>) {
 
     const EV_SW: u16 = 0x05; // 开关类事件
     const SW_LID: u16 = 0x00; // 盖子开关（合上=1，掀开=0）
-    /// EVIOCGBIT(ev, len) = _IOR('E', 0x20 + ev, len)：查设备支持的事件位图
-    const fn eviocgbit(ev: u16, len: usize) -> libc::c_ulong {
+    /// EVIOCGBIT(ev, len) = _IOR('E', 0x20 + ev, len)：查设备支持的事件位图。
+    /// 返回 libc::Ioctl 而非写死宽度——glibc 面是 c_ulong（u64），musl/
+    /// bionic 面是 c_int（i32；bit31 落在符号位，截断转换正是 C 宏在
+    /// 32 位 request 域里的原生形态）。
+    const fn eviocgbit(ev: u16, len: usize) -> libc::Ioctl {
         // _IOC(dir,type,nr,size) = dir<<30 | size<<16 | type<<8 | nr；_IOC_READ=2
         ((2u64 << 30)
             | ((len as u64) << 16)
             | ((b'E' as u64) << 8)
-            | (0x20 + ev as u64)) as libc::c_ulong
+            | (0x20 + ev as u64)) as libc::Ioctl
     }
 
     // 1. 扫描 /dev/input/event*，探测哪个口上有盖子开关
