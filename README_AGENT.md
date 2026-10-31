@@ -519,6 +519,8 @@ settled_decisions:
     vigil_manual_in_readme: "2026-10-31：警惕者手册必须写、写进 README 双语正文——触发条件、触发后行为、设备信任诚实线（『本程序不防御设备本身——你选了它，就是信了它』）、四档蒸发速度表、电源键 4 秒最后手段、推荐配置（OS 合盖动作设『不做事』让程序独占盖子）"
     coercion_clause_amendment_2026_10_31: "2026-10-31 修正案（细化 coercion_defense_inherent，非推翻）：其 NEVER 子句的禁止范围=『装作配合』类——假状态、隐身数据、机器推断的 duress 戏法；诚实退出家族（干净 Ctrl-C、惊弓之鸟的合盖即忘）不在禁止面——它们不假装任何事，只是真的忘。防误读要点：判『新提案是否违反胁迫防御条款』看它是否在演戏，不看它是否与『关程序』有关"
     timer_family_verdict_2026_10_31: "2026-10-31：自建计时器裁决——①工程有限等待照常合法（既有）；②协议级计时器维持唯一（在场辩护 30s 挂钟窗，准入需推导先例）；③声明式死线（TTL）挂 4.1 待裁；④时间推断意义永久否决；⑤守门犬永久否决——全文 theory.rulings.2026_10_31_timer_doctrine"
+    skittish_cli_only: "2026-10-31：警惕模式仅属于两个平台的可执行程序（CLI）——库文件仅是标准通信。触发观察/清屏/横幅全是 CLI 面（与 harden_process 同族的进程策略——『库不碰进程策略』是既有法律）；库对警惕的贡献已经完备（Person::drop=遗忘，零持久化核心，无需任何新码）；第三方宿主（GUI/Android/嵌入式）要警惕行为=自接宿主手势（onPause/关窗等）到『丢弃 Person』——手势词汇表按宿主环境各配（手机没有盖子）。P21 因此是纯 CLI 特性：零新库 API、零 FFI 符号、零新库事件"
+    lock_in_library: "2026-10-31：密钥集锁定页（P20-L 的 lock.rs/SecretBytes）住在库里是正确的——对秘密的基本保证，属内存卫生（T1 换出封堵），不属警惕模式内容；工程必然性：钥匙存放在库的内部状态，CLI 够不着库的私有字段，锁定必须住在秘密身边；附带收益：FFI 用户（.so/.dll）武装的门禁钥匙同样被锁住"
   rejected:                                  # do NOT re-propose — 永久性
     in_memory_encryption: "encrypting memory with a key that must itself live in memory is circular; a costume, not a lock"
     mls_adoption: "MLS/TreeKEM — credential framework collides with no-identity-layer; dependency weight breaks single-binary"
@@ -950,8 +952,8 @@ pending_work:
       50 绿 + canary 恰一红；压力 10 轮（--skip 五十人）69×10 全过
       0 flaky；YAML 自检过。
 
-  P20_ram_file_exit_4_0_0:                    # 4.0.0 主工程：内存卫生 + 文件流式 + 退出统一 + 暗号手术（owner 全部裁决闭合 2026-10-31，frozen 未开工）
-    status: planned-frozen-2026-10-31         # 裁决出处：theory.rulings 2026_10_31_* 五条 + settled_decisions 2026-10-31 增补（kept 七条 / rejected 七条）；零代码落地，实现时逐 slice 更新本块
+  P20_ram_file_exit_4_0_0:                    # 4.0.0 主工程：内存卫生 + 文件流式 + 退出统一 + 暗号手术（owner 全部裁决闭合 2026-10-31）
+    status: in-progress-2026-10-31            # W/D LANDED（9e3e965）+ L LANDED（同日，见下）——F/E/B 未动。裁决出处：theory.rulings 2026_10_31_* 五条 + settled_decisions 2026-10-31 增补（kept/rejected）
     depends: []
     version: "4.0.0（破坏性变更面：Rust Event——FileArrived→FileChunk/FileComplete/FileAborted、SecretChained 移除；C ABI——add-only 新增至 16 符号、旧 12 符号签名零变更、FileArrived/SECRET_CHAINED 事件 tag 保留定义永不触发；wire——0x01/0x02 停止发射（对端 unknown_kinds 静默跳过=前向兼容既有机制，跨版本混跑安全））"
     implementation_constraints: "沙箱=Linux（可测全 Unix 面）；Windows 面（W）写完由 owner 统一测试（owner 2026-10-31 指令）。测试纪律：92 基线不回退；每个安全修复带红绿自证（修复前红实证/修复后绿——2026_10_17_p15_closure_granted 起的落地标配）；YAML 自检过"
@@ -963,9 +965,9 @@ pending_work:
       E_exit_chain_surgery: "退出统一+暗号手术：①信号面——tokio ctrl_c + SIGTERM + stdin EOF 全部改走『立即擦净退出』（break 循环→Drop 链→process::exit；不发告别帧不等网络）；二次连按强退（第一次后短时间内第二次=直接 exit）；Windows 控制台事件接同路径（随 W）。②命令面——/quit 删除、Ctrl-D ≡ Ctrl-C（EOF 同义）、/bye 两步化（删 offer_next_secret 调用）。③链拆除——chained 字段/offer_next_secret/ack 处理器（0x02 收端）/--no-chain 旗子/SECRET_CHAINED 事件停发+头文件 deprecated 注记/相关测试与 ffi_test.c 清理。④--guard 改交互隐藏输入（启动后 rpassword 式询问，无回显；门禁语义不变）。库面 bye()/leave() 保留（ABI 冻结+嵌入式），只动 CLI；ffi e2ee_await_secret 保留（当场切口合法）"
       B_bookkeeping: "收尾簿记（涵盖 P21）：README.md/README_ZH.md 重写（命令表：/quit 死、Ctrl-C 新语义、/bye 两步；Secrets&SAS 节：链移除、--guard 耳语式、当场验证原则；警惕者手册进双语正文）；本档案各 4.0.0（frozen）注记翻 LANDED 并补落地记录；CHANGELOG 4.0.0 置顶破坏性声明；Cargo 3.0.0→4.0.0；coercion 修正案与全部 2026-10-31 裁决已随本笔入档（此句在落地时核对）"
   P21_skittish_mode:                          # 惊弓之鸟（--skittish）——spec 全文=theory.rulings.2026_10_31_skittish_spec（本块只承工程面）
-    status: planned-frozen-2026-10-31         # opt-in 旗标；触发=合盖+锁屏；触发即失守威胁模型；动作=擦→清屏→统一退出；不关机不关窗；启动横幅知情
-    depends: [P20_ram_file_exit_4_0_0.E]      # 复用统一干净退出路径与清屏动作
-    engineering_notes: "触发接入点（实现期定夺，剃刀不变：只收确定性物理事件）：Linux——盖子（evdev SW_LID / udev input 事件面，或 logind 抑制锁+盖子状态面）+ 锁屏（会话 D-Bus 屏保 ActiveChanged 信号面）；Windows——WM_POWERBROADCAST 会话通知与 WTS_SESSION_LOCK。竞态文档义务：OS 默认合盖=睡眠时，擦拭须在冻结前落地（inhibitor/事件窗口毫秒级）；推荐配置（手册）=OS 合盖动作设『不做事』让程序独占盖子。清屏=ANSI 全清+滚回缓冲清除（CSI 2J + CSI 3J + 光标归位序列族）——警惕模式专用（普通模式退出不清屏：回看最后几行是正当需求）；不自动关窗（rejected.auto_close_terminal）。实现若需新增依赖（evdev/dbus 面）或触碰 C 头：停下报裁决"
+    status: planned-frozen-2026-10-31         # opt-in 旗标；触发=合盖+锁屏；触发即失守威胁模型；动作=擦→清屏→统一退出；不关机不关窗；启动横幅知情。2026-10-31 补裁（kept.skittish_cli_only）：仅 CLI——零新库 API、零 FFI 符号、零新库事件
+    depends: [P20_ram_file_exit_4_0_0.E]      # 复用统一干净退出路径与清屏动作（同为 CLI 面）
+    engineering_notes: "范围（owner 2026-10-31）：仅两个平台的可执行程序；库=标准通信——触发观察=进程级策略住 main.rs（harden_process 同族）；清屏=终端 I/O 住 CLI；擦除=Person::drop 既有语义（库零改动）。触发接入点（实现期定夺，剃刀不变：只收确定性物理事件）：Linux——盖子（evdev SW_LID / udev input 事件面，或 logind 抑制锁+盖子状态面）+ 锁屏（会话 D-Bus 屏保 ActiveChanged 信号面）；Windows——WM_POWERBROADCAST 会话通知与 WTS_SESSION_LOCK。竞态文档义务：OS 默认合盖=睡眠时，擦拭须在冻结前落地（inhibitor/事件窗口毫秒级）；推荐配置（手册）=OS 合盖动作设『不做事』让程序独占盖子。清屏=ANSI 全清+滚回缓冲清除（CSI 2J + CSI 3J + 光标归位序列族）——警惕模式专用（普通模式退出不清屏：回看最后几行是正当需求）；不自动关窗（rejected.auto_close_terminal）。CLI 内实现若需新增依赖（evdev/dbus crate 面）或触碰 C 头：停下报裁决——手写 FFI 或 sysfs 读取为备选"
 
   post_3_0_0_backlog:                       # tag 后线索板（3.0.0 发布收笔归档 2026-10-18——全部「tag 后」状态，各自独立 slice 过堂，不丢线索）
     cargo_audit_in_ci: "cargo audit 进 CI——tag 时点人工核查快照见 verify.release_v3_0_0（dalek 双件不在已知 advisory 影响面）；自动化排期 owner 裁决"
