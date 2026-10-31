@@ -362,6 +362,30 @@ fn left(ev: &Event) -> Option<String> {
     }
 }
 
+/// 流式收文件（P20-F）：收 FileChunk 拼回字节，直到 FileComplete。
+/// 中途 FileAborted = panic（detail 说人话）；预算 15s。
+async fn collect_file(events: &mut UnboundedReceiver<Event>) -> Vec<u8> {
+    let mut assembled: Vec<u8> = Vec::new();
+    let mut total: Option<u64> = None;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while total.is_none() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let ev = timeout(left, events.recv())
+            .await
+            .expect("事件流活着")
+            .expect("事件流不枯竭");
+        match ev {
+            Event::FileChunk { data, .. } => assembled.extend_from_slice(&data),
+            Event::FileComplete { total: t, .. } => total = Some(t),
+            Event::FileAborted { detail, .. } => panic!("流式收文件作废：{detail}"),
+            _ => {}
+        }
+    }
+    let total = total.unwrap();
+    assert_eq!(assembled.len() as u64, total, "收齐字节应等于申报总长");
+    assembled
+}
+
 #[tokio::test]
 async fn 介绍人_打洞直连密谈() {
     let teahouse = spawn_teahouse().await;
@@ -757,15 +781,8 @@ async fn 文件_无损往返_二进制字节一毫不差() {
     data.extend_from_slice(&[0xC0, 0xAF, 0xED, 0xA0, 0x80, 0xF5, 0x80, 0x80, 0xE2, 0x82]);
     bob.send_file("bi-ji.dat", &data).await.expect("发文件");
 
-    let (name, got) = expect(&mut alice_ev, |ev| {
-        if let Event::FileArrived { name, data, .. } = ev {
-            Some((name.clone(), data.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!(name, "bi-ji.dat");
+    // P20-F 流式：逐块经 FileChunk 交出，FileComplete 收尾
+    let got = collect_file(&mut alice_ev).await;
     assert_eq!(got.len(), data.len(), "长度必须一致");
     assert_eq!(&got[..], &data[..], "字节必须一毫不差（无损，非法 UTF-8 原样到达）");
 
@@ -798,6 +815,47 @@ async fn 文件_超上限当场拒绝() {
 }
 
 #[tokio::test]
+async fn 文件_序号不合_响亮作废() {
+    // P20-F loud-failure 对账：3.0.0 时代序号不合=静默作废（整份丢、没声音）；
+    // 4.0.0 = FileAborted 响亮（静默=罪）。rogue_frame 模拟坏实现/恶意对端
+    // 直接喂乱序块。红绿自证：恢复旧行为（remove 无事件）本测试变红。
+    let (_alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    let convo = expect(&mut bob_ev, |ev| {
+        if let Event::Met { id, .. } = ev {
+            Some(*id)
+        } else {
+            None
+        }
+    })
+    .await;
+    expect(&mut alice_ev, met).await;
+
+    // 合法门：名字 huai.dat、总长 10 字节
+    let mut head = vec![8u8];
+    head.extend_from_slice(b"huai.dat");
+    head.extend_from_slice(&10u64.to_be_bytes());
+    bob.rogue_frame(convo, rogue::FILE_HEAD, &head).await.expect("家门");
+
+    // 第一块序号就跳到 5：立户在、序号不合 → FileAborted 响亮
+    let mut bad = Vec::new();
+    bad.extend_from_slice(&5u32.to_be_bytes());
+    bad.extend_from_slice(b"12345");
+    bob.rogue_frame(convo, rogue::FILE_CHUNK, &bad).await.expect("乱序块");
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("序号不合"), "detail 应说明序号不合：{detail}");
+    assert!(detail.contains("huai.dat"), "detail 应点名文件：{detail}");
+}
+
+#[tokio::test]
 async fn 文件_打洞线上也照传() {
     let teahouse = spawn_teahouse().await;
     tokio::time::sleep(Duration::from_millis(400)).await;
@@ -817,14 +875,7 @@ async fn 文件_打洞线上也照传() {
     // 40KB = 两块：验证 32KB 的块装得进 UDP 数据报（这是块大小的设计依据）
     let data: Vec<u8> = (0..40_000u32).map(|i| (i.wrapping_mul(31) % 256) as u8).collect();
     bob.send_file("tu-pian.bin", &data).await.expect("打洞线上发文件");
-    let got = expect(&mut alice_ev, |ev| {
-        if let Event::FileArrived { data, .. } = ev {
-            Some(data.clone())
-        } else {
-            None
-        }
-    })
-        .await;
+    let got = collect_file(&mut alice_ev).await;
     assert_eq!(&got[..], &data[..], "打洞线上字节同样一毫不差");
 }
 

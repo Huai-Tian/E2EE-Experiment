@@ -763,15 +763,45 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "file".into());
-            match tokio::fs::read(path).await {
-                Ok(data) => {
-                    let size = data.len();
-                    match person.send_file(&name, &data).await {
-                        Ok(()) => eprintln!("文件〔{}〕递出去了（{size} 字节）。", safe(&name)),
-                        Err(e) => eprintln!("{e}"),
+            // P20-F 流式：边读边发（file_begin / file_chunk / file_end）——
+            // 内存里同时只有一块，不再整读 32MB。块边界随机化在库内
+            //（file_chunk 再切片），CLI 只管 16KB 地喂。
+            {
+                use tokio::io::AsyncReadExt;
+                let outcome = async {
+                    let mut f = tokio::fs::File::open(path)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let total = f
+                        .metadata()
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .len();
+                    person
+                        .file_begin(&name, total)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    let mut buf = vec![0u8; 16 * 1024];
+                    loop {
+                        let n = f.read(&mut buf).await.map_err(|e| e.to_string())?;
+                        if n == 0 {
+                            break;
+                        }
+                        person
+                            .file_chunk(&buf[..n])
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                    person.file_end().await.map_err(|e| e.to_string())
+                }
+                .await;
+                match outcome {
+                    Ok(()) => eprintln!("文件〔{}〕递出去了。", safe(&name)),
+                    Err(msg) => {
+                        let _ = person.file_abort().await;
+                        eprintln!("{msg}");
                     }
                 }
-                Err(e) => eprintln!("读不了 {path}：{e}"),
             }
         }
         "bye" => match person.bye().await {
@@ -788,6 +818,41 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
         }
     }
     Ok(false)
+}
+
+/// 收端在途文件的落盘账本（P20-F 流式）：对话编号 →（句柄, 目标路径）。
+/// CLI 是外层使用者——字节到哪由它决定（库只交块）；逐块落盘，
+/// 内存里不同时存在整份文件。
+static INBOUND_FILES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<u64, (std::fs::File, std::path::PathBuf)>>,
+> = std::sync::OnceLock::new();
+
+/// 账本的单例取用（HashMap::new 非 const，OnceLock 惰性立）
+fn inbound_files() -> &'static std::sync::Mutex<
+    std::collections::HashMap<u64, (std::fs::File, std::path::PathBuf)>,
+> {
+    INBOUND_FILES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 在 ./received/ 开一个新文件（名字过安检：控制字符中和、路径分隔剥掉、
+/// 只剩点儿的当没名字、重名加序）。开不出来 = 大声死：收文件这条命就靠盘。
+fn open_received_file(name: &str) -> (std::fs::File, std::path::PathBuf) {
+    let cleaned = safe(name).replace(['/', '\\'], "·");
+    let cleaned = if cleaned.trim_matches(['.', ' ']).is_empty() {
+        "file".to_string()
+    } else {
+        cleaned
+    };
+    let _ = std::fs::create_dir_all("received");
+    let mut dest = std::path::Path::new("received").join(&cleaned);
+    let mut n = 1;
+    while dest.exists() {
+        n += 1;
+        dest = std::path::Path::new("received").join(format!("{n}-{cleaned}"));
+    }
+    let f = std::fs::File::create(&dest)
+        .unwrap_or_else(|e| panic!("在 {} 落不了盘：{e}——收不了文件", dest.display()));
+    (f, dest)
 }
 
 /// 把一句话说成终端里的人话。
@@ -862,33 +927,38 @@ fn render(ev: Event) {
                 table.iter().map(|n| safe(n).into_owned()).collect::<Vec<_>>().join("、")
             );
         }
-        Event::FileArrived { name, data, .. } => {
+        Event::FileChunk { id, name, data, .. } => {
+            // P20-F 流式：序号校验已在库内（对不上=FileAborted），CLI 顺序落盘。
             // 库永不落盘；CLI 是外层使用者，替人把东西放进 ./received/。
-            // 名字过安检：控制字符中和、路径分隔剥掉、只剩点儿的当没名字、重名加序。
-            let cleaned = safe(&name).replace(['/', '\\'], "·");
-            let cleaned = if cleaned.trim_matches(['.', ' ']).is_empty() {
-                "file".to_string()
-            } else {
-                cleaned
-            };
-            let _ = std::fs::create_dir_all("received");
-            let mut dest = std::path::Path::new("received").join(&cleaned);
-            let mut n = 1;
-            while dest.exists() {
-                n += 1;
-                dest = std::path::Path::new("received").join(format!("{n}-{cleaned}"));
+            use std::io::Write;
+            let mut map = inbound_files().lock().expect("在途文件账本没被毒化");
+            let entry = map
+                .entry(id)
+                .or_insert_with(|| open_received_file(&name));
+            if let Err(e) = entry.0.write_all(&data) {
+                eprintln!("写盘失败：{e}——文件〔{}〕收不全了。", safe(&name));
+                map.remove(&id);
             }
-            match std::fs::write(&dest, &data) {
-                Ok(()) => eprintln!(
-                    "收到文件〔{}〕（{} 字节），放在 {}。",
-                    cleaned,
-                    data.len(),
-                    dest.display()
-                ),
-                Err(e) => eprintln!(
-                    "收到文件〔{cleaned}〕但写不进磁盘：{e}（{} 字节随进程离去）",
-                    data.len()
-                ),
+        }
+        Event::FileComplete { id, name, total } => {
+            // 收齐：句柄随条目移除而关闭（空文件在此创建）
+            let mut map = inbound_files().lock().expect("在途文件账本没被毒化");
+            let dest = map
+                .entry(id)
+                .or_insert_with(|| open_received_file(&name))
+                .1
+                .clone();
+            map.remove(&id);
+            eprintln!("收到文件〔{}〕（{total} 字节），放在 {}。", safe(&name), dest.display());
+        }
+        Event::FileAborted { id, detail } => {
+            // 作废：半份文件没意义，删掉（P20-F loud-failure 的 CLI 面）
+            let mut map = inbound_files().lock().expect("在途文件账本没被毒化");
+            if let Some((_f, dest)) = map.remove(&id) {
+                let _ = std::fs::remove_file(&dest);
+                eprintln!("文件作废（{detail}）——半份已删。");
+            } else {
+                eprintln!("文件作废：{detail}。");
             }
         }
         Event::FileDeclined { from, name, size } => {

@@ -28,6 +28,9 @@ const EVENT_SECRET_CHAINED: c_int = 7; // 已退役（暗号链移除，rulings.
 const EVENT_CIRCLE_FORMED: c_int = 8;
 const EVENT_CIRCLE_MUMBLE: c_int = 9;
 const EVENT_SEAT_OFFERED: c_int = 10;
+const EVENT_FILE_CHUNK: c_int = 11; // 4.0.0 P20-F：块字节不进冻结的事件结构（C 侧收数据面待 ABI 演进）
+const EVENT_FILE_COMPLETE: c_int = 12;
+const EVENT_FILE_ABORTED: c_int = 13;
 
 /* ── 事件结构：与 e2ee.h 的 struct 一一对应（布局冻结） ── */
 /// 超出容量的字符串会被截断（name 63 字节、text 511 字节，UTF-8 可能截半——
@@ -337,6 +340,99 @@ pub extern "C" fn e2ee_leave(p: *mut FfiPerson) -> c_int {
     0
 }
 
+/// 流式递文件·开门（4.0.0 P20-F）：申报名字与总长；字节随后经
+/// e2ee_file_chunk 分批喂入，e2ee_file_end 收尾。库不读盘——字节从
+/// 调用方缓冲来。同一场对话同一时刻一份在途。
+///
+/// # Safety
+/// p 合法句柄；name 必填合法 C 字符串。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_file_begin(
+    p: *mut FfiPerson,
+    name: *const c_char,
+    total_bytes: u64,
+) -> c_int {
+    if p.is_null() || name.is_null() {
+        set_err("句柄或名字为空");
+        return -1;
+    }
+    let fp = unsafe { &*p };
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned();
+    match fp.rt.block_on(fp.person.file_begin(&name, total_bytes)) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_err(&e.to_string());
+            -1
+        }
+    }
+}
+
+/// 流式递文件·喂一块字节：库内按随机边界切成帧发出（块形随机化）。
+/// 一次至多 32MB 的总申报在 begin，单块无下限。
+///
+/// # Safety
+/// p 合法句柄；buf 指向 len 字节可读内存（len ≤ 0 拒绝）。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_file_chunk(p: *mut FfiPerson, buf: *const u8, len: c_int) -> c_int {
+    if p.is_null() || buf.is_null() {
+        set_err("句柄或缓冲为空");
+        return -1;
+    }
+    if len <= 0 {
+        set_err("块长必须为正");
+        return -1;
+    }
+    let fp = unsafe { &*p };
+    let data = unsafe { std::slice::from_raw_parts(buf, len as usize) };
+    match fp.rt.block_on(fp.person.file_chunk(data)) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_err(&e.to_string());
+            -1
+        }
+    }
+}
+
+/// 流式递文件·收尾：校验实发 == 申报总长（不足响亮失败），销账。
+///
+/// # Safety
+/// p 合法句柄。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_file_end(p: *mut FfiPerson) -> c_int {
+    if p.is_null() {
+        set_err("句柄为空");
+        return -1;
+    }
+    let fp = unsafe { &*p };
+    match fp.rt.block_on(fp.person.file_end()) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_err(&e.to_string());
+            -1
+        }
+    }
+}
+
+/// 流式递文件·主动作废：销账即止（对端由新家门/线死触发其作废）。
+///
+/// # Safety
+/// p 合法句柄。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_file_abort(p: *mut FfiPerson) -> c_int {
+    if p.is_null() {
+        set_err("句柄为空");
+        return -1;
+    }
+    let fp = unsafe { &*p };
+    match fp.rt.block_on(fp.person.file_abort()) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_err(&e.to_string());
+            -1
+        }
+    }
+}
+
 /// 收一件事：返回 1 = 拿到事件，0 = 这一阵没有（超时），-1 = 出错。
 /// timeout_ms < 0 表示死等，0 表示看一眼就走。
 /// 不关心的事件会被**丢弃**（跳过即取下一件）。
@@ -445,6 +541,22 @@ fn to_c_event(ev: Event) -> E2eeEvent {
             e.tag = EVENT_CIRCLE_MUMBLE;
             e.id = circle_id; // P6：圈类事件 id=圈号
             copy_str(&mut e.name, &from);
+        }
+        Event::FileChunk { id, name, seq, .. } => {
+            e.tag = EVENT_FILE_CHUNK;
+            e.id = id;
+            copy_str(&mut e.name, &name);
+            e.members = seq as c_int; // 块序号（32MB/8KB 至多 4096，c_int 足够）
+        }
+        Event::FileComplete { id, name, .. } => {
+            e.tag = EVENT_FILE_COMPLETE;
+            e.id = id;
+            copy_str(&mut e.name, &name);
+        }
+        Event::FileAborted { id, detail } => {
+            e.tag = EVENT_FILE_ABORTED;
+            e.id = id;
+            copy_str(&mut e.text, &detail);
         }
         Event::SeatOffered { from, table } => {
             e.tag = EVENT_SEAT_OFFERED;

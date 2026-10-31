@@ -79,12 +79,18 @@ pub enum Event {
     /// 有人给你看座（0x10 到达）：from = 引荐人（到达线对端名），
     /// table = 桌上的名字（席位骨架，无 r）。想坐就 /sit。
     SeatOffered { from: String, table: Vec<String> },
-    /// 一份文件收齐了：字节原样都在内存里（data），无损。落不落盘、
-    /// 落在哪，是外层使用者的事——库永不写盘。data 是 Zeroizing：
-    /// 用后即焚（外层取走字节后本缓冲随 drop 清零）。
-    FileArrived { id: u64, name: String, data: Zeroizing<Vec<u8>> },
     /// 对方想递一份超过上限的文件，婉拒了（提醒人类，不中断会话）。
     FileDeclined { from: String, name: String, size: u64 },
+    /// 一块文件字节进门（P20-F 流式）：data 是本块明文（Zeroizing，用后
+    /// 即焚）——外层使用者逐块取走落盘或转存，内存里只有这一块在途。
+    /// seq 从 0 起单调递增；收到 FileComplete 之前的中间态。
+    FileChunk { id: u64, name: String, seq: u32, data: Zeroizing<Vec<u8>> },
+    /// 一份文件收齐了（流式收尾）：此前每一块都已经过 FileChunk 交出。
+    /// total = 申报总长（也是实际收到总长——对不上根本走不到这）。
+    FileComplete { id: u64, name: String, total: u64 },
+    /// 一份在途文件作废（loud-failure，P20-F：静默作废=罪）：序号不合、
+    /// 越过申报总长、被新文件顶替、线断……detail 说人话。
+    FileAborted { id: u64, detail: String },
     /// 密钥内存锁定降级（P20-L，loud-failure）：本次武装的暗号/门禁钥匙
     /// 未能锁进物理内存（mlock/VirtualLock 不可用），退回了普通擦除堆
     /// ——擦拭语义不变，但存在被换出到磁盘的可能。不是错误，程序照常
@@ -146,6 +152,12 @@ pub enum PersonError {
     FileNameBad,
     #[error("上一份文件还没递完，一份递完再递下一份。")]
     FileBusy,
+    #[error("这场对话没有在途的出门文件——先 file_begin 开门。")]
+    FileNotStarted,
+    #[error("出门文件没收齐就收尾：申报 {declared} 字节，实发 {sent}。")]
+    FileIncomplete { declared: u64, sent: u64 },
+    #[error("喂进来的字节越过了申报总长（{sent} > {declared}），在途已作废。")]
+    FileOverflow { sent: u64, declared: u64 },
     #[error("圈里已经有叫这个名字的人了。")]
     MemberNameTaken,
     #[error("这帧圈子里的话署名不对——有人拿别人的名义开口。")]
@@ -670,10 +682,12 @@ struct Inner {
     /// 一次性切口（/await）若在，优先生效；烧掉之后门禁照常。
     /// P20-L：同上，锁定页存放（进程寿命级的最长寿命用户秘密）。
     stable_secret: Option<crate::lock::SecretBytes>,
-    /// 正在进门的文件（每场对话至多一份在途）：内存重组，上限 MAX_FILE_BYTES。
+    /// 正在进门的文件（每场对话至多一份在途）：流式记账，P20-F——
+    /// 每块经 FileChunk 即时交出，不驻留整份。
     inbound_files: HashMap<u64, InboundFile>,
-    /// 正在出门的文件（每场对话至多一份在途）：防两份并发交错成乱麻。
-    outgoing_files: std::collections::HashSet<u64>,
+    /// 正在出门的文件（每场对话至多一份在途）：流式记账（P20-F）——
+    /// 防两份并发交错成乱麻。
+    outgoing_files: HashMap<u64, OutboundFile>,
     /// 正在围坐的圈子，按圈号索引（P6 嵌套，rulings.2026_10_17_p6_spec_approved）：
     /// 一个人可同时坐在多张桌——协议眼里只有 N 个平行圈共享一些线，
     /// 圈与圈的关系不存在于任何协议状态里（嵌套=人类语义）。BTreeMap：
@@ -734,12 +748,21 @@ struct PendingBring {
     expected: Option<String>,
 }
 
-/// 一份正在进门的东西：名字、总长、已收的字节、下一块的序号。
-/// buf 是明文（最大 32MB 驻留内存）——Zeroizing：收完交给事件后清零。
+/// 一份正在进门的东西：名字、总长、已收字节数、下一块序号。
+/// P20-F 流式：不再驻留整份 buf——每块经 FileChunk 即时交出，
+/// 这里只记账（32MB 常驻 → 单块瞬态）。
 struct InboundFile {
     name: String,
     total: u64,
-    buf: Zeroizing<Vec<u8>>,
+    received: u64,
+    next_seq: u32,
+}
+
+/// 一份正在出门的东西（P20-F 流式发送的记账）：
+/// 申报总长、已发字节数、下一块序号。
+struct OutboundFile {
+    total: u64,
+    sent: u64,
     next_seq: u32,
 }
 
@@ -802,7 +825,7 @@ impl Person {
                 expecting_secret: None,
                 stable_secret: None,
                 inbound_files: HashMap::new(),
-                outgoing_files: std::collections::HashSet::new(),
+                outgoing_files: HashMap::new(),
                 gatherings: std::collections::BTreeMap::new(),
                 active_circle: None,
                 pending_contribs: std::collections::VecDeque::new(),
@@ -1039,61 +1062,111 @@ impl Person {
         send_chat(&cipher, &writer, text.as_bytes()).await
     }
 
-    /// 递一份文件给此刻注意力所在的人：分块加密发送，每块独立成帧。
-    /// 字节原样走密文、原样进门——二进制不欠文字的安检（无损，
-    /// 收到的每一个字节都与给出的一毫不差）。上限收发同限（32MB）；
+    /// 递一份文件给此刻注意力所在的人（便捷形态）：一次性把整份字节
+    /// 交给库，库内部分块发出——调用方仍需自备整份（内存驻留在调用方
+    /// 一侧）。真正的流式（边产生边发、内存只有一块）用
+    /// file_begin / file_chunk / file_end 三步。字节原样走密文、原样
+    /// 进门——二进制不欠文字的安检（无损）。上限收发同限（32MB）；
     /// 库不读盘也不写盘：字节从哪来、到哪去，都由外层使用者决定。
     /// 一场对话同一时刻只递一份（并发递第二份会被拒），聊天照常穿插。
     pub async fn send_file(&self, name: &str, data: &[u8]) -> Result<(), PersonError> {
         if data.len() > MAX_FILE_BYTES {
             return Err(PersonError::FileTooLarge { size: data.len() });
         }
+        self.file_begin(name, data.len() as u64).await?;
+        match self.file_chunk(data).await {
+            Ok(()) => self.file_end().await,
+            Err(e) => {
+                let _ = self.file_abort().await;
+                Err(e)
+            }
+        }
+    }
+
+    /// 流式开门（P20-F）：申报名字与总长——字节随后经 file_chunk 分批
+    /// 喂入，file_end 收尾。库不读盘：字节从哪来（盘、网络、内存）由
+    /// 外层决定。一场对话同一时刻一份在途；发送中途想放弃用 file_abort。
+    ///（注意：file_chunk/file_end 应对同一场对话顺序调用——账本不设
+    /// 并发锁，交错喂块是调用方的错。）
+    pub async fn file_begin(&self, name: &str, total: u64) -> Result<(), PersonError> {
+        if total > MAX_FILE_BYTES as u64 {
+            return Err(PersonError::FileTooLarge { size: total as usize });
+        }
         let name = name.trim();
         if name.is_empty() || name.len() > 255 || name.contains('\0') {
             return Err(PersonError::FileNameBad);
         }
-        let target = {
+        let (id, cipher, writer) = {
             let mut p = self.inner.lock().await;
             let Some(id) = p.focus else {
                 return Err(PersonError::NoFocus);
             };
             // 一场对话一份在途：两份交错会让对方的重组乱序
-            if p.outgoing_files.contains(&id) {
+            if p.outgoing_files.contains_key(&id) {
                 return Err(PersonError::FileBusy);
             }
             let Some(c) = p.convos.get(&id) else {
                 return Err(PersonError::NoConvo);
             };
             let pair = (c.cipher.clone(), c.writer.clone());
-            p.outgoing_files.insert(id);
+            p.outgoing_files.insert(
+                id,
+                OutboundFile {
+                    total,
+                    sent: 0,
+                    next_seq: 0,
+                },
+            );
             (id, pair.0, pair.1)
         };
-        let result = self
-            .send_file_frames(name, data, &target.1, &target.2)
-            .await;
-        self.inner.lock().await.outgoing_files.remove(&target.0);
-        result
-    }
-
-    /// 文件的实际出门：先递家门（名字＋总长），再逐块递字节。
-    /// 块与块的边界在 [8KB, 32KB] 里随机——「每块都恰好 32KB」的固定
-    /// 形状是指纹，随机化把它抹掉。收方本就不假设块长（来多大收多大），
-    /// 于是这纯属发送方的私事，无需协商、旧版照收。总量的形状
-    /// （这份文件大约多大）是另一层：要抹它得靠应用层把容器凑整。
-    async fn send_file_frames(
-        &self,
-        name: &str,
-        data: &[u8],
-        cipher: &Arc<Mutex<TransportState>>,
-        writer: &Arc<Mutex<BoxedWriter>>,
-    ) -> Result<(), PersonError> {
         let mut head = Vec::with_capacity(2 + name.len());
         head.push(name.len() as u8);
         head.extend_from_slice(name.as_bytes());
-        head.extend_from_slice(&(data.len() as u64).to_be_bytes());
-        send_typed(cipher, writer, frame_kind::FILE_HEAD, &head).await?;
+        head.extend_from_slice(&total.to_be_bytes());
+        if send_typed(&cipher, &writer, frame_kind::FILE_HEAD, &head)
+            .await
+            .is_err()
+        {
+            self.inner.lock().await.outgoing_files.remove(&id);
+            return Err(PersonError::NoConvo);
+        }
+        Ok(())
+    }
+
+    /// 喂一块字节（P20-F 流式）：这一块在库内再按 [8KB, 32KB] 随机边界
+    /// 切成帧（「每块都恰好 32KB」的固定形状是指纹，随机化把它抹掉——
+    /// 块边界纯属发送方的私事，收方来多大收多大，旧版照收）。总量的形状
+    ///（这份文件大约多大）是另一层：要抹它得靠应用层把容器凑整。
+    /// 累计越过申报总长 = 响亮失败并在途作废。
+    pub async fn file_chunk(&self, data: &[u8]) -> Result<(), PersonError> {
+        let (id, cipher, writer, start_seq, sent_before) = {
+            let mut p = self.inner.lock().await;
+            let Some(id) = p.focus else {
+                return Err(PersonError::NoFocus);
+            };
+            let Some(ob) = p.outgoing_files.get(&id) else {
+                return Err(PersonError::FileNotStarted);
+            };
+            if ob.sent + data.len() as u64 > ob.total {
+                let (sent, declared) = (ob.sent + data.len() as u64, ob.total);
+                p.outgoing_files.remove(&id);
+                return Err(PersonError::FileOverflow { sent, declared });
+            }
+            let Some(c) = p.convos.get(&id) else {
+                return Err(PersonError::NoConvo);
+            };
+            (
+                id,
+                c.cipher.clone(),
+                c.writer.clone(),
+                ob.next_seq,
+                ob.sent,
+            )
+        };
+        // 逐帧发送（锁外——Inner 锁内不 await，teardown_lock_fix 纪律）
         let mut rest = data;
-        let mut seq: u32 = 0;
+        let mut seq = start_seq;
+        let mut frames = 0u32;
         while !rest.is_empty() {
             let take = if rest.len() > FILE_CHUNK_LEN {
                 Self::random_in(FILE_CHUNK_LEN / 4, FILE_CHUNK_LEN)
@@ -1104,10 +1177,54 @@ impl Person {
             let mut part = Vec::with_capacity(4 + chunk.len());
             part.extend_from_slice(&seq.to_be_bytes());
             part.extend_from_slice(chunk);
-            send_typed(cipher, writer, frame_kind::FILE_CHUNK, &part).await?;
+            if send_typed(&cipher, &writer, frame_kind::FILE_CHUNK, &part)
+                .await
+                .is_err()
+            {
+                self.inner.lock().await.outgoing_files.remove(&id);
+                return Err(PersonError::NoConvo);
+            }
             rest = tail;
             seq += 1;
+            frames += 1;
         }
+        {
+            let mut p = self.inner.lock().await;
+            if let Some(ob) = p.outgoing_files.get_mut(&id) {
+                ob.sent = sent_before + data.len() as u64;
+                ob.next_seq = start_seq + frames;
+            }
+        }
+        Ok(())
+    }
+
+    /// 收尾（P20-F 流式）：校验实发总长 == 申报总长，销账。
+    /// 不足就收尾 = 响亮失败（对端收不齐会一直等——宁可这边喊出来）。
+    pub async fn file_end(&self) -> Result<(), PersonError> {
+        let mut p = self.inner.lock().await;
+        let Some(id) = p.focus else {
+            return Err(PersonError::NoFocus);
+        };
+        let Some(ob) = p.outgoing_files.remove(&id) else {
+            return Err(PersonError::FileNotStarted);
+        };
+        if ob.sent != ob.total {
+            return Err(PersonError::FileIncomplete {
+                declared: ob.total,
+                sent: ob.sent,
+            });
+        }
+        Ok(())
+    }
+
+    /// 主动作废在途的出门文件（P20-F 流式）：销账即止，不发帧——
+    /// 对端侧由新家门顶替或线死触发其 FileAborted。
+    pub async fn file_abort(&self) -> Result<(), PersonError> {
+        let mut p = self.inner.lock().await;
+        let Some(id) = p.focus else {
+            return Err(PersonError::NoFocus);
+        };
+        p.outgoing_files.remove(&id);
         Ok(())
     }
 
@@ -3530,7 +3647,8 @@ async fn ear(
                             // 对方递来一份文件的家门：名字＋总长。
                             // 超上限的婉拒（提醒人类，不中断会话，也不立户）；
                             // 合限的立户等块。已有在途的，让位给新的——
-                            // 内存有界，且恶意的半截文件不该堵住正经的。
+                            // 内存有界，且恶意的半截文件不该堵住正经的
+                            //（被顶替的旧文件响亮作废，P20-F：静默=罪）。
                             // 家门既要有名字又要有总长，缺一角就当没听见
                             if n > 1 && n >= 2 + plain[1] as usize + 8 {
                                 let name_len = plain[1] as usize;
@@ -3543,7 +3661,18 @@ async fn ear(
                                 );
                                 let mut p = inner.lock().await;
                                 if total > MAX_FILE_BYTES as u64 {
-                                    p.inbound_files.remove(&id);
+                                    // 超限家门若顶掉了在途文件，旧的也要响亮作废
+                                    if let Some(old) = p.inbound_files.remove(&id) {
+                                        p.events
+                                            .send(Event::FileAborted {
+                                                id,
+                                                detail: format!(
+                                                    "〔{}〕被一份超限文件的家门顶替，作废",
+                                                    old.name
+                                                ),
+                                            })
+                                            .ok();
+                                    }
                                     p.events
                                         .send(Event::FileDeclined {
                                             from: their_name.clone(),
@@ -3552,61 +3681,121 @@ async fn ear(
                                         })
                                         .ok();
                                 } else if total == 0 {
-                                    // 空文件：家门即全部，无需等块
-                                    p.inbound_files.remove(&id);
+                                    // 空文件：家门即全部——收齐事件直接发
+                                    if let Some(old) = p.inbound_files.remove(&id) {
+                                        p.events
+                                            .send(Event::FileAborted {
+                                                id,
+                                                detail: format!(
+                                                    "〔{}〕被一份空文件的家门顶替，作废",
+                                                    old.name
+                                                ),
+                                            })
+                                            .ok();
+                                    }
                                     p.events
-                                        .send(Event::FileArrived {
-                                            id,
-                                            name,
-                                            data: Zeroizing::default(),
-                                        })
+                                        .send(Event::FileComplete { id, name, total: 0 })
                                         .ok();
                                 } else {
-                                    p.inbound_files.insert(
+                                    if let Some(old) = p.inbound_files.insert(
                                         id,
                                         InboundFile {
-                                            name,
+                                            name: name.clone(),
                                             total,
-                                            buf: Zeroizing::new(Vec::with_capacity(total as usize)),
+                                            received: 0,
                                             next_seq: 0,
                                         },
-                                    );
+                                    ) {
+                                        p.events
+                                            .send(Event::FileAborted {
+                                                id,
+                                                detail: format!(
+                                                    "〔{}〕被新文件〔{}〕的家门顶替，作废",
+                                                    old.name, name
+                                                ),
+                                            })
+                                            .ok();
+                                    }
                                 }
                             }
                         }
                         frame_kind::FILE_CHUNK => {
-                            // 一块字节进门：序号对得上才收；对不上（凭空来块、
-                            // 乱序、越过报的总长）整份作废——TCP 上不会乱，
-                            // 这是给坏实现与恶意对端的铁栏杆。
+                            // 一块字节进门（P20-F 流式）：序号对得上才收，
+                            // 每块经 FileChunk 即时交出（内存里只有这一块）；
+                            // 收满申报总长，最后一块先交出再补 FileComplete。
+                            // 序号不合或越过总长（坏实现与恶意对端的铁栏杆）
+                            // → FileAborted 响亮作废（原为静默丢弃，
+                            // loud-failure 对账）。凭空来块（无在途户）：
+                            // 噪音，沉默跳过——无物可废、无名可报。
                             if n > 4 {
                                 let seq =
                                     u32::from_be_bytes(plain[1..5].try_into().expect("定长切４字节"));
                                 let chunk = plain[5..n].to_vec();
-                                let mut arrived: Option<(String, Zeroizing<Vec<u8>>)> = None;
+                                // 判定枚举：先在借用内记账，再在借用外去留
+                                enum Step {
+                                    Deliver { name: String, total: u64, done: bool },
+                                    Mismatch { name: String, expected: u32 },
+                                    NoFile,
+                                }
+                                let verdict = {
+                                    let mut p = inner.lock().await;
+                                    match p.inbound_files.get_mut(&id) {
+                                        Some(f)
+                                            if seq == f.next_seq
+                                                && f.received
+                                                    + chunk.len() as u64
+                                                    <= f.total =>
+                                        {
+                                            f.received += chunk.len() as u64;
+                                            f.next_seq += 1;
+                                            Step::Deliver {
+                                                name: f.name.clone(),
+                                                total: f.total,
+                                                done: f.received == f.total,
+                                            }
+                                        }
+                                        Some(f) => Step::Mismatch {
+                                            name: f.name.clone(),
+                                            expected: f.next_seq,
+                                        },
+                                        None => Step::NoFile,
+                                    }
+                                };
+                                let mut out: Vec<Event> = Vec::with_capacity(2);
                                 {
                                     let mut p = inner.lock().await;
-                                    if let Some(f) = p.inbound_files.get_mut(&id)
-                                        && seq == f.next_seq
-                                        && f.buf.len() + chunk.len() <= f.total as usize
-                                    {
-                                        f.buf.extend_from_slice(&chunk);
-                                        f.next_seq += 1;
-                                        if f.buf.len() as u64 == f.total
-                                            && let Some(done) = p.inbound_files.remove(&id)
-                                        {
-                                            arrived = Some((done.name, done.buf));
+                                    match verdict {
+                                        Step::Deliver { name, total, done } => {
+                                            if done {
+                                                p.inbound_files.remove(&id);
+                                            }
+                                            out.push(Event::FileChunk {
+                                                id,
+                                                name: name.clone(),
+                                                seq,
+                                                data: Zeroizing::new(chunk),
+                                            });
+                                            if done {
+                                                out.push(Event::FileComplete { id, name, total });
+                                            }
                                         }
-                                    } else {
-                                        // 序号不合或凭空来块：这份作废
-                                        //（remove 对不存在的键是无害空操作）
-                                        p.inbound_files.remove(&id);
+                                        Step::Mismatch { name, expected } => {
+                                            p.inbound_files.remove(&id);
+                                            out.push(Event::FileAborted {
+                                                id,
+                                                detail: format!(
+                                                    "〔{name}〕序号不合（期望 {expected}，来到 {seq}）或越过申报总长，作废"
+                                                ),
+                                            });
+                                        }
+                                        Step::NoFile => {}
                                     }
                                 }
-                                if let Some((name, data)) = arrived {
+                                if !out.is_empty() {
                                     let p = inner.lock().await;
-                                    p.events
-                                        .send(Event::FileArrived { id, name, data })
-                                        .ok();
+                                    for ev in out {
+                                        p.events.send(ev).ok();
+                                    }
                                 }
                             }
                         }
@@ -3983,6 +4172,8 @@ pub mod rogue {
     use super::*;
 
     /// 帧类型常量（注入面引用——线格式见 frame_kind 与 README_AGENT）
+    pub const FILE_HEAD: u8 = super::frame_kind::FILE_HEAD;
+    pub const FILE_CHUNK: u8 = super::frame_kind::FILE_CHUNK;
     pub const CONTRIB_V2: u8 = super::frame_kind::CONTRIB_V2;
     pub const CIRCLE_BYE: u8 = super::frame_kind::CIRCLE_BYE;
     pub const SEAT_ACCEPT: u8 = super::frame_kind::SEAT_ACCEPT;

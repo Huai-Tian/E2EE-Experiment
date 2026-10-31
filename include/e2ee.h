@@ -41,6 +41,9 @@ enum {
     E2EE_EVENT_CIRCLE_FORMED = 8,  /* members = 圈内人数 */
     E2EE_EVENT_CIRCLE_MUMBLE = 9,  /* name = 谁说了句解不开的话 */
     E2EE_EVENT_SEAT_OFFERED = 10,  /* name = 引荐人, members = 桌上人数, text = 桌上名字（、分隔） */
+    E2EE_EVENT_FILE_CHUNK = 11,    /* id, name, members = 块序号——块字节不进本结构（4.0.0：C 侧收数据面待 ABI 演进，事件面只报进度） */
+    E2EE_EVENT_FILE_COMPLETE = 12, /* id, name */
+    E2EE_EVENT_FILE_ABORTED = 13,  /* id, text = 作废原因 */
 };
 
 /* 事件（布局冻结）：超容量的字符串被截断（name 63 字节、text 511 字节） */
@@ -71,6 +74,12 @@ int            e2ee_dial(e2ee_person* p, const char* addr, const char* secret /*
 int            e2ee_speak(e2ee_person* p, const char* text);
 int            e2ee_bye(e2ee_person* p);
 int            e2ee_leave(e2ee_person* p);
+
+/* 文件（4.0.0 流式，P20-F）：开门 → 喂块 → 收尾；字节从调用方来，库不读盘 */
+int            e2ee_file_begin(e2ee_person* p, const char* name, uint64_t total_bytes);
+int            e2ee_file_chunk(e2ee_person* p, const uint8_t* buf, int len);
+int            e2ee_file_end(e2ee_person* p);
+int            e2ee_file_abort(e2ee_person* p);
 
 /* 事件：返回 1 = 拿到，0 = 超时，-1 = 出错；不关心的事件会被丢弃 */
 int            e2ee_poll(e2ee_person* p, int timeout_ms /*<0 死等，0 非阻塞*/,
