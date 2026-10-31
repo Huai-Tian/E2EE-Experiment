@@ -208,10 +208,72 @@ fn harden_process() {
             }
         }
     }
+    // 3. 休眠画像提醒（4.0.0 P20-D）：/sys/power/state 含 disk ⇒ 本机可休眠。
+    //    休眠=整个内存（含全部密钥）写进盘上休眠文件——T1 通道里应用层
+    //    唯一无法关闭的一条（挂起是 OS 行为，抢跑=被否决的休眠前预处理族）。
+    //    不拦截，只响亮提醒一次：静态配置事实的告知，loud-failure 家族。
+    //    应用层的答案是手势遗忘（--skittish：合盖/锁屏即全忘）+ 系统设置。
+    if let Ok(states) = std::fs::read_to_string("/sys/power/state") {
+        if states.split_whitespace().any(|s| s == "disk") {
+            eprintln!("提醒：本机可休眠（hibernate）——休眠会把整个内存（包括密钥）写进磁盘上的休眠文件，应用层无法拦截。建议在系统设置中关闭休眠；高风险用法可加 --skittish（合盖/锁屏即全忘）。");
+        }
+    }
 }
 
 #[cfg(not(unix))]
-fn harden_process() {}
+fn harden_process() {
+    // ── 4.0.0 P20-W：Windows 分支不再是空壳 ─────────────────────────
+    // 1. 未处理异常 → 立即自灭（TerminateProcess(self)）。原生异常（访问
+    //    违例等）到达默认处理器时，Windows 错误报告（WER）会生成内存
+    //    转储——整内存快照落盘，即 RLIMIT_CORE 的 Windows 同构 T1 通道。
+    //    我们的过滤器抢先自杀：进程干净地死，WER 从未见过未处理异常，
+    //    无转储、无『程序已停止工作』弹窗。这是 PR_SET_DUMPABLE=0 的
+    //    Windows 同构手段（P-10 结构解：让泄密物从一开始就不产生）。
+    //    诚实边界：__fastfail（Rust abort 的底层路径）与栈溢出可能绕过
+    //    本过滤器——尽力而为，非保证，入档 known_limitations。
+    //    为什么不用注册表 ExcludedApplications 排除 WER：那要写 HKCU
+    //    = 在用户机器上留下持久痕迹，违反零持久化红线。
+    // 2. SetErrorMode：抑制硬错误弹窗（弹窗会卡住退出路径）。
+    // 3. pagefile 提醒（Unix /proc/swaps 警告的 Windows 同构）：用户态
+    //    无法可靠查询 pagefile 加密状态，恒定提醒一次——静态配置事实
+    //    的响亮告知，loud-failure 家族。
+    unsafe {
+        win::SetErrorMode(win::SEM_FAILCRITICALERRORS | win::SEM_NOGPFAULTERRORBOX);
+        win::SetUnhandledExceptionFilter(Some(win::self_terminate_on_exception));
+    }
+    eprintln!(
+        "提醒：Windows 页面文件（pagefile）若未加密，被换出的内存页（可能含明文）会落到磁盘。建议确认系统盘加密（如 BitLocker）或 pagefile 加密设置。"
+    );
+}
+
+/// Windows kernel32 手写 FFI——不为三五个函数引入 windows-sys 依赖（单一二进制纪律）。
+#[cfg(windows)]
+mod win {
+    use std::ffi::c_void;
+
+    pub(super) const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+    pub(super) const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+
+    /// 未处理异常过滤器：只看『发生了』这件事，不解内容——立即自灭。
+    /// 返回值不可达（TerminateProcess 不返回）。
+    pub(super) unsafe extern "system" fn self_terminate_on_exception(
+        _info: *mut c_void, // EXCEPTION_POINTERS*
+    ) -> i32 {
+        unsafe {
+            TerminateProcess(GetCurrentProcess(), 0xE2EE);
+        }
+        0 // EXCEPTION_CONTINUE_SEARCH——不可达
+    }
+
+    unsafe extern "system" {
+        pub(super) fn SetErrorMode(uMode: u32) -> u32;
+        pub(super) fn SetUnhandledExceptionFilter(
+            lpTopLevelExceptionFilter: Option<unsafe extern "system" fn(*mut c_void) -> i32>,
+        ) -> *mut c_void;
+        pub(super) fn GetCurrentProcess() -> *mut c_void;
+        pub(super) fn TerminateProcess(hProcess: *mut c_void, uExitCode: u32) -> i32;
+    }
+}
 
 #[cfg(all(unix, test))]
 mod harden_tests {
