@@ -37,7 +37,7 @@ enum {
     E2EE_EVENT_HEARD = 4,          /* id, name, text */
     E2EE_EVENT_LEFT = 5,           /* id, name, text = 结束原因 */
     E2EE_EVENT_FOCUS_RETURNED = 6, /* id = 注意力回到哪场（0 = 没了） */
-    E2EE_EVENT_SECRET_CHAINED = 7, /* name = 与谁续上了暗号链 */
+    E2EE_EVENT_SECRET_CHAINED = 7, /* 已废弃的保留定义（4.0.0 起永不触发）：暗号链已移除——编号不复用，占位防误读 */
     E2EE_EVENT_CIRCLE_FORMED = 8,  /* members = 圈内人数 */
     E2EE_EVENT_CIRCLE_MUMBLE = 9,  /* name = 谁说了句解不开的话 */
     E2EE_EVENT_SEAT_OFFERED = 10,  /* name = 引荐人, members = 桌上人数, text = 桌上名字（、分隔） */
