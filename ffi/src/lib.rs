@@ -24,7 +24,7 @@ const EVENT_MEET_FAILED: c_int = 3;
 const EVENT_HEARD: c_int = 4;
 const EVENT_LEFT: c_int = 5;
 const EVENT_FOCUS_RETURNED: c_int = 6;
-const EVENT_SECRET_CHAINED: c_int = 7;
+const EVENT_SECRET_CHAINED: c_int = 7; // 已退役（暗号链移除，rulings.2026_10_31_realtime_verification_razor）——保留编号占位（ABI 冻结/add-only：C 头定义仍在、永不触发）
 const EVENT_CIRCLE_FORMED: c_int = 8;
 const EVENT_CIRCLE_MUMBLE: c_int = 9;
 const EVENT_SEAT_OFFERED: c_int = 10;
@@ -226,7 +226,7 @@ pub extern "C" fn e2ee_await_secret(p: *mut FfiPerson, secret: *const c_char) ->
 }
 
 /// 找人：拨通、握手、成为当前对话。
-/// secret 为 NULL 时走普通握手（若有暗号链则自动用上）；
+/// secret 为 NULL 时走普通握手（暗号链已移除——想用暗号当场带着来）；
 /// 非 NULL 则先对暗号，对不上响亮失败。out_convo_id 可为 NULL。
 ///
 /// # Safety
@@ -435,10 +435,6 @@ fn to_c_event(ev: Event) -> E2eeEvent {
         Event::FocusReturned { to } => {
             e.tag = EVENT_FOCUS_RETURNED;
             e.id = to.unwrap_or(0);
-        }
-        Event::SecretChained { with } => {
-            e.tag = EVENT_SECRET_CHAINED;
-            copy_str(&mut e.name, &with);
         }
         Event::CircleFormed { circle_id, members } => {
             e.tag = EVENT_CIRCLE_FORMED;

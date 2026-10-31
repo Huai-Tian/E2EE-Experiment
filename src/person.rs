@@ -59,8 +59,6 @@ pub enum Event {
     Left { id: u64, name: String, reason: LeaveReason },
     /// 收摊之后，注意力挪了地方
     FocusReturned { to: Option<u64> },
-    /// 暗号链续上了：对方在告别时预约了下一把暗号
-    SecretChained { with: String },
     /// 圈子铸成：名单上的名字全部自署到场，群钥匙在手，屋里的话开讲。
     /// circle_id = 哪一圈（P6 嵌套：一人可同时在多圈，事件按圈路由）。
     CircleFormed { circle_id: u64, members: usize },
@@ -167,10 +165,9 @@ pub type Events = mpsc::UnboundedReceiver<Event>;
 mod frame_kind {
     /// 聊天行：其后是 UTF-8 文本
     pub const CHAT: u8 = 0x00;
-    /// 暗号预约：其后是 32 字节新暗号（告别前发出，等确认）
-    pub const OFFER: u8 = 0x01;
-    /// 预约确认：我收到了下一把暗号
-    pub const ACK: u8 = 0x02;
+    // 0x01 OFFER / 0x02 ACK（暗号链的预约与确认）已随链移除
+    //（rulings.2026_10_31_realtime_verification_razor）——零引用删除，
+    // 帧编号退役不复活（0x04 同例，P17 先例：历史帧号留档文档不留代码）。
     /// 凑话（v1 圈）：其后是 32 字节随机贡献。v2 泛洪圈改用 0x09；
     /// 解析保留给旧同伴，本版不再发出。
     pub const CONTRIB: u8 = 0x03;
@@ -643,10 +640,6 @@ impl Gathering {
 /// 一场对话：对面是谁、共说什么话、往哪条线说。
 struct Convo {
     their_name: String,
-    /// 这条线挂不挂得住暗号链：直连与打洞线挂得住（地址可作锚）；
-    /// 茶馆线挂不住（房间一次性，锚不存在）——道别时不预约，
-    /// 免得约出一把用不上、还堵住下一场的暗号。
-    chainable: bool,
     cipher: Arc<Mutex<TransportState>>,
     writer: Arc<Mutex<BoxedWriter>>,
     /// 见面的指纹（Noise transcript 哈希）：对词（/word·1:1 短词）的
@@ -677,14 +670,6 @@ struct Inner {
     /// 一次性切口（/await）若在，优先生效；烧掉之后门禁照常。
     /// P20-L：同上，锁定页存放（进程寿命级的最长寿命用户秘密）。
     stable_secret: Option<crate::lock::SecretBytes>,
-    /// 暗号链（主动侧）：地址 → 上一场告别时预约的下一把。用过即焚。
-    chained_secrets: HashMap<String, Zeroizing<Vec<u8>>>,
-    /// 挂起待确认的预约：对话编号 → 新暗号。收到确认才入链。
-    pending_offers: HashMap<u64, Zeroizing<Vec<u8>>>,
-    /// 续链总开关（默认开）。关掉后：道别不预约、来约不接受——
-    /// 对陌生人常开的台席（意见反馈热线）用它，谁来都行，散场不留锁。
-    /// 链是便利不是必需，关掉只丢便利，不丢安全。
-    chaining: bool,
     /// 正在进门的文件（每场对话至多一份在途）：内存重组，上限 MAX_FILE_BYTES。
     inbound_files: HashMap<u64, InboundFile>,
     /// 正在出门的文件（每场对话至多一份在途）：防两份并发交错成乱麻。
@@ -816,9 +801,6 @@ impl Person {
                 events: tx,
                 expecting_secret: None,
                 stable_secret: None,
-                chained_secrets: HashMap::new(),
-                pending_offers: HashMap::new(),
-                chaining: true,
                 inbound_files: HashMap::new(),
                 outgoing_files: std::collections::HashSet::new(),
                 gatherings: std::collections::BTreeMap::new(),
@@ -863,15 +845,8 @@ impl Person {
                             None => (p.stable_secret.clone(), false),
                         }
                     };
-                    // 来客的来源地址：将来他主动来续链时的锚
-                    let peer_addr = stream
-                        .peer_addr()
-                        .map(|a| a.to_string())
-                        .unwrap_or_default();
                     let greet_secret = secret.as_ref().map(|s| s.as_slice());
-                    if let Err(f) =
-                        greet(&inner, stream, false, greet_secret, peer_addr).await
-                    {
+                    if let Err(f) = greet(&inner, stream, false, greet_secret).await {
                         // 只有一次性切口存在「归还」；常备的从没取走，无需归还
                         if !f.burned && one_shot {
                             let mut p = inner.lock().await;
@@ -928,33 +903,11 @@ impl Person {
         }
     }
 
-    /// 续链开关：关掉后这个人道别不预约、来约不接受。
-    /// 对陌生人常开的台席用它（`--no-chain` 的库面）——
-    /// 不然每个道别的客人都会给下一位陌生来客上门锁。
-    pub async fn set_chaining(&self, enabled: bool) {
-        self.inner.lock().await.chaining = enabled;
-    }
-
     /// 找人：拨通、握手、成为当前对话。返回对话编号。
-    /// 若上一场告别时与这个地址预约过下一把暗号，自动带上（用过才焚）。
+    /// 暗号链已移除（rulings.2026_10_31_realtime_verification_razor：
+    /// 延时验证=机器的记忆，非法）——想用暗号，当场带着来（dial_secret）。
     pub async fn dial(&self, addr: &str) -> Result<u64, PersonError> {
-        let chained = self.inner.lock().await.chained_secrets.get(addr).cloned();
-        let chained_ref = chained.as_ref().map(|s| &s[..]);
-        match self.dial_inner(addr, chained_ref).await {
-            Ok(id) => {
-                // 谈成了：链上的暗号花在了这场对话上
-                self.inner.lock().await.chained_secrets.remove(addr);
-                Ok(id)
-            }
-            Err(f) => {
-                // 用过才焚：暗号被真正查验过（对错都算）才作数；
-                // 只是拨不通、或没走到对暗号，链上的暗号留着下次再试。
-                if f.burned {
-                    self.inner.lock().await.chained_secrets.remove(addr);
-                }
-                Err(f.err)
-            }
-        }
+        self.dial_inner(addr, None).await.map_err(|f| f.err)
     }
 
     /// 找人的内层：带失败情报（切口是否被查验过），dial 与 dial_secret 共用。
@@ -979,8 +932,7 @@ impl Person {
                 })
             }
         };
-        let peer_addr = addr.to_string();
-        greet(&self.inner, stream, true, secret, peer_addr).await
+        greet(&self.inner, stream, true, secret).await
     }
 
     /// 带暗号找人：暗号对不上，谈不成。
@@ -1020,8 +972,6 @@ impl Person {
         let (transport, transcript) = handshake(&mut stream, as_initiator, secret)
             .await
             .map_err(|f| PersonError::Greet(f.err.to_string()))?;
-        // 茶馆场景的对端地址未知（角色互换、房间一次性），链挂不住：不预约
-        let peer_addr = format!("{courier_addr}#{room}");
         let (rh, wh) = stream.into_split();
         register_convo(
             &self.inner,
@@ -1029,9 +979,7 @@ impl Person {
             Box::new(wh),
             transport,
             as_initiator,
-            peer_addr,
             secret.is_some(),
-            false, // 茶馆线不挂链：房间一次性，锚不存在
             transcript,
         )
             .await
@@ -1060,7 +1008,6 @@ impl Person {
         let (mut hole, as_initiator) = crate::punch::meet_via(addr, tag)
             .await
             .map_err(|e| PersonError::Punch(e.to_string()))?;
-        let peer_addr = hole.peer_addr().to_string();
         let (transport, transcript) = handshake(&mut hole, as_initiator, secret)
             .await
             .map_err(|f| PersonError::Greet(f.err.to_string()))?;
@@ -1071,9 +1018,7 @@ impl Person {
             Box::new(wh),
             transport,
             as_initiator,
-            peer_addr,
             secret.is_some(),
-            true, // 打洞线挂得住链：对端公网端点可作锚（NAT 映射易逝，链可能拨不回去——不出错，只是用不上）
             transcript,
         )
             .await
@@ -1213,34 +1158,24 @@ impl Person {
     }
 
     /// 和当前对话的人道别。收摊由耳朵任务自己完成。
-    /// 道别之前，先把下一把暗号预约进这条已认证的信道——
-    /// 对方确认了，链就续上了；没等到确认，预约作废（丢的是便利，不是安全）。
-    /// 茶馆线不预约（锚不存在，见 Convo::chainable）。
-    /// v2：若在圈，先泛洪一圈告退帧（0x0C）——触发全员补话换钥。
+    /// 两步（暗号链已移除，rulings.2026_10_31_realtime_verification_razor：
+    /// 链授予步删除——延时验证=机器的记忆，非法）：①若在圈，先泛洪一圈
+    /// 署名告退帧（0x0C）——触发全员补话换钥；②给聚焦线发空明文告别帧
+    ///（只有这条线断，进程继续活着——/bye 是关系的结束，不是人的死亡）。
     pub async fn bye(&self) -> Result<String, PersonError> {
         let target = {
             let p = self.inner.lock().await;
             p.focus.and_then(|id| {
                 p.convos.get(&id).map(|c| {
-                    (
-                        c.cipher.clone(),
-                        c.writer.clone(),
-                        c.their_name.clone(),
-                        c.chainable,
-                        p.chaining,
-                        id,
-                    )
+                    (c.cipher.clone(), c.writer.clone(), c.their_name.clone())
                 })
             })
         };
-        let Some((cipher, writer, name, chainable, chaining, id)) = target else {
+        let Some((cipher, writer, name)) = target else {
             return Err(PersonError::NoFocus);
         };
         // 圈子告退（在圈才发）
         self.circle_bye_frames().await;
-        if chainable && chaining {
-            offer_next_secret(&self.inner, id, &cipher, &writer).await;
-        }
         send_frame(&cipher, &writer, &[])
             .await
             .map_err(|_| PersonError::ByeFailed {
@@ -1249,29 +1184,19 @@ impl Person {
         Ok(name)
     }
 
-    /// 离场：和所有人道别（续链开着且挂得住链的每场都尝试预约下一把）。
-    /// v2：先向所有在场的圈子泛洪告退。
+    /// 离场：和所有人道别（批量告别——嵌入式用户的库面动词；官方 CLI
+    /// 已不用它：Ctrl-C 统一退出不告别，rulings.2026_10_31_exit_taxonomy。
+    /// ABI 冻结与第三方宿主仍可调用）。先向所有在场的圈子泛洪署名告退。
     pub async fn leave(&self) {
         self.circle_bye_frames().await;
         let targets: Vec<_> = {
             let p = self.inner.lock().await;
             p.convos
                 .iter()
-                .map(|(id, c)| {
-                    (
-                        *id,
-                        c.cipher.clone(),
-                        c.writer.clone(),
-                        c.chainable,
-                        p.chaining,
-                    )
-                })
+                .map(|(_id, c)| (c.cipher.clone(), c.writer.clone()))
                 .collect()
         };
-        for (id, cipher, writer, chainable, chaining) in targets {
-            if chainable && chaining {
-                offer_next_secret(&self.inner, id, &cipher, &writer).await;
-            }
+        for (cipher, writer) in targets {
             let _ = send_frame(&cipher, &writer, &[]).await;
         }
     }
@@ -2601,7 +2526,6 @@ async fn greet(
     mut stream: TcpStream,
     as_initiator: bool,
     secret: Option<&[u8]>,
-    peer_addr: String,
 ) -> Result<u64, GreetFailure> {
     let (transport, transcript) = handshake(&mut stream, as_initiator, secret)
         .await
@@ -2616,9 +2540,7 @@ async fn greet(
         Box::new(wh),
         transport,
         as_initiator,
-        peer_addr,
         secret.is_some(),
-        true, // 直连线挂得住链：地址可作锚
         transcript,
     )
         .await
@@ -2626,8 +2548,7 @@ async fn greet(
 
 /// 握手之后的落座：互报家门、登记入册、竖起一只耳朵。
 /// 读半写半走同一种号位——TCP 与打洞线在此无分彼此。
-/// secret_used：这场握手是否花了一把暗号（决定后续失败时切口算不算消耗）；
-/// chainable：这条线挂不挂得住暗号链（见 Convo::chainable）。
+/// secret_used：这场握手是否花了一把暗号（决定后续失败时切口算不算消耗）。
 #[allow(clippy::too_many_arguments)] // 相遇的随身行李，各归各位，不好再并
 async fn register_convo(
     inner: &Arc<Mutex<Inner>>,
@@ -2635,9 +2556,7 @@ async fn register_convo(
     wh: BoxedWriter,
     transport: TransportState,
     as_initiator: bool,
-    peer_addr: String,
     secret_used: bool,
-    chainable: bool,
     transcript: Zeroizing<[u8; 32]>,
 ) -> Result<u64, GreetFailure> {
     let my_name = inner.lock().await.my_name.clone();
@@ -2690,7 +2609,6 @@ async fn register_convo(
             id,
             Convo {
                 their_name: their_name.clone(),
-                chainable,
                 cipher: cipher.clone(),
                 writer: writer.clone(),
                 transcript,
@@ -2715,21 +2633,21 @@ async fn register_convo(
 
     let inner = inner.clone();
     tokio::spawn(async move {
-        ear(inner, id, rh, cipher, writer, their_name, peer_addr).await;
+        ear(inner, id, rh, cipher, their_name).await;
     });
     Ok(id)
 }
 
 /// 耳朵：收帧 → 解密 → 按帧类型处理。空明文帧 = 对方道别。
 /// 这只耳朵合上时顺手收摊：摘对话、关线路、必要时挪回注意力。
+///（P20-E②：writer/peer_addr 参数已随暗号链移除——它们的存在只为
+/// 预约的发送与链锚的记录；rulings.2026_10_31_realtime_verification_razor）
 async fn ear(
     inner: Arc<Mutex<Inner>>,
     id: u64,
     mut rh: BoxedReader,
     cipher: Arc<Mutex<TransportState>>,
-    writer: Arc<Mutex<BoxedWriter>>,
     their_name: String,
-    peer_addr: String,
 ) {
     let reason = loop {
         match read_frame(&mut rh).await {
@@ -2756,41 +2674,10 @@ async fn ear(
                                     .ok();
                             }
                         }
-                        frame_kind::OFFER => {
-                            // 对方在道别前预约下一把暗号：
-                            // 收下当「等人的切口」，回一声确认。
-                            // 不续链的人（开放台席）对预约装聋：不收、不确认——
-                            // 对方的预约没人理会会自动作废，两边都只丢便利不丢安全。
-                            // 切口位上已有话的（自己 /await 过）：同样不覆盖、不确认。
-                            if n == 1 + 32 {
-                                let mut p = inner.lock().await;
-                                if p.chaining && p.expecting_secret.is_none() {
-                                    // P20-L 过渡注记：此路径随暗号链移除（P20-E）整段删除；
-                                    // 过渡期保持编译——切口同样进锁定页。
-                                    let s = crate::lock::SecretBytes::new(&plain[1..n]);
-                                    let degraded = !s.is_locked();
-                                    p.expecting_secret = Some(s);
-                                    if degraded {
-                                        p.events.send(Event::KeyLockDegraded).ok();
-                                    }
-                                    p.events
-                                        .send(Event::SecretChained {
-                                            with: their_name.clone(),
-                                        })
-                                        .ok();
-                                    drop(p);
-                                    let _ = send_typed(&cipher, &writer, frame_kind::ACK, &[])
-                                        .await;
-                                }
-                            }
-                        }
-                        frame_kind::ACK => {
-                            // 对方确认收到了我们预约的暗号：入链，续上了
-                            let mut p = inner.lock().await;
-                            if let Some(x) = p.pending_offers.remove(&id) {
-                                p.chained_secrets.insert(peer_addr.clone(), x);
-                            }
-                        }
+                        // 0x01 OFFER / 0x02 ACK：暗号链的预约与确认——
+                        // 已随链移除（rulings.2026_10_31_realtime_verification_razor）。
+                        // 帧编号退役不复活（README_AGENT wire_protocol 注记）；
+                        // 旧对端发来时落入 unknown_kinds 静默跳过（前向兼容）。
                         frame_kind::GENESIS => {
                             // 开台公告（0x0F）：署名邀请名单 = 发起者感知
                             // 快照（事实陈述，非权力凭证）。布局：圈号 8
@@ -3901,23 +3788,9 @@ fn chat_text(kind: u8, body: &[u8]) -> Option<String> {
     }
 }
 
-/// 告别前的暗号预约：现场造一把新暗号，发进这条已认证的信道。
-/// 挂账待确认——收到对方的 ACK 才真正入链；道别后没人确认就作废。
-async fn offer_next_secret(
-    inner: &Arc<Mutex<Inner>>,
-    convo_id: u64,
-    cipher: &Arc<Mutex<TransportState>>,
-    writer: &Arc<Mutex<BoxedWriter>>,
-) {
-    let mut x = Zeroizing::new([0u8; 32]);
-    if getrandom::fill(&mut x[..]).is_err() {
-        return; // 造不出暗号就算了：链是便利，不是必需
-    }
-    if send_typed(cipher, writer, frame_kind::OFFER, &x[..]).await.is_err() {
-        return; // 没送出去：作废
-    }
-    inner.lock().await.pending_offers.insert(convo_id, Zeroizing::new(x.to_vec()));
-}
+/// 告别前的暗号预约（offer_next_secret）：已随暗号链整体移除
+///（rulings.2026_10_31_realtime_verification_razor——延时验证=机器的记忆，
+/// 非法）。想用暗号，当场带着来（dial_secret / await_secret）。
 
 /// 见面三件套：
 /// 1. 暗号（可选）——SPAKE2 对暗号：双方各发一条遮罩消息，只有持有

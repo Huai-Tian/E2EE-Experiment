@@ -321,58 +321,36 @@ async fn 暗号_经茶馆也照样对() {
 }
 
 #[tokio::test]
-async fn 暗号链_告别自动续上下一场() {
+async fn 散场不留锁_链移除回归() {
+    // 暗号链移除的回归守卫（rulings.2026_10_31_realtime_verification_razor，
+    // 原测试 暗号链_告别自动续上下一场 的移除版重写）：3.0.0 时代道别会
+    // 预约下一把暗号（expecting_secret 竖起）——下一场要么带链要么带暗号，
+    // 无暗号的陌生来客被锁在门外。链既死：一场带暗号的对话散场后，
+    // 什么都不该滞留——不带暗号的任何人照样进得来（凡验证必当场）。
     let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
     let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
     let (carol, _carol_ev, _c) = spawn_person("Carol").await;
 
-    // 第一场：Bob 找 Alice，用第一把暗号（带外念的那次）
+    // 唯一一场：带暗号（当场验证合法）
     alice.expect_secret(b"di-yi-ba").await;
     bob.dial_secret(&alice_addr, Some(b"di-yi-ba"))
         .await
-        .expect("第一场谈成");
+        .expect("带暗号谈成");
     expect(&mut alice_ev, met).await;
     expect(&mut bob_ev, met).await;
+    bob.speak("jiu zhe yi chang").await.expect("Bob 说");
 
-    // 道别：两边自动预约下一把
+    // 道别：两步（圈子告退〔无圈跳过〕+ 告别帧）——不预约任何东西
     let who = bob.bye().await.expect("道别");
     assert_eq!(who, "Alice");
-    // Alice 侧看到链续上了
-    let chained = expect(&mut alice_ev, |ev| {
-        if let Event::SecretChained { with } = ev {
-            Some(with.clone())
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!(chained, "Bob");
-    // 两边都收摊
     expect(&mut alice_ev, left).await;
     expect(&mut bob_ev, left).await;
 
-    // 第二场：Bob 再找 Alice——不带暗号，链上的下一把自动生效
-    bob.dial(&alice_addr).await.expect("链上自动续场");
+    // 无暗号的 Carol 照样进得来：切口已焚、链不存在——门没上锁
+    carol.dial(&alice_addr)
+        .await
+        .expect("散场后无暗号进得来（没锁可滞留）");
     expect(&mut alice_ev, met).await;
-    expect(&mut bob_ev, met).await;
-    bob.speak("链上第二场").await.expect("Bob 说");
-    let (from, text) = expect(&mut alice_ev, |ev| {
-        if let Event::Heard { name, text, .. } = ev {
-            Some((name.clone(), text.clone()))
-        } else {
-            None
-        }
-    })
-        .await;
-    assert_eq!((from.as_str(), text.as_str()), ("Bob", "链上第二场"));
-
-    // 第二场也道别：又预约下一把。此后 Alice 的切口重新竖起——
-    // 没暗号的人此刻进不来（电话模型在切口生效期间收窄）
-    bob.bye().await.expect("第二场道别");
-    expect(&mut alice_ev, left).await;
-    expect(&mut bob_ev, left).await;
-    let err = carol.dial(&alice_addr).await;
-    assert!(err.is_err(), "切口竖起期间，没暗号的人进不来：{err:?}");
 }
 
 /// 从事件里取出 Left（对方名字）。
@@ -566,7 +544,11 @@ async fn 茶馆_哑巴连接堵不住门() {
 }
 
 #[tokio::test]
-async fn 茶馆_线断不挂链_下场免暗号() {
+async fn 茶馆_散场不留锁_第二场免暗号() {
+    // 暗号链移除后的茶馆重进回归（原 茶馆_线断不挂链_下场免暗号 的重写）：
+    // 3.0.0 验证的是『茶馆线不预约（房间一次性，锚不存在）』；链既整体
+    // 移除，本测试退守它剩下的骨架语义——散场后再进新房，照样谈得成，
+    // 什么都不用带。
     let teahouse = spawn_teahouse().await;
     let (alice, mut alice_ev, _a) = spawn_person("Alice").await;
     let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
@@ -582,24 +564,10 @@ async fn 茶馆_线断不挂链_下场免暗号() {
     expect(&mut alice_ev, met).await;
     expect(&mut bob_ev, met).await;
 
-    // 道别：茶馆线挂不住链（房间一次性，锚不存在）——
-    // Alice 不该看到 SecretChained，切口也不该被竖起来堵下一场的门
+    // 道别：两步告退——茶馆线没有圈、没有预约，干净收摊
     bob.bye().await.expect("道别");
-    let mut saw_chain = false;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let left = deadline.saturating_duration_since(Instant::now());
-        let ev = timeout(left, alice_ev.recv())
-            .await
-            .expect("事件流不应关闭")
-            .expect("事件流不应枯竭");
-        match ev {
-            Event::SecretChained { .. } => saw_chain = true,
-            Event::Left { .. } => break,
-            _ => {}
-        }
-    }
-    assert!(!saw_chain, "茶馆线不应预约暗号链");
+    expect(&mut alice_ev, left).await;
+    expect(&mut bob_ev, left).await;
 
     // 第二场：不带暗号再进一间房，应照样谈得成
     let alice_again = alice.clone();
@@ -725,23 +693,30 @@ async fn 快照后新线_零圈帧_从第一帧起() {
 }
 
 #[tokio::test]
-async fn 开放台_不续链_陌生来客不被锁() {
-    // 台席：关闭续链（--no-chain 的库面）——对陌生人常开的接收方
+async fn 开放台_上一场带暗号_下场陌生来客不被锁() {
+    // 暗号链移除回归（原 开放台_不续链_陌生来客不被锁 的重写）：3.0.0
+    // 时代带暗号的来客在道别时会预约下一把（台席被竖起切口）——不带暗号
+    // 的陌生来客被锁在门外，要靠 set_chaining(false) 解。链既死：上一场
+    // 的暗号随场散去，台席天然敞开，陌生来客不被滞留的锁拦住。
     let (desk, mut desk_ev, desk_addr) = spawn_person("Desk").await;
-    desk.set_chaining(false).await;
 
-    // 用户1：直连、留言、道别（道别会试图预约下一把暗号）
+    // 用户1：带暗号直连、留言、道别
+    desk.expect_secret(b"re-men-zhong").await;
     let (u1, mut u1_ev, _u1a) = spawn_person("User1").await;
-    u1.dial(&desk_addr).await.expect("u1 拨通");
+    u1.dial_secret(&desk_addr, Some(b"re-men-zhong"))
+        .await
+        .expect("u1 拨通（带暗号）");
     expect(&mut desk_ev, met).await;
     expect(&mut u1_ev, met).await;
     u1.speak("fankui yi").await.expect("u1 留言");
     u1.bye().await.expect("u1 道别");
-    expect(&mut desk_ev, left).await; // 台席看到收摊；其间不该有 SecretChained
+    expect(&mut desk_ev, left).await; // 台席看到收摊；切口已焚、无链可滞留
 
-    // 用户2：不带暗号的陌生来客——必须照样进得来（默认续链会把他锁在门外）
+    // 用户2：不带暗号的陌生来客——必须照样进得来
     let (u2, mut u2_ev, _u2a) = spawn_person("User2").await;
-    u2.dial(&desk_addr).await.expect("陌生来客应照样拨通（台席没被上锁）");
+    u2.dial(&desk_addr)
+        .await
+        .expect("陌生来客应照样拨通（上一场的暗号没有滞留）");
     expect(&mut desk_ev, met).await;
     expect(&mut u2_ev, met).await;
     u2.speak("fankui er").await.expect("u2 留言");

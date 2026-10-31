@@ -63,10 +63,9 @@ int main(void) {
     CHECK(wait_for(b, E2EE_EVENT_HEARD, &ev) && strcmp(ev.text, "ting de dao") == 0,
           "B heard A");
 
-    /* 道别 + 暗号链：A 应看到 SECRET_CHAINED 与 LEFT */
+    /* 道别：A 应看到 LEFT（暗号链已移除——rulings.2026_10_31_realtime_
+       verification_razor；SECRET_CHAINED 事件编号保留在头文件里但永不触发） */
     CHECK(e2ee_bye(b) == 0, "bye B");
-    CHECK(wait_for(a, E2EE_EVENT_SECRET_CHAINED, &ev) && strcmp(ev.name, "Bob") == 0,
-          "A secret chained");
     CHECK(wait_for(a, E2EE_EVENT_LEFT, &ev), "A saw Bob left");
     CHECK(wait_for(b, E2EE_EVENT_LEFT, &ev), "B saw line closed");
 

@@ -15,16 +15,13 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   E2EE-Experiment [监听地址] [-n 名字]
       出生。默认在 0.0.0.0:7777 上听，等人来，也随时可以主动去找人。
       同一台机器开两个人时，记得用不同端口。
-  E2EE-Experiment --no-chain [监听地址] [-n 名字]
-      不续链出生：道别时不预约下一把暗号，也不接受别人的预约。
-      适合对陌生人常开的台席（如意见反馈热线）——谁来都行，散场不留锁
-      （默认的续链会把下一场留给上一位客人，陌生人反而进不来）。
-  E2EE-Experiment --guard <机器暗号> [监听地址] [-n 名字]
-      常备门禁出生：每位来客都要对上这句暗号才谈得成，且从不消耗——
-      瞎拨多少次也锁不住台，真钥永远进得来。这句应是 32 字节级的
-      随机机器密钥（不是人类暗号：一次性切口「烧掉」防的是对低熵暗号
-      的在线爆破，机器密钥在线爆破本就不可能）。可与 --no-chain 叠加；
-      对陌生人常开的武装台席推荐 --guard KEY --no-chain。
+  E2EE-Experiment --guard [监听地址] [-n 名字]
+      常备门禁出生：每位来客都要对上同一句机器暗号才谈得成，且从不
+      消耗——瞎拨多少次也锁不住台，真钥永远进得来。这句应是 32 字节级
+      的随机机器密钥（不是人类暗号：一次性切口「烧掉」防的是对低熵暗号
+      的在线爆破，机器密钥在线爆破本就不可能）。
+      钥匙在启动后按提示悄悄输入（不回显）——钥匙不进命令行：本机任何
+      账户都读得到进程启动命令，shell 历史也会记下它。
   E2EE-Experiment --courier [监听地址]
       开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
       （房号由客人带外自选，茶馆只认号接线）。
@@ -85,29 +82,42 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut name = String::from("无名氏");
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
     let mut as_courier = false;
-    let mut no_chain = false;
-    let mut guard_secret: Option<String> = None;
+    let mut guard_prompt = false;
     let mut positional: Vec<String> = Vec::new();
 
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut i = 0;
+    while i < argv.len() {
+        let arg = argv[i].as_str();
+        match arg {
             "help" | "--help" | "-h" => {
                 println!("{HELP}");
                 return Ok(ExitCode::SUCCESS);
             }
             "--courier" => as_courier = true,
-            "--no-chain" => no_chain = true,
-            "--guard" => match args.next() {
-                Some(g) => guard_secret = Some(g),
-                None => {
-                    eprintln!("--guard 后面要跟机器暗号（建议 32 字节随机串）\n");
-                    eprintln!("{HELP}");
-                    return Ok(ExitCode::from(2));
+            // --no-chain 已随暗号链移除而作废（rulings.2026_10_31_realtime_
+            // verification_razor）——没有链可关，旗子退役。
+            "--guard" => {
+                // 耳语式（kept.guard_whisper_input）：钥匙不进命令行。
+                // 后面跟的若不是地址形（IP:PORT），按旧式「--guard 钥匙」
+                // 理解——响亮拒绝并指路。
+                if let Some(next) = argv.get(i + 1) {
+                    if !next.starts_with('-')
+                        && next.parse::<std::net::SocketAddr>().is_err()
+                    {
+                        eprintln!(
+                            "钥匙不进命令行——本机任何账户都读得到进程启动命令（/proc 公告栏），shell 历史也会记下它。\n请用：--guard 启动后按提示悄悄输入。"
+                        );
+                        return Ok(ExitCode::from(2));
+                    }
                 }
-            },
-            "-n" | "--name" => match args.next() {
-                Some(n) => name = n,
+                guard_prompt = true;
+            }
+            "-n" | "--name" => match argv.get(i + 1) {
+                Some(n) => {
+                    name = n.clone();
+                    i += 1;
+                }
                 None => {
                     eprintln!("-n 后面要跟名字\n");
                     eprintln!("{HELP}");
@@ -119,8 +129,9 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 eprintln!("{HELP}");
                 return Ok(ExitCode::from(2));
             }
-            _ => positional.push(arg),
+            _ => positional.push(arg.to_string()),
         }
+        i += 1;
     }
     if let Some(addr) = positional.into_iter().next() {
         listen_addr = addr;
@@ -134,20 +145,17 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     // 出生；此后一半心思听事件，一半心思读输入。
     let (person, mut events) = Person::born(&name, &listen_addr).await?;
-    // 不续链：道别不预约、来约不接受（开放台席形态）
-    if no_chain {
-        person.set_chaining(false).await;
-    }
-    // 常备门禁：每位来客都要对上这句机器暗号，从不消耗
-    if let Some(g) = &guard_secret {
-        person.expect_secret_stable(g.as_bytes()).await;
-    }
     let mut notes = String::new();
-    if no_chain {
-        notes.push_str("（不续链：道别不预约，谁来都行）");
-    }
-    if guard_secret.is_some() {
-        notes.push_str("（常备门禁：每位来客都要对上暗号）");
+    // 常备门禁（耳语式，kept.guard_whisper_input）：钥匙不进命令行
+    //（/proc 公告栏与 shell 历史），启动后在这里悄悄问你要——无回显。
+    if guard_prompt {
+        let key = read_line_hidden("常备门禁钥匙（输入不回显，回车确认）：")?;
+        if key.is_empty() {
+            eprintln!("没给钥匙——门禁未立，继续无门禁运行。");
+        } else {
+            person.expect_secret_stable(key.as_bytes()).await;
+            notes.push_str("（常备门禁：每位来客都要对上暗号）");
+        }
     }
     eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（Ctrl-C 离场）");
 
@@ -340,6 +348,8 @@ mod win {
 
     pub(super) const SEM_FAILCRITICALERRORS: u32 = 0x0001;
     pub(super) const SEM_NOGPFAULTERRORBOX: u32 = 0x0002;
+    pub(super) const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
+    pub(super) const ENABLE_ECHO_INPUT: u32 = 0x0004;
 
     /// 未处理异常过滤器：只看『发生了』这件事，不解内容——立即自灭。
     /// 返回值不可达（TerminateProcess 不返回）。
@@ -363,6 +373,9 @@ mod win {
             handler_routine: Option<unsafe extern "system" fn(u32) -> i32>,
             add: i32,
         ) -> i32;
+        pub(super) fn GetStdHandle(nStdHandle: u32) -> *mut c_void;
+        pub(super) fn GetConsoleMode(hConsoleHandle: *mut c_void, lpMode: *mut u32) -> i32;
+        pub(super) fn SetConsoleMode(hConsoleHandle: *mut c_void, dwMode: u32) -> i32;
     }
 }
 
@@ -391,6 +404,57 @@ fn install_console_ctrl_handler() {
     unsafe {
         // 失败静默（尽力而为，同 harden_process 家族语义）
         let _ = win::SetConsoleCtrlHandler(Some(console_ctrl_handler), 1);
+    }
+}
+
+/// 悄悄读一行（无回显）——门禁钥匙的耳语式输入（P20-E②，
+/// kept.guard_whisper_input）。stdin 不是终端（管道/重定向）时，
+/// 关回显失败属正常：照常读（键盘输入的场景里回显由终端负责）。
+#[cfg(unix)]
+fn read_line_hidden(prompt: &str) -> std::io::Result<String> {
+    use std::io::{BufRead, Write};
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    let mut saved: Option<libc::termios> = None;
+    unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(libc::STDIN_FILENO, &mut t) == 0 {
+            saved = Some(t);
+            let mut t2 = t;
+            t2.c_lflag &= !libc::ECHO;
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t2);
+        }
+    }
+    let mut line = String::new();
+    let res = std::io::stdin().lock().read_line(&mut line);
+    unsafe {
+        if let Some(t) = saved {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t);
+        }
+    }
+    eprintln!(); // 回显被吞了的那个换行补上
+    res.map(|_| line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+#[cfg(windows)]
+fn read_line_hidden(prompt: &str) -> std::io::Result<String> {
+    use std::io::{BufRead, Write};
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    unsafe {
+        let h = win::GetStdHandle(win::STD_INPUT_HANDLE);
+        let mut mode: u32 = 0;
+        let had = h.is_null() == false && win::GetConsoleMode(h, &mut mode) != 0;
+        if had {
+            win::SetConsoleMode(h, mode & !win::ENABLE_ECHO_INPUT);
+        }
+        let mut line = String::new();
+        let res = std::io::stdin().lock().read_line(&mut line);
+        if had {
+            win::SetConsoleMode(h, mode);
+        }
+        eprintln!();
+        res.map(|_| line.trim_end_matches(['\r', '\n']).to_string())
     }
 }
 
@@ -766,9 +830,6 @@ fn render(ev: Event) {
             if let Some(id) = to {
                 eprintln!("注意力回到 #{id}。");
             }
-        }
-        Event::SecretChained { with } => {
-            eprintln!("和 [{}] 的暗号链续上了：下一场免念。", safe(&with));
         }
         Event::KeyLockDegraded => {
             eprintln!("警告：密钥内存锁定降级——本次设置的暗号/门禁钥匙未能锁进物理内存（可能被换出到磁盘）。程序照常运行，擦拭语义不变；如需关闭，请检查系统的内存锁定限额（ulimit -l）。");
