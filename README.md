@@ -279,7 +279,7 @@ taken over by a hardware forensics rig**. Two cases:
 **This program does not defend the device itself — by choosing this machine,
 you have chosen to trust it.**
 
-**Four speeds of evaporation**:
+**Four speeds of evaporation** (the first three are honored by the program — you gesture, it wipes; the fourth is a pure hardware act the program takes no part in and cannot even see — that row is written for you, for the emergency):
 
 | Gesture | Speed | Boundary |
 |---------|-------|----------|
