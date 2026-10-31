@@ -114,8 +114,7 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 |-----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | *(none)*        | Born listening on `0.0.0.0:7777`. Two people on one machine need different ports.                                                                                                     |
 | `-n <name>`     | The name you introduce yourself as (self-reported, nothing behind it).                                                                                                                |
-| `--no-chain`    | Don't reserve next-time secrets at farewell, don't accept others' — the right shape for a desk open to strangers.                                                                     |
-| `--guard <KEY>` | Stable door lock: every caller must pass the same machine key (32-byte random), never consumed — wrong-key floods can't lock the desk. Pair with `--no-chain` for an armed open desk. |
+| `--guard`       | Stable door lock: every caller must pass the same machine key (32-byte random), never consumed — wrong-key floods can't lock the desk. The key is prompted for at startup (hidden input): it never rides the command line. |
 | `--courier`     | Open a teahouse (see [Behind NAT](#two-people-behind-nat)) — the same binary in its other job.                                                                                        |
 
 ### Command reference
@@ -136,7 +135,7 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 | `/sit [name]`                             | Take a seat in answer to an offer (the seat signature must be triggered by the person themselves).     |
 | `/word`                                   | Compare words: show the current channel's short word (conversation / circle).                          |
 | `/bye`                                    | Say goodbye to the focused conversation (a signed circle farewell first, if seated).                   |
-| `/quit` or Ctrl-D                         | Say goodbye to everyone and leave. Ctrl-C walks away immediately.                                      |
+| Ctrl-C or Ctrl-D                          | Leave immediately: everything secret is wiped, no farewells, no network waits — the peer sees a disconnect. To leave gracefully: `/bye` first, then Ctrl-C. Pressing Ctrl-C twice forces an instant exit. |
 
 ### Group chat: pulling up a table
 
@@ -213,10 +212,11 @@ prevents it up front, the **SAS word** catches it on the spot:
   wire in any derivable form; a wrong secret fails loudly; offline guessing
   does not exist.
 - `/await <secret>` — arm it on your side before someone arrives.
-- **The secret chain** — at farewell, the next secret can be reserved inside
-  the already-authenticated channel, so tomorrow's conversation re-authenticates
-  automatically. It lives in RAM only; a restart returns you to the out-of-band
-  reading. A desk open to strangers opts out with `--no-chain`.
+- **Verification is always in the moment** — if you want a secret, carry it
+  with you right now (`/dial` with one, `/await` to arm one). The machine never
+  learns to recognize you automatically (the farewell "secret chain" has been
+  removed — identity continuity lives in your head, not in the program; every
+  conversation is a first meeting).
 - **The SAS word (`/word`)** — insurance even without a secret: with a focused
   1:1 it shows the **conversation word** (identical at both ends); inside a
   circle, the **group word** (identical for everyone); with both, it shows
@@ -243,7 +243,7 @@ live there — read them before touching anything.
 
 - **No liveness probes.** A peer that vanishes without closing (or over a
   punched UDP line, which has no EOF) leaves the line and its `/list` entry
-  hanging until you `/quit`. A zombie circle member is cleared out by the
+  hanging until the process exits. A zombie circle member is cleared out by the
   witness rekey of her direct neighbor.
 - **The introducer's referral is unauthenticated.** Anyone who knows the tag
   can register as your "peer" — bring a secret if you need to know who's there.

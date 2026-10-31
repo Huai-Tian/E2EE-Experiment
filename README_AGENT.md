@@ -180,10 +180,10 @@ architecture:
     - ed25519-dalek                          # P2: one-time circle voice keys (fast + zeroize features)
   planned_deps_v3: []                        # v3 needs NO new crypto dep — seat flow uses existing ed25519
   lifecycle: single-startup-person           # INVARIANT: no role subcommands; one process is born with both ears and mouth
-  birth_modes: "born | --no-chain (never offers/accepts a next secret — the open-desk shape) | --guard <machine-secret> (EVERY arrival must pass PAKE; arming NEVER consumed; armed open-desk = --guard KEY --no-chain)。3.0.0 已执行：出生只竖 TCP 耳——喊话发现家族整体退役（removals_3_0_0.v1_discovery_family LANDED 2026-10-17），--hidden/born_hidden 随之消亡（无喊话则无隐身语义），ffi e2ee_person_create_hidden 保留为 deprecated 别名（ABI 冻结）。4.0.0（frozen 未实现）：--no-chain 随暗号链移除而作废（2026_10_31_realtime_verification_razor——无链可关，旗子退役）；--guard 保留门禁语义（每客必对、永不消耗）但改交互耳语式输入——启动后隐藏回显询问钥匙，杜绝 /proc 命令行公告栏与 shell 历史泄漏（plaintext-containment 不变量对账，settled_decisions.kept.guard_whisper_input）"
+  birth_modes: "born | --no-chain (never offers/accepts a next secret — the open-desk shape) | --guard <machine-secret> (EVERY arrival must pass PAKE; arming NEVER consumed; armed open-desk = --guard KEY --no-chain)。3.0.0 已执行：出生只竖 TCP 耳——喊话发现家族整体退役（removals_3_0_0.v1_discovery_family LANDED 2026-10-17），--hidden/born_hidden 随之消亡（无喊话则无隐身语义），ffi e2ee_person_create_hidden 保留为 deprecated 别名（ABI 冻结）。4.0.0（LANDED 2026-10-31 未实现）：--no-chain 随暗号链移除而作废（2026_10_31_realtime_verification_razor——无链可关，旗子退役）；--guard 保留门禁语义（每客必对、永不消耗）但改交互耳语式输入——启动后隐藏回显询问钥匙，杜绝 /proc 命令行公告栏与 shell 历史泄漏（plaintext-containment 不变量对账，settled_decisions.kept.guard_whisper_input）"
   other_job: "--courier — the same binary as a teahouse: room numbers are GUEST-CHOSEN; wires same-room arrivals, relays opaque bytes; no identity, no storage, no plaintext"
   commands:                                  # in-session, parsed by CLI handle_command (src/main.rs)
-    dial:  { syntax: "/dial ADDR:PORT [secret]", behavior: "outbound connect + hybrid NN handshake as initiator; optional secret → PAKE first; auto-uses chained secret for that addr (burned only when actually verified); 5s connect timeout。4.0.0（frozen）：chained 自动使用随暗号链移除而亡——/dial 只收当场的人类暗号（剃刀：凡验证必当场）" }
+    dial:  { syntax: "/dial ADDR:PORT [secret]", behavior: "outbound connect + hybrid NN handshake as initiator; optional secret → PAKE first; auto-uses chained secret for that addr (burned only when actually verified); 5s connect timeout。4.0.0（LANDED 2026-10-31）：chained 自动使用随暗号链移除而亡——/dial 只收当场的人类暗号（剃刀：凡验证必当场）" }
     meet:  { syntax: "/meet COURIER ROOM [secret]", behavior: "enter a teahouse room; roles assigned by courier (later arrival initiates); optional secret → PAKE inside the room; teahouse lines never chain" }
     punch: { syntax: "/punch INTRODUCER TAG [secret]", behavior: "register the same tag with the introducer; he exchanges public endpoints; both sides hole-punch; noise handshake runs over the punched udp line; best-effort — on failure the user re-routes via /meet MANUALLY" }
     await:  { syntax: "/await SECRET", behavior: "arm the password challenge for the NEXT inbound arrival (one-shot; spent only when PAKE masks are actually exchanged)" }
@@ -196,8 +196,8 @@ architecture:
     sit: { syntax: "/sit [名字]", behavior: "落座（slice-4 已落地）：候选人收到看座事件后触发——0x11 落座署名必须是候选人本人的手势（A1）。默认取本人 0x05 自报名，可覆盖（「这桌叫我阿花」）；多份邀约按 /talk 模式列候选（聚焦线优先→唯一→歧义响亮）。库面 sit(Option<&str>)" }
     word: { syntax: "/word", behavior: "对词（slice-5 已落地）：聚焦 1:1 时显示会话短词（Noise transcript 哈希 HKDF(p2p-sas) 派生，两端相同）；在圈时显示群短词（HKDF(K, circle-sas) 派生，全员相同）——两者兼有时都报。12 位数字分 4 组（~40bit）。即时计算零落盘。库面 sas_word() -> SasReport（NoSasChannel）。见 group_v3.sas" }
     file:  { syntax: "/file PATH", behavior: "hand a file to the focused conversation: 0x06 head + 0x07 chunks; lossless; 32MB cap both ways; received files auto-save to ./received/" }
-    bye:   { syntax: "/bye", behavior: "offer next secret (chainable lines only), then circle_bye (0x0C) if in a circle, then empty-plaintext goodbye to focused conversation。4.0.0（frozen）：两步化——圈子署名告退 + 聚焦线告别帧（只有这条线断，进程继续活着）；链授予步随暗号链移除（2026_10_31_realtime_verification_razor）；/bye = 唯一的关系告别动词（2026_10_31_exit_taxonomy）" }
-    quit:  { syntax: "/quit | Ctrl-D", behavior: "circle_bye to all circles (chainable lines offer secrets), goodbye to all conversations, exit 0。4.0.0（frozen）：/quit 与 Ctrl-D 别名废除——Ctrl-C 成为唯一退出（立即/擦净/不告别/不等网络；二次连按强退；对端视角=掉线）；Ctrl-D（终端 EOF 惯例）≡ Ctrl-C；完整裁决 theory.rulings.2026_10_31_exit_taxonomy" }
+    bye:   { syntax: "/bye", behavior: "offer next secret (chainable lines only), then circle_bye (0x0C) if in a circle, then empty-plaintext goodbye to focused conversation。4.0.0（LANDED 2026-10-31）：两步化——圈子署名告退 + 聚焦线告别帧（只有这条线断，进程继续活着）；链授予步随暗号链移除（2026_10_31_realtime_verification_razor）；/bye = 唯一的关系告别动词（2026_10_31_exit_taxonomy）" }
+    quit:  { syntax: "/quit | Ctrl-D", behavior: "circle_bye to all circles (chainable lines offer secrets), goodbye to all conversations, exit 0。4.0.0（LANDED 2026-10-31）：/quit 与 Ctrl-D 别名废除——Ctrl-C 成为唯一退出（立即/擦净/不告别/不等网络；二次连按强退；对端视角=掉线）；Ctrl-D（终端 EOF 惯例）≡ Ctrl-C；完整裁决 theory.rulings.2026_10_31_exit_taxonomy" }
   planned_commands_v3: []                     # word/bring/sit all LANDED (slice-4/5) — as-built entries live in commands above
   sessions: multiple-concurrent-1to1
   focus_model: "typed lines go to the focused conversation; focus set by /dial or /talk; incoming conversations never steal focus"
@@ -246,13 +246,13 @@ memory_hygiene:                              # P1 as-built (unchanged by P2/v3)
   goal: exposure-minimization                 # minimize TIME WINDOW and PHYSICAL EXTENT of secrets in RAM, weld T1 shut
   implemented_layers:
     snow_fork: "vendored fork at vendor/snow (patch.crates-io) — SymmetricStateData h/ck wipe on drop + local HKDF/key copies wiped; HandshakeState.psks Zeroizing; Dh25519/P256 privkey Drop-wipe; Kyber1024 secret-key volatile wipe (fork relaxes upstream's unsafe_code=forbid). Cipher internals already wipe via upstream chain. Behavior bit-identical: snow's own 66-test suite ships in the fork copy and passes"
-    own_secrets: "person.rs all self-held secrets wrapped Zeroizing: expecting/stable/chained/pending secrets, Gathering (my_r/contribs/key/voice sk), InboundFile.buf, Event::FileArrived.data, ear()/hello()/send_typed()/send_chat() plaintext frame buffers, pake() ignition key。4.0.0（frozen）：chained 随暗号链移除；InboundFile.buf/FileArrived.data 随 P20-F 流式重构形态变化（32MB 常驻→单块瞬态）"
+    own_secrets: "person.rs all self-held secrets wrapped Zeroizing: expecting/stable/chained/pending secrets, Gathering (my_r/contribs/key/voice sk), InboundFile.buf, Event::FileArrived.data, ear()/hello()/send_typed()/send_chat() plaintext frame buffers, pake() ignition key。4.0.0（LANDED 2026-10-31）：chained 随暗号链移除；InboundFile.buf/FileArrived.data 随 P20-F 流式重构形态变化（32MB 常驻→单块瞬态）"
     cli_harden: "main.rs harden_process(): RLIMIT_CORE=0 (unix) + /proc/swaps unencrypted-partition warning. Library never touches process policy. P7 UPGRADE: RLIMIT_CORE does NOT bind piped core collectors (core_pattern starting with '|') — the STRUCTURAL fix is prctl(PR_SET_DUMPABLE, 0) (same class as ssh-agent); RLIMIT_CORE stays as belt-and-suspenders. See attack_precedents P-10."
     circle_borrow: "circle.rs derive_group_key takes &[&[u8]] (borrows, never moves contributions)"
   mlock_evaluation:
     verdict: reopened-2026-10-31-for-4.0.0     # P20-L（frozen 未实现）：锁密钥集，不是全堆
     why: "原否决（仍约束形状）：mlock 4KB 页粒度 vs 32B 堆对象、RLIMIT_MEMLOCK 64KB 默认、分配器无页对齐——『不要 cargo-cult mlock 回来』对全堆/全缓冲面继续成立。4.0.0 重开裁决（owner 2026-10-31）：范围收窄为『密钥集』——少量页（数量级：个位数）、接受 4KB 粒度邻页粘连的价格、RLIMIT_MEMLOCK 不足时响亮降级（打印警告继续跑，绝不静默假装锁上——loud-failure 纪律）。收益定性：kill -9/掉电后残留只在 RAM 不入 swap（T1→T3 收窄）；与最小持有集（P20-F 流式）叠加=失守窗口的内容与去处同时封顶。死后窗口的彻底关闭=init_on_free=1 内核参数（P20-D 文档推荐，OS 面）。全谱系见 theory.rulings.2026_10_31_timer_doctrine 尾段"
-  honest_boundary: "T2/T3 remain out of reach; kill -9 / power loss skips Drop (residue until reboot — inherent to zeroize-class defenses, documented); the promise stands as 'zero persistence + active memory hygiene'。4.0.0（frozen）kill -9 分层答案入档 theory.rulings.2026_10_31_timer_doctrine 尾段：最小持有集（P20-F）+ 密钥集 mlock（P20-L，残留 RAM-only——T1 收窄为 T3）+ 可捕获信号全修干净（SIGINT/SIGTERM/EOF/X 按钮）+ init_on_free=1 文档（Linux 死后窗口彻底关闭；Windows 无等价物）。守门犬方案永久否决（rejected.watchdog_anti_kill9：计时器依赖+物理不可达死进程页，双重死）"
+  honest_boundary: "T2/T3 remain out of reach; kill -9 / power loss skips Drop (residue until reboot — inherent to zeroize-class defenses, documented); the promise stands as 'zero persistence + active memory hygiene'。4.0.0（LANDED 2026-10-31）kill -9 分层答案入档 theory.rulings.2026_10_31_timer_doctrine 尾段：最小持有集（P20-F）+ 密钥集 mlock（P20-L，残留 RAM-only——T1 收窄为 T3）+ 可捕获信号全修干净（SIGINT/SIGTERM/EOF/X 按钮）+ init_on_free=1 文档（Linux 死后窗口彻底关闭；Windows 无等价物）。守门犬方案永久否决（rejected.watchdog_anti_kill9：计时器依赖+物理不可达死进程页，双重死）"
   coercion_stance: "physical-coercion defense is INHERENT — zero-persistence + wipe-on-drop + ephemeral keys compose into 'close the program and nothing remains'. No duress mode, no panic wipe, no hidden state to find. NEVER propose a duress/panic-wipe feature (settled_decisions.kept.coercion_defense_inherent)."
 
 # ───────────────────────────────────────────────────────────────
@@ -270,8 +270,8 @@ wire_protocol:
   first_app_frame: "kind-tagged encrypted NAME frame (0x05) — names NEVER cross the wire in plaintext"
   app_frame_kinds:                           # first byte of every encrypted payload
     chat: "0x00 legacy bare text — still PARSED, no longer emitted"
-    offer_secret: "0x01 + 32B next-secret — 4.0.0（frozen）随暗号链移除停止发射；编号退役不复活（帧编号不复用规则，rulings.2026_10_31_realtime_verification_razor）"
-    ack_secret: "0x02 — 4.0.0（frozen）随暗号链移除停止发射；编号退役不复活"
+    offer_secret: "0x01 + 32B next-secret — 4.0.0（LANDED 2026-10-31）随暗号链移除停止发射；编号退役不复活（帧编号不复用规则，rulings.2026_10_31_realtime_verification_razor）"
+    ack_secret: "0x02 — 4.0.0（LANDED 2026-10-31）随暗号链移除停止发射；编号退役不复活"
     contrib: "0x03 + 32B contribution — v1 circles; SUPERSEDED by 0x09"
     circle_chat: "0x04 + nonce ‖ group-AEAD — v1 circles; SUPERSEDED by 0x0A"
     name: "0x05 + utf8 name"
@@ -315,10 +315,10 @@ file_transfer:
   chunking: "randomized 8–32KB; receiver size-agnostic; no negotiation"
   cap: "MAX_FILE_BYTES = 32MB, enforced symmetrically"
   in_flight: "ONE transfer per conversation per direction; stalled half-file never blocks the next"
-  robustness: "seq must match next_seq exactly; mismatch voids the transfer silently。4.0.0（frozen，P20-F）：mismatch 从静默作废改为响亮失败（loud-failure 不变量对账——静默=罪）"
+  robustness: "seq must match next_seq exactly; mismatch voids the transfer silently。4.0.0（LANDED 2026-10-31，P20-F）：mismatch 从静默作废改为响亮失败（loud-failure 不变量对账——静默=罪）"
   zero_persistence: "reassembly in RAM only; the LIBRARY never touches the fs; bytes surface as Event::FileArrived (Zeroizing)"
-  memory_note: "the 32MB RAM residency is a T1 exposure — documented, accepted。4.0.0（frozen，P20-F）：双侧流式落地后 32MB 常驻降为 8-32KB 单块瞬态——T1 面收窄为本块在途窗口"
-  ffi_status: "FileArrived/FileDeclined map to tag 0 in e2ee_poll; an e2ee file API is the natural add-only extension。4.0.0（frozen，P20-F）：FFI 12→16 符号——接收侧 FileChunk/FileComplete/FileAborted 事件族（FileArrived 退役，tag 保留定义永不触发）+ 发送侧流式 API；C 头保持 add-only（新符号零冲突新增，旧 12 符号签名零变更）；Rust Event 面=4.0.0 破坏性变更（与 SecretChained 移除同批）"
+  memory_note: "the 32MB RAM residency is a T1 exposure — documented, accepted。4.0.0（LANDED 2026-10-31，P20-F）：双侧流式落地后 32MB 常驻降为 8-32KB 单块瞬态——T1 面收窄为本块在途窗口"
+  ffi_status: "FileArrived/FileDeclined map to tag 0 in e2ee_poll; an e2ee file API is the natural add-only extension。4.0.0（LANDED 2026-10-31，P20-F）：FFI 12→16 符号——接收侧 FileChunk/FileComplete/FileAborted 事件族（FileArrived 退役，tag 保留定义永不触发）+ 发送侧流式 API；C 头保持 add-only（新符号零冲突新增，旧 12 符号签名零变更）；Rust Event 面=4.0.0 破坏性变更（与 SecretChained 移除同批）"
 
 # ───────────────────────────────────────────────────────────────
 # GROUP — P2 as-built (诚实债务版：代码是什么就写什么)
@@ -954,7 +954,7 @@ pending_work:
       0 flaky；YAML 自检过。
 
   P20_ram_file_exit_4_0_0:                    # 4.0.0 主工程：内存卫生 + 文件流式 + 退出统一 + 暗号手术（owner 全部裁决闭合 2026-10-31）
-    status: in-progress-2026-10-31            # W/D LANDED（9e3e965）+ L LANDED（同日，见下）——F/E/B 未动。裁决出处：theory.rulings 2026_10_31_* 五条 + settled_decisions 2026-10-31 增补（kept/rejected）
+    status: landed-2026-10-31                 # W/D（9e3e965）+ L（167a9c5）+ E①（e470613）+ E②（cd366f0）+ F（f2338dd）全部落地；B=本笔。裁决出处：theory.rulings 2026_10_31_* 五条 + settled_decisions 2026-10-31 增补（kept/rejected）。验证链：rogue 全量 95 = 22 单元 + 71 集成（+1 序号不合响亮）+ 1 pq + 1 dumpable；FFI OK + ctypes OK + nm 恰 16 符号；x86_64-pc-windows-gnu cargo check 零错零警；Ctrl-C 实测（fifo 保持 stdin 下单次 SIGINT → 6ms 干净退出 0）+ --guard 耳语式实测
     depends: []
     version: "4.0.0（破坏性变更面：Rust Event——FileArrived→FileChunk/FileComplete/FileAborted、SecretChained 移除；C ABI——add-only 新增至 16 符号、旧 12 符号签名零变更、FileArrived/SECRET_CHAINED 事件 tag 保留定义永不触发；wire——0x01/0x02 停止发射（对端 unknown_kinds 静默跳过=前向兼容既有机制，跨版本混跑安全））"
     implementation_constraints: "沙箱=Linux（可测全 Unix 面）；Windows 面（W）写完由 owner 统一测试（owner 2026-10-31 指令）。测试纪律：92 基线不回退；每个安全修复带红绿自证（修复前红实证/修复后绿——2026_10_17_p15_closure_granted 起的落地标配）；YAML 自检过"
@@ -964,7 +964,7 @@ pending_work:
       L_lock_keys: "密钥集 mlock（mlock_evaluation.reopened-2026-10-31 全文照办）：只锁密钥集（数量级个位数页）、RLIMIT_MEMLOCK 不足响亮降级继续跑、绝不静默假装锁上；madvise 参数与锁页清单实现时定，越权即停报裁决"
       F_stream_files: "文件双侧流式：接收侧 InboundFile.buf 32MB 常驻→8-32KB 单块瞬态，Event::FileChunk/FileComplete/FileAborted 三事件族替代 FileArrived（Complete 后 CLI 落盘 ./received/ 不变）；发送侧 CLI /file 边读边发（库面是否同步暴露流式发送 API 实现时定）；FFI 12→16 符号（C 头 add-only）；seq mismatch 静默→响亮。32MB cap、in_flight 单传输语义、lossless 断言全部不变"
       E_exit_chain_surgery: "退出统一+暗号手术：①信号面——tokio ctrl_c + SIGTERM + stdin EOF 全部改走『立即擦净退出』（break 循环→Drop 链→process::exit；不发告别帧不等网络）；二次连按强退（第一次后短时间内第二次=直接 exit）；Windows 控制台事件接同路径（随 W）。②命令面——/quit 删除、Ctrl-D ≡ Ctrl-C（EOF 同义）、/bye 两步化（删 offer_next_secret 调用）。③链拆除——chained 字段/offer_next_secret/ack 处理器（0x02 收端）/--no-chain 旗子/SECRET_CHAINED 事件停发+头文件 deprecated 注记/相关测试与 ffi_test.c 清理。④--guard 改交互隐藏输入（启动后 rpassword 式询问，无回显；门禁语义不变）。库面 bye()/leave() 保留（ABI 冻结+嵌入式），只动 CLI；ffi e2ee_await_secret 保留（当场切口合法）"
-      B_bookkeeping: "收尾簿记（涵盖 P21）：README.md/README_ZH.md 重写（命令表：/quit 死、Ctrl-C 新语义、/bye 两步；Secrets&SAS 节：链移除、--guard 耳语式、当场验证原则；警惕者手册进双语正文）；本档案各 4.0.0（frozen）注记翻 LANDED 并补落地记录；CHANGELOG 4.0.0 置顶破坏性声明；Cargo 3.0.0→4.0.0；coercion 修正案与全部 2026-10-31 裁决已随本笔入档（此句在落地时核对）"
+      B_bookkeeping: "收尾簿记（涵盖 P21）：README.md/README_ZH.md 重写（命令表：/quit 死、Ctrl-C 新语义、/bye 两步；Secrets&SAS 节：链移除、--guard 耳语式、当场验证原则；警惕者手册进双语正文）；本档案各 4.0.0（LANDED 2026-10-31）注记翻 LANDED 并补落地记录；CHANGELOG 4.0.0 置顶破坏性声明；Cargo 3.0.0→4.0.0；coercion 修正案与全部 2026-10-31 裁决已随本笔入档（此句在落地时核对）"
   P21_skittish_mode:                          # 惊弓之鸟（--skittish）——spec 全文=theory.rulings.2026_10_31_skittish_spec（本块只承工程面）
     status: planned-frozen-2026-10-31         # opt-in 旗标；触发=合盖+锁屏；触发即失守威胁模型；动作=擦→清屏→统一退出；不关机不关窗；启动横幅知情。2026-10-31 补裁（kept.skittish_cli_only）：仅 CLI——零新库 API、零 FFI 符号、零新库事件
     depends: [P20_ram_file_exit_4_0_0.E]      # 复用统一干净退出路径与清屏动作（同为 CLI 面）

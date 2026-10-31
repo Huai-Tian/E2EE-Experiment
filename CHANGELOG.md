@@ -3,6 +3,30 @@
 各发布版的显著变更。条目依据 README_AGENT.md（机器面文档）的落地链撰写；
 日期为各 slice 落地日。
 
+## 4.0.0 —— 2026-10-31（P20：内存卫生 + 退出统一 + 暗号手术 + 文件流式）
+
+> 惊弓之鸟模式（`--skittish`，P21）随平台触发面裁决落地后并入本版条目（见 README_AGENT pending_work.P21）。
+
+### ⚠️ 破坏性变更
+
+- **Rust Event 面**：`FileArrived` 移除，代之以流式三事件族 `FileChunk`（逐块交出，用后即焚）/ `FileComplete`（收齐收尾）/ `FileAborted`（响亮作废）；`SecretChained` 移除（暗号链整体退役）；新增 `KeyLockDegraded`（密钥锁定降级告知）。
+- **库 API**：`set_chaining()` 移除（链死）；`dial()` 不再自动使用链上暗号——想用暗号当场带着来；`bye()` 两步化（圈子署名告退 + 聚焦线告别帧）；新增流式文件 API（`file_begin` / `file_chunk` / `file_end` / `file_abort`）；`send_file` 保留为便捷包装。
+- **CLI**：`/quit` 与 Ctrl-D 别名废除——**Ctrl-C 成为唯一退出**（立即擦净、不告别、不等网络，对端视角=掉线；连按两次强制立即退出）；`--no-chain` 旗子作废；`--guard` 改启动后无回显输入（钥匙不进命令行——/proc 公告栏与 shell 历史都会泄漏它）。
+- **wire**：0x01 OFFER / 0x02 ACK 停止发射（帧编号退役不复活）；旧对端发来落入 unknown_kinds 静默跳过——**聊天与文件跨版本互通不受影响**。
+- **ffi**：C ABI 保持 add-only——新增 4 符号（`e2ee_file_begin` / `e2ee_file_chunk` / `e2ee_file_end` / `e2ee_file_abort`，共 16 个 `e2ee_*`）；新事件 tag 11/12/13；`SECRET_CHAINED`（tag 7）保留定义永不触发。
+
+### 内存卫生（T1 封堵与收窄）
+
+- **Windows 进程装甲补齐**（原为空壳）：未处理异常 → 立即自灭——WER 转储（= 整内存快照落盘）与崩溃弹窗双灭；pagefile 未加密提醒。实机由 owner 统一测试。
+- **密钥集锁定页（mlock / VirtualLock）**：常备门禁钥与一次性切口进页对齐的锁定内存——swap / pagefile 永不收留；锁不住时响亮降级（`KeyLockDegraded` 事件 + 启动探测两条路），绝不静默假装锁上。诚实边界：Gathering 群钥材料与 snow 会话钥不覆盖（后续裁决）。
+- **休眠画像提醒**：本机可休眠（`/sys/power/state` 含 disk）即响亮提醒——休眠把整内存（含密钥）写进盘上文件，应用层无法拦截。
+- **文件双侧流式**：收发两端内存里永远只有一块（32MB 常驻 → 8-32KB 瞬态）；收端序号不合从静默作废改为 `FileAborted` 响亮（静默=罪）；被新文件顶替 / 线断同样响亮。
+
+### 退出与告别的分家
+
+- Ctrl-C = 人的死亡（立即擦净，圈按掉线路径见证换气，A4 保留）；`/bye` = 关系的结束（程序继续在场）。退出面只剩一个手势。
+- 根因修复：stdin 搬独立线程——`tokio::io::stdin()` 的阻塞读跑在 runtime 阻塞池上，`Runtime::drop` 会等它完成，stdin 不 EOF 则单次 Ctrl-C 后进程假死（strace 取证：循环正确退出、worker 干净收摊、进程卡在读上）。
+
 ## 3.0.0 —— 2026-10-17
 
 > 2.0.0 从未发布：v3 公理重建在未发版的工作树上完成，破坏性变更全部并入本版。
