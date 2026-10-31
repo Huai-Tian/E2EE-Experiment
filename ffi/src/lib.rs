@@ -24,13 +24,15 @@ const EVENT_MEET_FAILED: c_int = 3;
 const EVENT_HEARD: c_int = 4;
 const EVENT_LEFT: c_int = 5;
 const EVENT_FOCUS_RETURNED: c_int = 6;
-const EVENT_SECRET_CHAINED: c_int = 7; // 已退役（暗号链移除，rulings.2026_10_31_realtime_verification_razor）——保留编号占位（ABI 冻结/add-only：C 头定义仍在、永不触发）
 const EVENT_CIRCLE_FORMED: c_int = 8;
 const EVENT_CIRCLE_MUMBLE: c_int = 9;
 const EVENT_SEAT_OFFERED: c_int = 10;
 const EVENT_FILE_CHUNK: c_int = 11; // 4.0.0 P20-F：块字节不进冻结的事件结构（C 侧收数据面待 ABI 演进）
 const EVENT_FILE_COMPLETE: c_int = 12;
 const EVENT_FILE_ABORTED: c_int = 13;
+// tag 7 已随暗号链退役（4.0.0，rulings.2026_10_31_realtime_verification_
+// razor）——墓碑只在 C 头文件挂牌（ABI 面），Rust 侧零代码零死常量；
+// 『编号永不复用』由 tests 里的事件编号纪律断言钉死，不靠 incidental。
 
 /* ── 事件结构：与 e2ee.h 的 struct 一一对应（布局冻结） ── */
 /// 超出容量的字符串会被截断（name 63 字节、text 511 字节，UTF-8 可能截半——
@@ -115,6 +117,7 @@ pub extern "C" fn e2ee_person_create(
 /// # Safety
 /// name / listen_addr 必须是合法的 NUL 结尾 UTF-8 C 字符串。
 #[unsafe(no_mangle)]
+#[deprecated(since = "3.0.0", note = "喊话发现已删除，无隐身语义——本别名仅为冻结 ABI 保留，行为等同 e2ee_person_create")]
 pub extern "C" fn e2ee_person_create_hidden(
     name: *const c_char,
     listen_addr: *const c_char,
@@ -577,6 +580,34 @@ mod tests {
     /// 圈类事件的 circle_id 必须到达 ffi 事件载荷（GUI 多圈路由依赖）。
     /// Event → E2eeEvent 转换层钉死：id 字段承载圈号，tag 区分语义，
     /// C 头/布局/签名零变更。C 侧圈动词进面时（另行裁决）扩展端到端。
+    /// 事件编号纪律（P20-E② + 补裁 2026-10-31）：tag 7 已随暗号链退役
+    /// ——墓碑只在 C 头文件挂牌，Rust 侧零代码。『编号永不复用』由本
+    /// 断言钉成机器可验证的不变量，不靠任何 incidental 成立（新增事件
+    /// 请把 tag 加进这张表：从 14 起）。
+    #[test]
+    fn 事件编号_退役区与唯一性() {
+        let in_use = [
+            EVENT_KNOCKED,
+            EVENT_MET,
+            EVENT_MEET_FAILED,
+            EVENT_HEARD,
+            EVENT_LEFT,
+            EVENT_FOCUS_RETURNED,
+            EVENT_CIRCLE_FORMED,
+            EVENT_CIRCLE_MUMBLE,
+            EVENT_SEAT_OFFERED,
+            EVENT_FILE_CHUNK,
+            EVENT_FILE_COMPLETE,
+            EVENT_FILE_ABORTED,
+        ];
+        for (i, a) in in_use.iter().enumerate() {
+            assert_ne!(*a, 7, "tag 7 已退役（SECRET_CHAINED），编号永不复用——C 头文件挂牌");
+            for b in &in_use[i + 1..] {
+                assert_ne!(a, b, "事件 tag 撞号：{a} 与 {b}");
+            }
+        }
+    }
+
     #[test]
     fn circle_event_round_trip_carries_circle_id() {
         let ev = Event::CircleFormed {
