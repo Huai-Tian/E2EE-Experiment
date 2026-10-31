@@ -75,6 +75,12 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     // 这是 CLI 这个使用者的进程策略——库本体不碰进程级设置。
     harden_process();
 
+    // P20-L 密钥集锁定探测：锁不住就响亮说（库不打印——api_style；
+    // 运行中的降级经 Event::KeyLockDegraded 走体验流）。
+    if !e2ee::lock::probe() {
+        eprintln!("警告：本机的密钥内存锁定（mlock）不可用——暗号/门禁钥匙将退回普通擦除内存，存在被换出到磁盘的可能。程序照常运行；如需启用，请检查系统的内存锁定限额（ulimit -l）。");
+    }
+
     let mut name = String::from("无名氏");
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
     let mut as_courier = false;
@@ -649,6 +655,9 @@ fn render(ev: Event) {
         }
         Event::SecretChained { with } => {
             eprintln!("和 [{}] 的暗号链续上了：下一场免念。", safe(&with));
+        }
+        Event::KeyLockDegraded => {
+            eprintln!("警告：密钥内存锁定降级——本次设置的暗号/门禁钥匙未能锁进物理内存（可能被换出到磁盘）。程序照常运行，擦拭语义不变；如需关闭，请检查系统的内存锁定限额（ulimit -l）。");
         }
         Event::CircleFormed { circle_id, members } => {
             eprintln!(

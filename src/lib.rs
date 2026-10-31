@@ -17,6 +17,7 @@
 pub mod circle;
 pub mod courier;
 pub mod discover;
+pub mod lock;
 pub mod person;
 pub mod punch;
 pub mod wire;

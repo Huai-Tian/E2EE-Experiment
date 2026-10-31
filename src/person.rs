@@ -87,6 +87,11 @@ pub enum Event {
     FileArrived { id: u64, name: String, data: Zeroizing<Vec<u8>> },
     /// 对方想递一份超过上限的文件，婉拒了（提醒人类，不中断会话）。
     FileDeclined { from: String, name: String, size: u64 },
+    /// 密钥内存锁定降级（P20-L，loud-failure）：本次武装的暗号/门禁钥匙
+    /// 未能锁进物理内存（mlock/VirtualLock 不可用），退回了普通擦除堆
+    /// ——擦拭语义不变，但存在被换出到磁盘的可能。不是错误，程序照常
+    /// 跑；用户该知道。每次降级态武装都会响。
+    KeyLockDegraded,
 }
 
 /// 一场对话是怎么结束的。
@@ -663,12 +668,15 @@ struct Inner {
     next_id: u64,
     events: mpsc::UnboundedSender<Event>,
     /// 等人的切口：设了之后，下一位来客必须对得上才谈得成。一位一焚。
-    expecting_secret: Option<Zeroizing<Vec<u8>>>,
+    /// P20-L：SecretBytes = 密钥集锁定页（mlock/VirtualLock，swap 永不收留；
+    /// 锁不住时响亮降级为擦除堆——见 lock.rs 与 Event::KeyLockDegraded）。
+    expecting_secret: Option<crate::lock::SecretBytes>,
     /// 常备门禁（机器密钥形态）：每位来客都要对上才谈得成，且从不消耗。
     /// one-shot 的「烧」护的是低熵人类暗号（防在线爆破）；32 字节机器
     /// 密钥在线爆破本就不可能——于是错多少次都锁不住台，真钥永远进得来。
     /// 一次性切口（/await）若在，优先生效；烧掉之后门禁照常。
-    stable_secret: Option<Zeroizing<Vec<u8>>>,
+    /// P20-L：同上，锁定页存放（进程寿命级的最长寿命用户秘密）。
+    stable_secret: Option<crate::lock::SecretBytes>,
     /// 暗号链（主动侧）：地址 → 上一场告别时预约的下一把。用过即焚。
     chained_secrets: HashMap<String, Zeroizing<Vec<u8>>>,
     /// 挂起待确认的预约：对话编号 → 新暗号。收到确认才入链。
@@ -860,7 +868,7 @@ impl Person {
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_default();
-                    let greet_secret = secret.as_ref().map(|s| &s[..]);
+                    let greet_secret = secret.as_ref().map(|s| s.as_slice());
                     if let Err(f) =
                         greet(&inner, stream, false, greet_secret, peer_addr).await
                     {
@@ -893,8 +901,15 @@ impl Person {
     }
 
     /// 备好切口：下一位来客必须对得上这句暗号才谈得成（一位一焚）。
+    /// P20-L：进密钥集锁定页；锁不住 → 响亮降级（事件 + 粘滞标志）。
     pub async fn expect_secret(&self, secret: &[u8]) {
-        self.inner.lock().await.expecting_secret = Some(Zeroizing::new(secret.to_vec()));
+        let s = crate::lock::SecretBytes::new(secret);
+        let degraded = !s.is_locked();
+        let mut p = self.inner.lock().await;
+        p.expecting_secret = Some(s);
+        if degraded {
+            p.events.send(Event::KeyLockDegraded).ok();
+        }
     }
 
     /// 立起常备门禁：**每一位**来客都要对上这句暗号才谈得成，且从不消耗——
@@ -902,8 +917,15 @@ impl Person {
     /// 这句应是 32 字节级的随机机器密钥（客户端内嵌），不是人类暗号：
     /// 一次性切口的「烧」防的是对低熵暗号的在线爆破，机器密钥在线爆破
     /// 本就不可能，不需要那份保护——于是瞎拨锁不住台（DoS 无效）。
+    /// P20-L：进密钥集锁定页；锁不住 → 响亮降级（事件 + 粘滞标志）。
     pub async fn expect_secret_stable(&self, secret: &[u8]) {
-        self.inner.lock().await.stable_secret = Some(Zeroizing::new(secret.to_vec()));
+        let s = crate::lock::SecretBytes::new(secret);
+        let degraded = !s.is_locked();
+        let mut p = self.inner.lock().await;
+        p.stable_secret = Some(s);
+        if degraded {
+            p.events.send(Event::KeyLockDegraded).ok();
+        }
     }
 
     /// 续链开关：关掉后这个人道别不预约、来约不接受。
@@ -2743,7 +2765,14 @@ async fn ear(
                             if n == 1 + 32 {
                                 let mut p = inner.lock().await;
                                 if p.chaining && p.expecting_secret.is_none() {
-                                    p.expecting_secret = Some(Zeroizing::new(plain[1..n].to_vec()));
+                                    // P20-L 过渡注记：此路径随暗号链移除（P20-E）整段删除；
+                                    // 过渡期保持编译——切口同样进锁定页。
+                                    let s = crate::lock::SecretBytes::new(&plain[1..n]);
+                                    let degraded = !s.is_locked();
+                                    p.expecting_secret = Some(s);
+                                    if degraded {
+                                        p.events.send(Event::KeyLockDegraded).ok();
+                                    }
                                     p.events
                                         .send(Event::SecretChained {
                                             with: their_name.clone(),
