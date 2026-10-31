@@ -2,8 +2,8 @@
 //! 库负责语义——动作从方法进，经历从事件出；这里只把事件说成人话。
 
 use e2ee::{Event, LeaveReason, Person};
+use std::io::BufRead;
 use std::process::ExitCode;
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// 耳朵默认守着的地址
 const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:7777";
@@ -61,9 +61,10 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
                        在圈的群短词，12 位数字分 4 组）。两边各看各的
                        屏幕，想核对的人口头对一遍——念的不一样
                        = 这条线上有人拼话。短词即时显示、永不落盘
-  /bye                 和当前对话的人道别
-  /quit 或 Ctrl-D      和所有人道别，离场
-  Ctrl-C               直接离场
+  /bye                 和当前对话的人道别（在圈则先署名告退；程序继续在场）
+  Ctrl-C 或 Ctrl-D     立即离场：擦净一切秘密，不告别、不等网络——
+                       对面看到的是掉线。想体面地走：先 /bye 再 Ctrl-C。
+                       连按两次 Ctrl-C = 强制立即退出（清理卡住时的保险阀）
 
 这条线上只有你们两端能听懂彼此；对面是谁，由你自己判断。
 无账户 · 无身份 · 无存储 —— 每次连接都是初次见面。";
@@ -148,13 +149,38 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     if guard_secret.is_some() {
         notes.push_str("（常备门禁：每位来客都要对上暗号）");
     }
-    eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（/quit 离场）");
+    eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（Ctrl-C 离场）");
 
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    // 输入线：独立 std 线程阻塞读 stdin，逐行递给异步世界（P20-E①）。
+    // 为什么不用 tokio::io::stdin()：它的读跑在 runtime 的阻塞池上，而
+    // Runtime::drop 会等阻塞任务完成——stdin 不 EOF 就永远等下去（实测：
+    // 单次 Ctrl-C 后循环正确退出、worker 干净收摊，进程却假死在 runtime
+    // 关机上，直到第二次 Ctrl-C 才被强制阀带走）。独立线程不在 drop 路
+    // 径上：main 返回即进程退出，线程随进程消亡。EOF（Ctrl-D ≡ Ctrl-C）
+    // 经通道关闭传递：线程结束时 tx drop → rx 收到 None。
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(l) => {
+                    if line_tx.send(l).is_err() {
+                        return; // 主循环已走：别拦着进程退出
+                    }
+                }
+                Err(_) => return,
+            }
+        }
+    });
+    // 统一终止信号面（P20-E①，rulings.2026_10_31_exit_taxonomy）：
+    // Ctrl-C / SIGTERM（unix）、控制台事件（windows：Ctrl-C/X 按钮/注销，
+    // 经 SetConsoleCtrlHandler 桥到静态 Notify）——汇成一条通道。
+    let mut term = terminate_signal();
     loop {
         tokio::select! {
-            line = lines.next_line() => {
-                let Some(line) = line? else { break };
+            line = line_rx.recv() => {
+                // Ctrl-D/语尽 ≡ Ctrl-C（终端 EOF 惯例，非本项目发明）
+                let Some(line) = line else { break };
                 let line = line.trim_end();
                 if line.is_empty() {
                     continue; // 沉默不必传递
@@ -171,12 +197,67 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 let Some(ev) = maybe else { break };
                 render(ev);
             }
+            _ = term.recv() => break,
         }
     }
 
-    // 语尽（Ctrl-D / /quit）：和所有人道别，体面离场。
-    person.leave().await;
+    // ── 统一退出（P20-E①）：立即、擦净、不告别、不等网络 ─────────────
+    // 人的死亡（A1）：不发告别帧、不等任何网络。Drop 链自然跑完——密钥
+    // 归零（库的既有语义），耳朵任务随运行时收摊被中止，对端视角=掉线
+    //（圈子按 crash 路径见证换气，A4 完整保留）。main 返回即进程退出，
+    // 输入线程随进程消亡。
+    // 二次 Ctrl-C = 强制阀（exit_taxonomy ④）：独立 std 线程阻塞收信号
+    //（blocking_recv，不依赖 runtime 存活——万一清理卡在深处，阀仍在），
+    // 第二次不再等，直接走——保住『Ctrl-C 永远灵』的手感。
+    std::thread::spawn(move || {
+        if term.blocking_recv().is_some() {
+            std::process::exit(130);
+        }
+    });
+    drop(person);
+    drop(events);
     Ok(ExitCode::SUCCESS)
+}
+
+/// 统一终止信号面（P20-E①）：把平台上『可捕获的终止手势』汇成一条通道。
+/// 每收到一项 = 一次终止手势（Ctrl-C / SIGTERM / Windows 控制台事件）。
+fn terminate_signal() -> tokio::sync::mpsc::UnboundedReceiver<()> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigint = signal(SignalKind::interrupt()).expect("注册 SIGINT");
+        let tx1 = tx.clone();
+        tokio::spawn(async move {
+            while sigint.recv().await.is_some() {
+                if tx1.send(()).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut sigterm = signal(SignalKind::terminate()).expect("注册 SIGTERM");
+        tokio::spawn(async move {
+            while sigterm.recv().await.is_some() {
+                if tx.send(()).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    #[cfg(windows)]
+    {
+        install_console_ctrl_handler();
+        let tx1 = tx.clone();
+        tokio::spawn(async move {
+            loop {
+                CONSOLE_EXIT.notified().await;
+                if tx1.send(()).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    rx
 }
 
 /// 进程级加固（unix）：两件事，失败都静默——加固是尽力而为，不该挡住出生。
@@ -278,6 +359,38 @@ mod win {
         ) -> *mut c_void;
         pub(super) fn GetCurrentProcess() -> *mut c_void;
         pub(super) fn TerminateProcess(hProcess: *mut c_void, uExitCode: u32) -> i32;
+        pub(super) fn SetConsoleCtrlHandler(
+            handler_routine: Option<unsafe extern "system" fn(u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+}
+
+/// Windows 控制台事件桥（P20-E①）：CTRL_C(0) / CTRL_CLOSE(2，X 按钮) /
+/// CTRL_LOGOFF(5) / CTRL_SHUTDOWN(6) → 静态 Notify → 统一终止信号面。
+/// notify_one 带许可语义：主循环还没走到 select 分支时事件也不丢。
+#[cfg(windows)]
+static CONSOLE_EXIT: tokio::sync::Notify = tokio::sync::Notify::new();
+
+#[cfg(windows)]
+unsafe extern "system" fn console_ctrl_handler(ctrl_type: u32) -> i32 {
+    match ctrl_type {
+        0 | 2 | 5 | 6 => {
+            CONSOLE_EXIT.notify_one();
+            // CTRL_C：TRUE 抑制默认终止，退出交给我们自己（擦净再走）。
+            // CLOSE/LOGOFF/SHUTDOWN：handler 返回后 OS 仍会终止进程——
+            // 毫秒级擦拭与数秒宽限的赛跑，README_AGENT P21 竞态注记的已知边界。
+            1
+        }
+        _ => 0,
+    }
+}
+
+#[cfg(windows)]
+fn install_console_ctrl_handler() {
+    unsafe {
+        // 失败静默（尽力而为，同 harden_process 家族语义）
+        let _ = win::SetConsoleCtrlHandler(Some(console_ctrl_handler), 1);
     }
 }
 
@@ -601,11 +714,12 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
             Ok(n) => eprintln!("跟 [{n}] 道别了。"),
             Err(e) => eprintln!("{e}"),
         },
-        "quit" => return Ok(true),
+        // /quit 已废除（rulings.2026_10_31_exit_taxonomy）：退出面只剩
+        // Ctrl-C（立即擦净、不告别）；告别归 /bye。
         other => {
             eprintln!(
                 "不认识的指令：/{other}。可用：/dial /meet /punch /await /talk /list /card \
-                 /circle /gsay /bring /sit /word /file /bye /quit"
+                 /circle /gsay /bring /sit /word /file /bye。退出：Ctrl-C（立即擦净，不告别）"
             )
         }
     }

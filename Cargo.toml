@@ -34,7 +34,7 @@ name = "E2EE-Experiment"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "sync", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "sync", "fs", "signal"] }
 snow = { version = "0.10", features = ["hfs", "pqclean_kyber1024"] }
 thiserror = "2"
 if-addrs = "0.15.0"
