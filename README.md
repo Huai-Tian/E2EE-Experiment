@@ -116,6 +116,7 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 | `-n <name>`     | The name you introduce yourself as (self-reported, nothing behind it).                                                                                                                |
 | `--guard`       | Stable door lock: every caller must pass the same machine key (32-byte random), never consumed — wrong-key floods can't lock the desk. The key is prompted for at startup (hidden input): it never rides the command line. |
 | `--courier`     | Open a teahouse (see [Behind NAT](#two-people-behind-nat)) — the same binary in its other job.                                                                                        |
+| `--skittish`    | Skittish mode: the instant the lid closes or the session locks, everything is wiped, the screen (scrollback included) is cleared, and the program evaporates (see [the paranoid's handbook](#a-paranoids-handbook---skittish)). |
 
 ### Command reference
 
@@ -228,6 +229,83 @@ prevents it up front, the **SAS word** catches it on the spot:
 - **A weak secret only hurts that one handshake instant** — the secret never
   encrypts the conversation itself; every conversation key is fresh and
   ephemeral.
+
+## A paranoid's handbook (--skittish)
+
+Not everyone gets to talk in a safe environment. For people who live under the
+possibility of coercion, the binary has one more way to be born:
+
+```
+E2EE-Experiment --skittish [listen-addr] [-n name]
+```
+
+It announces itself loudly at startup: **this machine is in a jumpy state.**
+
+**Triggers** — two deterministic physical events:
+
+- **Lid close** (the moment a laptop lid shuts)
+- **Session lock** (including the OS's own timed auto-lock — the event is the
+  fact "the session is now locked", manual or timer alike)
+
+Only these two. Machine inference (idle detection, hotplug detection, …) never
+triggers anything — a guess is not a gesture.
+
+**What happens on trigger** — three steps, none of which wait for the network:
+
+1. **Wipe** — every key is zeroed per the existing semantics (full drop chain)
+2. **Clear** — visible screen and scrollback buffer are both wiped (when the
+   lid opens again, there is nothing on the screen)
+3. **Leave** — the program evaporates; the peer sees a disconnect
+
+In skittish mode **every exit clears the screen, including Ctrl-C**. It does
+not power off, does not close the terminal window — the machine only
+automates the invisible; visible acts of defiance (cutting power in front of
+someone) are timed by your own hand.
+
+**What it defends against, and what it does not** (the honest line):
+
+The moment a trigger fires, this mode assumes the device **has already been
+taken over by a hardware forensics rig**. Two cases:
+
+- **Read-only takeover** (the forensics norm — evidence discipline forbids
+  modifying the target): our code keeps running as-is; the response above
+  works.
+- **Read-write takeover** (can patch memory, can strip our wipe logic): the
+  end of the software layer. No software is trustworthy against such an
+  adversary — this program included. Holding the power button for 4 seconds
+  (EC-level power cut, below the OS, unblockable by any software) is the
+  **only reliably effective** human act under full takeover.
+
+**This program does not defend the device itself — by choosing this machine,
+you have chosen to trust it.**
+
+**Four speeds of evaporation**:
+
+| Gesture | Speed | Boundary |
+|---------|-------|----------|
+| Ctrl-C | milliseconds (full wipe chain) | software layer: works under read-only takeover, not under read-write |
+| Lid close / lock (--skittish) | milliseconds (plus one hop of event delivery) | same; see the sleep race below |
+| OS shutdown / logoff | seconds (SIGTERM / the X button already feed the same clean path) | same |
+| **Power button, held 4 s** | immediate power cut | **hardware layer: the only means that stays effective under full takeover** |
+
+An honest limit of screen clearing: an ANSI clear is the terminal's *logical*
+clear; the terminal process's own memory bytes are not necessarily zeroed —
+that layer is covered by the power button.
+
+**Recommended configuration**:
+
+- Set the OS "lid close action" to **do nothing** — let the program own the
+  lid. If the OS suspends on lid close, the wipe races the system freeze (a
+  millisecond-scale window; we usually win it, but why gamble).
+- Linux: lock-screen watching rides the session bus (D-Bus); lid watching
+  rides the input devices (`/dev/input`, needs read access via the `input`
+  group). If the bus is unreachable or no lid sensor exists, the program
+  **says so loudly** — it never silently pretends to guard. On headless
+  boxes (pure SSH) neither trigger face exists.
+- Windows: lock-screen watching rides session notifications; lid close is
+  proxied by the *sleep broadcast* — there is no application-level lid
+  notification, and this is its nearest shadow (the default lid action is
+  sleep, so changing it is recommended here too).
 
 ## For developers
 

@@ -22,6 +22,13 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
       的在线爆破，机器密钥在线爆破本就不可能）。
       钥匙在启动后按提示悄悄输入（不回显）——钥匙不进命令行：本机任何
       账户都读得到进程启动命令，shell 历史也会记下它。
+  E2EE-Experiment --skittish [监听地址] [-n 名字]
+      惊弓之鸟模式出生：合盖或锁屏的瞬间，一切将被遗忘，程序蒸发
+      离场——擦净秘密、清空屏幕（含滚回缓冲）、退出，不等网络。
+      锁屏含系统自动锁；只收确定性的物理事件，机器推断永不触发。
+      警惕模式下一切退出都会清屏，包括 Ctrl-C。触发面不可用时
+      （连不上会话总线、找不到盖子传感器）会响亮说明。详见
+      README 的「警惕者手册」。
   E2EE-Experiment --courier [监听地址]
       开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
       （房号由客人带外自选，茶馆只认号接线）。
@@ -83,6 +90,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut listen_addr = DEFAULT_LISTEN_ADDR.to_string();
     let mut as_courier = false;
     let mut guard_prompt = false;
+    let mut skittish = false;
     let mut positional: Vec<String> = Vec::new();
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -95,6 +103,9 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             "--courier" => as_courier = true,
+            // 惊弓之鸟（P21，rulings.2026_10_31_skittish_spec）：合盖/锁屏
+            // 即蒸发。CLI 专属消费端手势——库零改动（kept.skittish_cli_only）。
+            "--skittish" => skittish = true,
             // --no-chain 已随暗号链移除而作废（rulings.2026_10_31_realtime_
             // verification_razor）——没有链可关，旗子退役。
             "--guard" => {
@@ -139,6 +150,9 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     // 另一份工：开茶馆，永不下班
     if as_courier {
+        if skittish {
+            eprintln!("注意：--skittish 对茶馆无意义（茶馆无身份、无存储、无明文——无物可忘），已忽略。");
+        }
         e2ee::courier::serve(&listen_addr).await?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -158,6 +172,11 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     }
     eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（Ctrl-C 离场）");
+    // P21 惊弓之鸟知情横幅：这不是默认行为，是用户自己选的易惊状态——
+    // 姿态必须在启动时响亮说清（rulings.2026_10_31_skittish_spec）。
+    if skittish {
+        eprintln!("惊弓之鸟模式已开启：这台机器处于易惊状态——合盖或锁屏的瞬间，一切将被遗忘，程序蒸发离场。每次合盖都会杀死全部对话。");
+    }
 
     // 输入线：独立 std 线程阻塞读 stdin，逐行递给异步世界（P20-E①）。
     // 为什么不用 tokio::io::stdin()：它的读跑在 runtime 的阻塞池上，而
@@ -183,7 +202,13 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     // 统一终止信号面（P20-E①，rulings.2026_10_31_exit_taxonomy）：
     // Ctrl-C / SIGTERM（unix）、控制台事件（windows：Ctrl-C/X 按钮/注销，
     // 经 SetConsoleCtrlHandler 桥到静态 Notify）——汇成一条通道。
-    let mut term = terminate_signal();
+    let (mut term, term_tx) = terminate_signal();
+    // P21 惊弓之鸟：布防触发面——合盖/锁屏（各平台的确定性物理事件）
+    // 直通统一终止通道。触发在语义上就是一次终止手势，复用同一条
+    // 干净退出路径（擦→清屏→走人，警惕模式下次序见函数尾）。
+    if skittish {
+        arm_skittish(term_tx.clone());
+    }
     loop {
         tokio::select! {
             line = line_rx.recv() => {
@@ -224,12 +249,23 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     });
     drop(person);
     drop(events);
+    // P21 惊弓之鸟：警惕模式下一切退出都是蒸发——秘密销毁之后，屏幕上
+    // 的影子（含滚回缓冲）一并清空；Ctrl-C 也一样（spec 钉死）。普通
+    // 模式不清屏：回看最后几行是正当需求。
+    if skittish {
+        clear_screen();
+    }
     Ok(ExitCode::SUCCESS)
 }
 
-/// 统一终止信号面（P20-E①）：把平台上『可捕获的终止手势』汇成一条通道。
-/// 每收到一项 = 一次终止手势（Ctrl-C / SIGTERM / Windows 控制台事件）。
-fn terminate_signal() -> tokio::sync::mpsc::UnboundedReceiver<()> {
+/// 统一终止信号面（P20-E① + P21）：把平台上『可捕获的终止手势』汇成
+/// 一条通道。每收到一项 = 一次终止手势（Ctrl-C / SIGTERM / Windows
+/// 控制台事件；P21 起，惊弓之鸟的合盖/锁屏触发也走这里）。发送端随
+/// 接收端一并返回——触发面复用它，触发=终止手势，同一个语义。
+fn terminate_signal() -> (
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+    tokio::sync::mpsc::UnboundedSender<()>,
+) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     #[cfg(unix)]
     {
@@ -244,9 +280,10 @@ fn terminate_signal() -> tokio::sync::mpsc::UnboundedReceiver<()> {
             }
         });
         let mut sigterm = signal(SignalKind::terminate()).expect("注册 SIGTERM");
+        let tx2 = tx.clone();
         tokio::spawn(async move {
             while sigterm.recv().await.is_some() {
-                if tx.send(()).is_err() {
+                if tx2.send(()).is_err() {
                     break;
                 }
             }
@@ -265,7 +302,356 @@ fn terminate_signal() -> tokio::sync::mpsc::UnboundedReceiver<()> {
             }
         });
     }
-    rx
+    (rx, tx)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// P21 惊弓之鸟（--skittish，rulings.2026_10_31_skittish_spec）
+// 触发=合盖+锁屏（只收确定性物理事件）；威胁模型=触发即当设备已被
+// 读型取证接管（写型=T0 边界）；动作=擦→清屏→统一退出；不关机不关窗
+//（伪装原则：机器只自动化不可见的事）。以下全是 CLI 消费端进程策略，
+// 与 harden_process 同族——库零改动（kept.skittish_cli_only）。
+// ═══════════════════════════════════════════════════════════════
+
+/// 清屏并抹掉滚回缓冲（惊弓之鸟的蒸发面）：CSI 2J 清可视区、CSI 3J
+/// 清滚回缓冲（真正的历史在那里）、CSI H 光标归位。诚实边界（P20-D
+/// 同款入档）：ANSI 清屏是终端的逻辑清除——终端进程自己的内存字节
+/// 未必归零（T2/T3 窗口），那一层由人手电源键覆盖（手册四档表）。
+fn clear_screen() {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(b"\x1b[2J\x1b[3J\x1b[H");
+    let _ = out.flush();
+}
+
+/// 触发面布防总入口：把各平台的确定性物理事件接进统一终止通道。每个
+/// 触发面各自响亮报状（loud-failure 家族）：连不上就大声说，绝不静默
+/// 假装在防——静默的警惕比没有警惕更危险。
+fn arm_skittish(fire: tokio::sync::mpsc::UnboundedSender<()>) {
+    #[cfg(target_os = "linux")]
+    {
+        watch_linux_lock_screen(fire.clone());
+        std::thread::spawn(move || watch_lid_evdev(fire));
+    }
+    #[cfg(windows)]
+    {
+        std::thread::spawn(move || watch_windows_session(fire));
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        // 其他平台（macOS 等）：触发面未实现——响亮声明，不装样子。
+        // Ctrl-C 清屏语义仍完整（skittish 退出路径不挑触发源）。
+        let _ = fire;
+        eprintln!(
+            "惊弓之鸟降级：此平台的合盖/锁屏监听未实现——触发面不可用，\
+             警惕模式只剩 Ctrl-C 也清屏的语义。"
+        );
+    }
+}
+
+/// Linux 锁屏触发面：会话总线上的屏保广播，两个名字都听——
+/// org.freedesktop.ScreenSaver（KDE/xdg 门户面）与 org.gnome.ScreenSaver
+/// （GNOME 面），ActiveChanged(true) = 会话已锁（含 OS 自动锁：事件是
+/// 『会话已锁』这一事实，不区分手动自动）。连不上会话总线（无桌面/
+/// 纯 SSH/无 DBUS_SESSION_BUS_ADDRESS 环境）= 响亮降级。
+#[cfg(target_os = "linux")]
+fn watch_linux_lock_screen(fire: tokio::sync::mpsc::UnboundedSender<()>) {
+    tokio::spawn(async move {
+        if let Err(e) = watch_lock_screen_inner(fire).await {
+            eprintln!(
+                "惊弓之鸟降级：锁屏触发面不可用（{e}）——锁屏时程序不会\
+                 自动离场；Ctrl-C 依然立即擦净。"
+            );
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+async fn watch_lock_screen_inner(
+    fire: tokio::sync::mpsc::UnboundedSender<()>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = zbus::Connection::session().await?;
+    for iface in ["org.freedesktop.ScreenSaver", "org.gnome.ScreenSaver"] {
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface(iface)
+            .member("ActiveChanged")
+            .build()?;
+        let mut stream = zbus::MessageStream::for_match_rule(rule, &conn, None).await?;
+        let fire = fire.clone();
+        // 屏保信号是广播，本程序只是旁听者：不向总线注册任何名字、不
+        // 发任何东西——总线上零足迹（伪装原则：不可见才自动化）。
+        tokio::spawn(async move {
+            // zbus 的流是 futures_core::Stream（经 zbus re-export 引入，
+            // 不为 next() 再添一颗零件）；std::future::poll_fn 手动拉取。
+            use std::future::poll_fn;
+            use std::pin::Pin;
+            use zbus::export::futures_core::Stream;
+            while let Some(Ok(msg)) = poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await {
+                // body = (active: bool,)；只在 true（锁上）时触发——
+                // false 是解锁，那时我们早已不在了。
+                if let Ok((active,)) = msg.body().deserialize::<(bool,)>() {
+                    if active && fire.send(()).is_ok() {
+                        return; // 蒸发即离场，任务随运行时收摊
+                    }
+                }
+            }
+        });
+    }
+    eprintln!("惊弓之鸟：锁屏触发面已布防（会话总线屏保信号）。");
+    Ok(())
+}
+
+/// Linux 合盖触发面：evdev 旁听 /dev/input/event* 里的盖子开关
+/// （EV_SW/SW_LID，value=1 即合上）。手写 ioctl（libc 无 EVIOCGBIT
+/// 常量，_IOC 编码自算）；绝不 EVIOCGRAB 独占——盖子事件属于整个
+/// 桌面，我们只旁听。找不到盖子传感器（台式机/虚拟机常态）或无权限
+/// 读 /dev/input（需 input 组成员）= 响亮降级。
+#[cfg(target_os = "linux")]
+fn watch_lid_evdev(fire: tokio::sync::mpsc::UnboundedSender<()>) {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    const EV_SW: u16 = 0x05; // 开关类事件
+    const SW_LID: u16 = 0x00; // 盖子开关（合上=1，掀开=0）
+    /// EVIOCGBIT(ev, len) = _IOR('E', 0x20 + ev, len)：查设备支持的事件位图
+    const fn eviocgbit(ev: u16, len: usize) -> libc::c_ulong {
+        // _IOC(dir,type,nr,size) = dir<<30 | size<<16 | type<<8 | nr；_IOC_READ=2
+        ((2u64 << 30)
+            | ((len as u64) << 16)
+            | ((b'E' as u64) << 8)
+            | (0x20 + ev as u64)) as libc::c_ulong
+    }
+
+    // 1. 扫描 /dev/input/event*，探测哪个口上有盖子开关
+    let mut watched: Vec<std::fs::File> = Vec::new();
+    let mut saw_denied = false;
+    let entries = match std::fs::read_dir("/dev/input") {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!(
+                "惊弓之鸟降级：读不了 /dev/input（目录不存在或无权限）\
+                 ——合盖触发面不可用。合盖时程序不会自动离场；Ctrl-C 依然\
+                 立即擦净。"
+            );
+            return;
+        }
+    };
+    for ent in entries.flatten() {
+        let Some(name) = ent.file_name().into_string().ok() else { continue };
+        if !name.starts_with("event") {
+            continue;
+        }
+        // O_NONBLOCK：探测期不挂死；监听期读空缓冲返回 EAGAIN 收工
+        let file = match std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(ent.path())
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                saw_denied = true;
+                continue;
+            }
+            Err(_) => continue,
+        };
+        let fd = file.as_raw_fd();
+        unsafe {
+            // 事件类型位图：byte[0] 的 bit5 = EV_SW 支持
+            let mut evbits = [0u8; 4];
+            if libc::ioctl(fd, eviocgbit(0, evbits.len()), evbits.as_mut_ptr()) < 0 {
+                continue;
+            }
+            if evbits[0] & (1 << EV_SW) == 0 {
+                continue;
+            }
+            // 开关位图：byte[0] 的 bit0 = SW_LID 支持
+            let mut swbits = [0u8; 8];
+            if libc::ioctl(fd, eviocgbit(EV_SW, swbits.len()), swbits.as_mut_ptr()) < 0 {
+                continue;
+            }
+            if swbits[0] & (1 << SW_LID) == 0 {
+                continue;
+            }
+        }
+        watched.push(file);
+    }
+    if watched.is_empty() {
+        if saw_denied {
+            eprintln!(
+                "惊弓之鸟降级：无权限读 /dev/input（把自己加入 input 组\
+                 可解）——合盖触发面不可用。合盖时程序不会自动离场；\
+                 Ctrl-C 依然立即擦净。"
+            );
+        } else {
+            eprintln!(
+                "惊弓之鸟降级：未找到盖子传感器（/dev/input 下没有\
+                 SW_LID 设备——台式机/虚拟机常态）——合盖触发面不可用。\
+                 合盖时程序不会自动离场；Ctrl-C 依然立即擦净。"
+            );
+        }
+        return;
+    }
+    eprintln!(
+        "惊弓之鸟：合盖触发面已布防（{} 个盖子开关在耳）。",
+        watched.len()
+    );
+
+    // 2. 阻塞旁听：poll 全体 fd，见到 EV_SW/SW_LID=1 即触发
+    let mut fds: Vec<libc::pollfd> = watched
+        .iter()
+        .map(|f| libc::pollfd {
+            fd: f.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        })
+        .collect();
+    // input_event 布局：timeval + type(2) + code(2) + value(4)
+    //（LP64=24 字节，32 位平台=16 字节——按本机 timeval 尺寸自适应）
+    let tv = std::mem::size_of::<libc::timeval>();
+    let ev_size = tv + 8;
+    let mut buf = [0u8; 512];
+    loop {
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
+        if n < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::Interrupted {
+                continue; // 被信号打断，重听
+            }
+            eprintln!("惊弓之鸟：盖子监听退出（poll 失败：{e}）——合盖触发面不再可用。");
+            return;
+        }
+        for fd in &fds {
+            if fd.revents & libc::POLLIN == 0 {
+                continue;
+            }
+            loop {
+                let n = unsafe {
+                    libc::read(fd.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                };
+                if n <= 0 {
+                    break; // EAGAIN（读空）或设备拔除
+                }
+                let mut off = 0usize;
+                while off + ev_size <= n as usize {
+                    let ty = u16::from_ne_bytes(buf[off + tv..off + tv + 2].try_into().unwrap());
+                    let code =
+                        u16::from_ne_bytes(buf[off + tv + 2..off + tv + 4].try_into().unwrap());
+                    let val =
+                        i32::from_ne_bytes(buf[off + tv + 4..off + tv + 8].try_into().unwrap());
+                    if ty == EV_SW && code == SW_LID && val == 1 && fire.send(()).is_ok() {
+                        return; // 蒸发即离场，线程随进程消亡
+                    }
+                    off += ev_size;
+                }
+            }
+        }
+    }
+}
+
+/// Windows 触发面：一枚 message-only 窗口（不可见、不抢焦点）做消息泵——
+/// WTSRegisterSessionNotification 接会话锁（WM_WTSSESSION_CHANGE/
+/// WTS_SESSION_LOCK=0x7）；WM_POWERBROADCAST/PBT_APMSUSPEND 作合盖
+/// 代理（诚实入档：盖子本身没有控制台通知，OS 对合盖的默认动作是睡眠，
+/// 睡眠广播是它最近的影子——推荐配置是合盖『不做事』，见警惕者手册）。
+#[cfg(windows)]
+fn watch_windows_session(fire: tokio::sync::mpsc::UnboundedSender<()>) {
+    use std::cell::RefCell;
+    thread_local! {
+        /// 窗口过程回调没有闭包舱位——发送端经 thread_local 递进去。
+        /// WndProc 永远在本线程上被调（GetMessage/Dispatch 的约定）。
+        static FIRE: RefCell<Option<tokio::sync::mpsc::UnboundedSender<()>>> =
+            RefCell::new(None);
+    }
+    FIRE.with(|f| *f.borrow_mut() = Some(fire));
+
+    unsafe extern "system" fn skittish_wnd_proc(
+        hwnd: *mut std::ffi::c_void,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize {
+        match msg {
+            m if m == win::WM_WTSSESSION_CHANGE && wparam == win::WTS_SESSION_LOCK => {
+                FIRE.with(|f| {
+                    if let Some(tx) = f.borrow().as_ref() {
+                        let _ = tx.send(());
+                    }
+                });
+                0
+            }
+            m if m == win::WM_POWERBROADCAST && wparam == win::PBT_APMSUSPEND => {
+                FIRE.with(|f| {
+                    if let Some(tx) = f.borrow().as_ref() {
+                        let _ = tx.send(());
+                    }
+                });
+                1 // TRUE：电源广播已处理
+            }
+            _ => unsafe { win::DefWindowProcW(hwnd, msg, wparam, lparam) },
+        }
+    }
+
+    unsafe {
+        let class_name: Vec<u16> = "E2EE_SkittishSink\0".encode_utf16().collect();
+        let wc = win::WndClassW {
+            style: 0,
+            lpfn_wnd_proc: Some(skittish_wnd_proc),
+            cb_cls_extra: 0,
+            cb_wnd_extra: 0,
+            h_instance: win::GetModuleHandleW(std::ptr::null()),
+            h_icon: std::ptr::null_mut(),
+            h_cursor: std::ptr::null_mut(),
+            h_brush: std::ptr::null_mut(),
+            lpsz_menu_name: std::ptr::null(),
+            lpsz_class_name: class_name.as_ptr(),
+        };
+        if win::RegisterClassW(&wc) == 0 {
+            eprintln!(
+                "惊弓之鸟降级：注册窗口类失败——锁屏/睡眠触发面不可用。\
+                 Ctrl-C 依然立即擦净。"
+            );
+            return;
+        }
+        let hwnd = win::CreateWindowExW(
+            0,
+            class_name.as_ptr(),
+            std::ptr::null(),
+            0,
+            0, 0, 0, 0,
+            win::hwnd_message(),
+            std::ptr::null_mut(),
+            wc.h_instance,
+            std::ptr::null_mut(),
+        );
+        if hwnd.is_null() {
+            eprintln!(
+                "惊弓之鸟降级：创建通知窗口失败——锁屏/睡眠触发面不可用。\
+                 Ctrl-C 依然立即擦净。"
+            );
+            return;
+        }
+        // NOTIFY_FOR_THIS_SESSION = 0：只听本会话
+        if win::WTSRegisterSessionNotification(hwnd, 0) == 0 {
+            eprintln!(
+                "惊弓之鸟降级：WTSRegisterSessionNotification 失败——锁屏\
+                 触发面不可用（睡眠触发面仍在）。Ctrl-C 依然立即擦净。"
+            );
+        } else {
+            eprintln!("惊弓之鸟：锁屏与睡眠触发面已布防（会话通知 + 电源广播）。");
+        }
+        let mut msg: win::Msg = std::mem::zeroed();
+        loop {
+            let r = win::GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
+            if r <= 0 {
+                // 0 = WM_QUIT（无人投递，不应发生）；-1 = 消息泵出错
+                eprintln!("惊弓之鸟：消息泵退出——触发面不再可用。");
+                return;
+            }
+            let _ = win::TranslateMessage(&msg);
+            let _ = win::DispatchMessageW(&msg);
+        }
+    }
 }
 
 /// 进程级加固（unix）：两件事，失败都静默——加固是尽力而为，不该挡住出生。
@@ -351,6 +737,53 @@ mod win {
     pub(super) const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
     pub(super) const ENABLE_ECHO_INPUT: u32 = 0x0004;
 
+    // ── P21 惊弓之鸟触发面（message-only 窗口消息泵） ──────────────
+    pub(super) const WM_POWERBROADCAST: u32 = 0x0218; // 电源事件广播
+    pub(super) const WM_WTSSESSION_CHANGE: u32 = 0x02B1; // 会话状态变化
+    pub(super) const PBT_APMSUSPEND: usize = 0x4; // 系统即将睡眠（合盖代理）
+    pub(super) const WTS_SESSION_LOCK: usize = 0x7; // 会话已锁
+
+    /// message-only 窗口的父句柄常量（HWND）(HWND)-3：不进 Z 序、
+    /// 不收广播、不可见——只为收 WTS/电源通知而存在的影子窗口。
+    pub(super) fn hwnd_message() -> *mut c_void {
+        (-3isize) as *mut c_void
+    }
+
+    /// 窗口类（WNDCLASSW 的手写投影——不为它引 windows-sys，单一
+    /// 二进制纪律；repr(C) 布局与 Win32 逐字段一致）
+    #[repr(C)]
+    pub(super) struct WndClassW {
+        pub style: u32,
+        pub lpfn_wnd_proc:
+            Option<unsafe extern "system" fn(*mut c_void, u32, usize, isize) -> isize>,
+        pub cb_cls_extra: i32,
+        pub cb_wnd_extra: i32,
+        pub h_instance: *mut c_void,
+        pub h_icon: *mut c_void,
+        pub h_cursor: *mut c_void,
+        pub h_brush: *mut c_void,
+        pub lpsz_menu_name: *const u16,
+        pub lpsz_class_name: *const u16,
+    }
+
+    /// 点坐标（POINT 投影——repr(C) 下 tuple 布局未指明，用显式结构）
+    #[repr(C)]
+    pub(super) struct Point {
+        pub x: i32,
+        pub y: i32,
+    }
+
+    /// 消息泵缓冲（MSG 投影：内容不读，只递给系统转发）
+    #[repr(C)]
+    pub(super) struct Msg {
+        pub hwnd: *mut c_void,
+        pub message: u32,
+        pub wparam: usize,
+        pub lparam: isize,
+        pub time: u32,
+        pub pt: Point,
+    }
+
     /// 未处理异常过滤器：只看『发生了』这件事，不解内容——立即自灭。
     /// 返回值不可达（TerminateProcess 不返回）。
     pub(super) unsafe extern "system" fn self_terminate_on_exception(
@@ -377,13 +810,55 @@ mod win {
         pub(super) fn GetConsoleMode(hConsoleHandle: *mut c_void, lpMode: *mut u32) -> i32;
         pub(super) fn SetConsoleMode(hConsoleHandle: *mut c_void, dwMode: u32) -> i32;
     }
+
+    // P21：user32 消息泵四件套 + 模块句柄（默认链接不带 user32）
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        pub(super) fn RegisterClassW(lpwc: *const WndClassW) -> u16;
+        pub(super) fn CreateWindowExW(
+            dwexstyle: u32,
+            lpclassname: *const u16,
+            lpwindowname: *const u16,
+            dwstyle: u32,
+            x: i32,
+            y: i32,
+            w: i32,
+            h: i32,
+            hwndparent: *mut c_void,
+            hmenu: *mut c_void,
+            hinstance: *mut c_void,
+            lpparam: *mut c_void,
+        ) -> *mut c_void;
+        pub(super) fn DefWindowProcW(
+            hwnd: *mut c_void,
+            msg: u32,
+            wparam: usize,
+            lparam: isize,
+        ) -> isize;
+        pub(super) fn GetMessageW(
+            lpmsg: *mut Msg,
+            hwnd: *mut c_void,
+            min: u32,
+            max: u32,
+        ) -> i32;
+        pub(super) fn TranslateMessage(lpmsg: *const Msg) -> i32;
+        pub(super) fn DispatchMessageW(lpmsg: *const Msg) -> isize;
+        pub(super) fn GetModuleHandleW(lpmodulename: *const u16) -> *mut c_void;
+    }
+
+    // P21：会话通知（wtsapi32；锁屏事件 WM_WTSSESSION_CHANGE 的订阅端）
+    #[link(name = "wtsapi32")]
+    unsafe extern "system" {
+        pub(super) fn WTSRegisterSessionNotification(hwnd: *mut c_void, flags: u32) -> i32;
+    }
 }
 
 /// Windows 控制台事件桥（P20-E①）：CTRL_C(0) / CTRL_CLOSE(2，X 按钮) /
 /// CTRL_LOGOFF(5) / CTRL_SHUTDOWN(6) → 静态 Notify → 统一终止信号面。
 /// notify_one 带许可语义：主循环还没走到 select 分支时事件也不丢。
 #[cfg(windows)]
-static CONSOLE_EXIT: tokio::sync::Notify = tokio::sync::Notify::new();
+static CONSOLE_EXIT: std::sync::LazyLock<tokio::sync::Notify> =
+    std::sync::LazyLock::new(tokio::sync::Notify::new);
 
 #[cfg(windows)]
 unsafe extern "system" fn console_ctrl_handler(ctrl_type: u32) -> i32 {

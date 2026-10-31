@@ -51,6 +51,13 @@ ed25519-dalek = { version = "2", default-features = false, features = ["fast", "
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# P21 惊弓之鸟（CLI 专属，kept.skittish_cli_only）：Linux 锁屏监听走
+# 会话总线（zbus，纯 Rust 实现）。只被 src/main.rs 引用——库（lib.rs）
+# 零引用，FFI 产物符号面不变（nm 实测入档）。target 限 linux：Android
+# 的 .so 交叉构建根本不编译它，零件不落库。
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "6.2.0", default-features = false, features = ["tokio"] }
+
 # 产物只有一个可执行文件：LTO + 剥符号 + abort on panic，尽量小
 [profile.release]
 lto = true

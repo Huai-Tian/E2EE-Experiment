@@ -178,27 +178,31 @@ mod win {
 
 #[cfg(windows)]
 unsafe fn alloc_locked(len: usize) -> Option<(*mut u8, usize)> {
-    let region = len.max(1);
-    let p = win::VirtualAlloc(
-        std::ptr::null_mut(),
-        region,
-        win::MEM_RESERVE | win::MEM_COMMIT,
-        win::PAGE_READWRITE,
-    );
-    if p.is_null() {
-        return None;
+    unsafe {
+        let region = len.max(1);
+        let p = win::VirtualAlloc(
+            std::ptr::null_mut(),
+            region,
+            win::MEM_RESERVE | win::MEM_COMMIT,
+            win::PAGE_READWRITE,
+        );
+        if p.is_null() {
+            return None;
+        }
+        if win::VirtualLock(p, region) == 0 {
+            win::VirtualFree(p, 0, win::MEM_RELEASE);
+            return None;
+        }
+        Some((p as *mut u8, region))
     }
-    if win::VirtualLock(p, region) == 0 {
-        win::VirtualFree(p, 0, win::MEM_RELEASE);
-        return None;
-    }
-    Some((p as *mut u8, region))
 }
 
 #[cfg(windows)]
 unsafe fn free_locked(base: *mut u8, region: usize) {
-    win::VirtualUnlock(base as *mut std::ffi::c_void, region);
-    win::VirtualFree(base as *mut std::ffi::c_void, 0, win::MEM_RELEASE);
+    unsafe {
+        win::VirtualUnlock(base as *mut std::ffi::c_void, region);
+        win::VirtualFree(base as *mut std::ffi::c_void, 0, win::MEM_RELEASE);
+    }
 }
 
 #[cfg(test)]

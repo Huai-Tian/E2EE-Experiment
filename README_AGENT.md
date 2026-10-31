@@ -7,13 +7,13 @@
 #              NORMATIVE (constraints), not decoration. File body is pure YAML.
 #              STRUCTURAL INVARIANT: the whole file MUST parse as ONE valid
 #              YAML document.
-# SCOPE      : as-built facts describe HEAD = v3.0.0 RELEASED 2026-10-18 (tag
-#              3.0.0 → 851917b; CI 7/7 green; 12 artifacts on GitHub Release;
-#              92 tests — P3/P4/P5/P6/P7/P15/P16/P17/P18/P19 ALL CLOSED, see
-#              their status lines + verify.release_v3_0_0). NEXT RELEASE: 4.0.0
-#              blueprint FROZEN 2026-10-31 (owner adjudication complete, ZERO
-#              code written yet) — pending_work.P20/P21 carry the full slice
-#              specs; theory.rulings 2026_10_31_* carry its five doctrines;
+# SCOPE      : as-built facts describe HEAD = 4.0.0 implementation COMPLETE
+#              2026-10-31 (P20 all slices + P21 skittish landed, see
+#              pending_work status lines + landed chains; 98 tests — rogue
+#              22 unit + 74 integration + 1 pq + 1 dumpable). Prior: v3.0.0
+#              RELEASED 2026-10-18 (tag 3.0.0 → 851917b; CI 7/7 green; 12
+#              artifacts on GitHub Release; 92 tests). 4.0.0 doctrines:
+#              theory.rulings 2026_10_31_* (six incl. skittish_spec);
 #              settled_decisions carries the kept/rejected deltas. NEVER
 #              document planned work as built; NEVER re-propose anything listed
 #              in settled_decisions (rejected items = permanent rejection).
@@ -35,7 +35,7 @@ project:
     - cli
   core_metaphor: executable == person        # NOT marketing — drives every decision below
   theory: conversation-physics               # NEW v3: see theory block — the project now HAS an explicit theory
-  maturity: early-development                 # 3.0.0 released 2026-10-18; 4.0.0 blueprint frozen 2026-10-31, implementation not started
+  maturity: early-development                 # 3.0.0 released 2026-10-18; 4.0.0 implementation complete 2026-10-31 (P20+P21, tag pending)
   ui_language: zh                            # user-facing strings are chinese; keep style
   comment_language: zh-with-person-metaphors # see glossary at bottom
 
@@ -966,8 +966,9 @@ pending_work:
       E_exit_chain_surgery: "退出统一+暗号手术：①信号面——tokio ctrl_c + SIGTERM + stdin EOF 全部改走『立即擦净退出』（break 循环→Drop 链→process::exit；不发告别帧不等网络）；二次连按强退（第一次后短时间内第二次=直接 exit）；Windows 控制台事件接同路径（随 W）。②命令面——/quit 删除、Ctrl-D ≡ Ctrl-C（EOF 同义）、/bye 两步化（删 offer_next_secret 调用）。③链拆除——chained 字段/offer_next_secret/ack 处理器（0x02 收端）/--no-chain 旗子/SECRET_CHAINED 事件停发+头文件 deprecated 注记/相关测试与 ffi_test.c 清理。④--guard 改交互隐藏输入（启动后 rpassword 式询问，无回显；门禁语义不变）。库面 bye()/leave() 保留（ABI 冻结+嵌入式），只动 CLI；ffi e2ee_await_secret 保留（当场切口合法）"
       B_bookkeeping: "收尾簿记（涵盖 P21）：README.md/README_ZH.md 重写（命令表：/quit 死、Ctrl-C 新语义、/bye 两步；Secrets&SAS 节：链移除、--guard 耳语式、当场验证原则；警惕者手册进双语正文）；本档案各 4.0.0（LANDED 2026-10-31）注记翻 LANDED 并补落地记录；CHANGELOG 4.0.0 置顶破坏性声明；Cargo 3.0.0→4.0.0；coercion 修正案与全部 2026-10-31 裁决已随本笔入档（此句在落地时核对）"
   P21_skittish_mode:                          # 惊弓之鸟（--skittish）——spec 全文=theory.rulings.2026_10_31_skittish_spec（本块只承工程面）
-    status: planned-frozen-2026-10-31         # opt-in 旗标；触发=合盖+锁屏；触发即失守威胁模型；动作=擦→清屏→统一退出；不关机不关窗；启动横幅知情。2026-10-31 补裁（kept.skittish_cli_only）：仅 CLI——零新库 API、零 FFI 符号、零新库事件
-    depends: [P20_ram_file_exit_4_0_0.E]      # 复用统一干净退出路径与清屏动作（同为 CLI 面）
+    status: landed-2026-10-31                 # 全部落地（旗标/横幅/三平台触发面/清屏/手册/簿记）；owner 双平台实测待办=Linux VM 锁屏 + Windows 真机合盖/锁屏/Ctrl-C。补裁（kept.skittish_cli_only）兑现：仅 CLI——零新库 API、零 FFI 符号、零新库事件
+    depends: [P20_ram_file_exit_4_0_0.E]      # 复用统一干净退出路径与清屏动作（同为 CLI 面）——已兑现：触发=一次终止手势，直通 term 通道
+    landed: "实现面（main.rs，全部 CLI 进程策略、库零改动）：①旗标与知情——--skittish 解析 + HELP 段 + 启动横幅（spec 原文）；--skittish --courier 同给时响亮告知忽略（茶馆无物可忘）。②退出蒸发——统一退出路径尾 drop(person)→drop(events) 之后 clear_screen()（CSI 2J+3J+H；普通模式不清）；警惕模式下一切退出源都清屏（Ctrl-C/SIGTERM/EOF/触发同路）。③terminate_signal() 改返 (rx, tx)——发送端复用给触发面，触发语义=终止手势。④Linux 锁屏=zbus 6.2（default-features=false+tokio，target 限 linux——Android .so 交叉构建不编译它）：Connection::session() 失败响亮降级（无桌面常态）；MatchRule 两名都听（org.freedesktop.ScreenSaver/org.gnome.ScreenSaver 的 ActiveChanged，不限路径），body=(true,) 才触发（false=解锁，那时早已不在）；信号消费用 std::future::poll_fn 手拉 futures_core Stream（zbus::export re-export）——不为 next() 添 futures-util，零件清单只 zbus 一颗；总线零足迹（不注册名字不发送）。⑤Linux 合盖=手写 evdev：扫 /dev/input/event*，O_NONBLOCK 打开，EVIOCGBIT(0)/EVIOCGBIT(EV_SW) 双 ioctl 探 EV_SW/SW_LID（_IOR(E,0x20+ev,len) 编码自算——libc 无常量）；绝不 EVIOCGRAB（盖子事件属于整个桌面）；poll 阻塞旁听，EV_SW/SW_LID=1 触发；input_event 布局按 size_of::<timeval>() 自适应（LP64 24B/32 位 16B）；无目录/无传感器/无权限（EACCES→提示 input 组）三种降级文案。⑥Windows=message-only 窗口（HWND_MESSAGE 父，不可见不抢焦点）：RegisterClassW/CreateWindowExW/GetMessageW 泵线程（手写 FFI：user32 #[link] + wtsapi32 #[link]，WNDCLASSW/MSG/POINT repr(C) 投影）；WTSRegisterSessionNotification→WM_WTSSESSION_CHANGE/WTS_SESSION_LOCK(0x7)=锁屏；WM_POWERBROADCAST/PBT_APMSUSPEND(0x4)=合盖代理（诚实入档：盖子无应用层通知，睡眠广播是最近的影子）；WndProc 经 thread_local 拿发送端（回调无闭包舱位，GetMessage/Dispatch 保证同线程）。⑦非 linux/windows 平台响亮声明触发面未实现（不装样子）。⑧警惕者手册进双语 README（触发条件/触发后行为/设备信任诚实线/四档蒸发速度表/推荐配置）+ CHANGELOG 4.0.0 补条目。附带纠偏两处（基线遗留，非 P21 引入）：CONSOLE_EXIT 改 LazyLock（tokio 1.53.3 起 Notify::new 非 const——zbus 硬性要求 tokio>=1.53.3，Cargo.lock 由 1.53.1 升 1.53.3）；src/lock.rs 六处 unsafe fn 体补显式 unsafe 块（edition 2024 纪律，基线 windows 交叉 check 既有 6 警告清零）。验证链：rogue 全量 98 = 22 单元 + 74 集成（+3 skittish：Ctrl-C 清屏退出码 0 且 stdout 恰清屏序列/普通模式对照不清屏/无桌面两触发面响亮降级断言——有总线或有 /dev/input 的环境跳过对应断言并打印理由，静默跳过=罪）+ 1 pq + 1 dumpable；x86_64-pc-windows-gnu cargo check 零错零警；.so 实测（owner 裁决的 nm+体积）：导出符号 16 个不变、nm 全符号面 zbus/dbus/nix 痕迹=0、体积 1,306,992→1,308,144 B（+0.09%，依赖微升抖动）；主二进制 1,606,176→2,252,400 B（+632KB=zbus 全家桶，打破零新增零件不是代价——裁决兑现）；冒烟：横幅+双降级+SIGINT→退出码 0+清屏序列、普通模式无清屏、courier 组合告知。owner 实测清单：Linux VM 锁屏（预期：锁屏→程序蒸发）；Windows 真机合盖/锁屏/Ctrl-C 三形态（预期：全清屏）"
     engineering_notes: "范围（owner 2026-10-31）：仅两个平台的可执行程序；库=标准通信——触发观察=进程级策略住 main.rs（harden_process 同族）；清屏=终端 I/O 住 CLI；擦除=Person::drop 既有语义（库零改动）。触发接入点（实现期定夺，剃刀不变：只收确定性物理事件）：Linux——盖子（evdev SW_LID / udev input 事件面，或 logind 抑制锁+盖子状态面）+ 锁屏（会话 D-Bus 屏保 ActiveChanged 信号面）；Windows——WM_POWERBROADCAST 会话通知与 WTS_SESSION_LOCK。竞态文档义务：OS 默认合盖=睡眠时，擦拭须在冻结前落地（inhibitor/事件窗口毫秒级）；推荐配置（手册）=OS 合盖动作设『不做事』让程序独占盖子。清屏=ANSI 全清+滚回缓冲清除（CSI 2J + CSI 3J + 光标归位序列族）——警惕模式专用（普通模式退出不清屏：回看最后几行是正当需求）；不自动关窗（rejected.auto_close_terminal）。CLI 内实现若需新增依赖（evdev/dbus crate 面）或触碰 C 头：停下报裁决——手写 FFI 或 sysfs 读取为备选"
 
   post_3_0_0_backlog:                       # tag 后线索板（3.0.0 发布收笔归档 2026-10-18——全部「tag 后」状态，各自独立 slice 过堂，不丢线索）
