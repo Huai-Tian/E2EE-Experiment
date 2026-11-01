@@ -297,7 +297,7 @@ wire_protocol:
   introducer_and_punch:
     introducer: "courier::serve_introducer — udp side of the teahouse port; INTRO1 tag / INTRO2 R|I peer; one-shot tags, ttl 90s, MAX_WAITING_TAGS 1024. P7 tag 三层规则：/punch 省略 TAG → 自动生成 128bit 随机标签并上屏供带外转告（建议 Crockford base32 分组，去混淆字符）；显式给出短标签 → 响亮警告但照用（降级自由，与暗号长短同理）；警告文案必须写明补偿关系（『短标签可被猜测劫持会合；若本次配对带暗号，则由暗号兜底』——tag 猜测只需介绍人在线、无需受害者在场，与 PAKE 的在场爆破模型不同构，不能靠在场感知兜底）。tag 防的是『无网络位置的廉价会合劫持』；带暗号时后果被 PAKE 层补偿，不带暗号时攻击者通过网络位置 MITM 本可达同样效果"
     punch: "register w/ retry (3s), connect to peer's public endpoint, exchange PUNCH frames (~150ms apart, 8s window); INTRO2 accepted ONLY from the introducer's own address"
-    transport: "UdpPunch: one frame per datagram, punch-echo discarded, max frame 65507B; no liveness detection — a vanished peer hangs the line until /quit（4.0.0 frozen：/quit 废除后=挂到进程退出；单线告别走 /bye；修补候选=liveness_probe_4_1，直连感知定性，4.1 议题）"
+    transport: "UdpPunch: one frame per datagram, punch-echo discarded, max frame 65507B; no liveness detection — a vanished peer hangs the line until process exit（owner 终裁 2026-11-01：对端感知=推断家族死案——机器无法区分死机/断网/没人说话，任何感知皆猜测必误报；挂线零新明文零安全代价；『他还在吗』裁决权在人，机器不替人宣布死讯。liveness_probe_4_1 候选注销，永不再提）"
     fallback: "on punch failure the USER re-routes via /meet manually — no automatic fallback"
   lan_discovery:                             # v1 家族——3.0.0 删除面已执行（2026-10-17，removals_3_0_0.v1_discovery_family）
     status: removed-2026-10-17
