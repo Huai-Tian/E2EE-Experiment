@@ -292,20 +292,25 @@ An honest limit of screen clearing: an ANSI clear is the terminal's *logical*
 clear; the terminal process's own memory bytes are not necessarily zeroed —
 that layer is covered by the power button.
 
-**Recommended configuration**:
+**Recommended configuration** (the lid action points the *opposite* way on
+the two platforms — do not copy one to the other):
 
-- Set the OS "lid close action" to **do nothing** — let the program own the
-  lid. If the OS suspends on lid close, the wipe races the system freeze (a
-  millisecond-scale window; we usually win it, but why gamble).
+- Linux: set the "lid close action" to **do nothing** — the program listens
+  to the lid switch directly (input devices), independent of what the OS
+  does; with the OS out of the way, the sleep race disappears too.
+- Windows: **keep the lid action at "sleep"** — there is no
+  application-level lid notification, so lid-close evaporation rides the
+  sleep broadcast (lid → OS sleeps → broadcast → gone); setting it to
+  "do nothing" silently disables the lid trigger. The pre-sleep wipe is a
+  millisecond-scale race that we normally win; when in doubt, lock the
+  screen instead (Win+L is a direct notification, no race).
 - Linux: lock-screen watching rides the session bus (D-Bus); lid watching
   rides the input devices (`/dev/input`, needs read access via the `input`
   group). If the bus is unreachable or no lid sensor exists, the program
   **says so loudly** — it never silently pretends to guard. On headless
   boxes (pure SSH) neither trigger face exists.
-- Windows: lock-screen watching rides session notifications; lid close is
-  proxied by the *sleep broadcast* — there is no application-level lid
-  notification, and this is its nearest shadow (the default lid action is
-  sleep, so changing it is recommended here too).
+- Windows: lock-screen watching rides session notifications (direct, no
+  race).
 
 ## For developers
 
