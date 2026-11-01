@@ -1,4 +1,4 @@
-//! P21 惊弓之鸟（--skittish）的 CLI 集成测试：真实二进制 + 真实信号。
+//! P21 警惕模式（--skittish）的 CLI 集成测试：真实二进制 + 真实信号。
 //! 沙箱无桌面（无 DBUS_SESSION_BUS_ADDRESS、无 /dev/input）→ 两条
 //! 触发面的响亮降级路径恰好可测；有桌面的环境跳过对应断言并打印
 //! 理由（静默跳过=罪）。合盖/锁屏的桌面功能面由 owner 双平台清单
@@ -93,8 +93,8 @@ fn interrupt_and_collect(mut child: Child) -> (std::process::ExitStatus, String)
 /// 警惕模式下 Ctrl-C：横幅在场、退出码 0、stdout 恰好是清屏序列
 ///（CSI 2J + CSI 3J + CSI H——可视区 + 滚回缓冲 + 光标归位）。
 #[test]
-fn 惊弓之鸟_Ctrl_C_清屏退出() {
-    let (child, lines) = spawn_and_wait_for(&["--skittish"], "惊弓之鸟模式已开启");
+fn 警惕模式_Ctrl_C_清屏退出() {
+    let (child, lines) = spawn_and_wait_for(&["--skittish"], "警惕模式已开启");
     let (status, out) = interrupt_and_collect(child);
     assert!(status.success(), "Ctrl-C 应走干净退出（退出码 0），实际 {status}");
     assert!(
@@ -118,7 +118,7 @@ fn 普通模式_Ctrl_C_不清屏() {
 /// 比没有警惕更危险。有会话总线/有输入设备的真桌面环境跳过对应
 /// 断言并打印理由（跳过要响亮）。
 #[test]
-fn 惊弓之鸟_无桌面环境_触发面降级响亮() {
+fn 警惕模式_无桌面环境_触发面降级响亮() {
     // 会话总线存在的判定：DBUS_SESSION_BUS_ADDRESS 已设，或
     // XDG_RUNTIME_DIR/bus 在盘上。两者皆无 → zbus 必连不上。
     let has_bus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some()
@@ -127,7 +127,7 @@ fn 惊弓之鸟_无桌面环境_触发面降级响亮() {
             .unwrap_or(false);
     let has_input_dir = std::path::Path::new("/dev/input").exists();
 
-    let (child, lines) = spawn_and_wait_for(&["--skittish"], "惊弓之鸟");
+    let (child, lines) = spawn_and_wait_for(&["--skittish"], "警惕模式");
     // 给降级报告留到达时间（触发面线程各自异步报告）
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {

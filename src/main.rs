@@ -23,12 +23,11 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
       钥匙在启动后按提示悄悄输入（不回显）——钥匙不进命令行：本机任何
       账户都读得到进程启动命令，shell 历史也会记下它。
   E2EE-Experiment --skittish [监听地址] [-n 名字]
-      惊弓之鸟模式出生：合盖或锁屏的瞬间，一切将被遗忘，程序蒸发
+      警惕模式出生：合盖或锁屏的瞬间，一切将被遗忘，程序蒸发
       离场——擦净秘密、清空屏幕（含滚回缓冲）、退出，不等网络。
       锁屏含系统自动锁；只收确定性的物理事件，机器推断永不触发。
-      警惕模式下一切退出都会清屏，包括 Ctrl-C。触发面不可用时
-      （连不上会话总线、找不到盖子传感器）会响亮说明。详见
-      README 的「警惕者手册」。
+      警惕模式下一切退出都会清屏，包括 Ctrl-C。无需修改任何系统
+      设置；触发面不可用时会响亮说明。详见 README 的「警惕者手册」。
   E2EE-Experiment --courier [监听地址]
       开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
       （房号由客人带外自选，茶馆只认号接线）。
@@ -103,7 +102,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             "--courier" => as_courier = true,
-            // 惊弓之鸟（P21，rulings.2026_10_31_skittish_spec）：合盖/锁屏
+            // 警惕模式（P21，rulings.2026_10_31_skittish_spec）：合盖/锁屏
             // 即蒸发。CLI 专属消费端手势——库零改动（kept.skittish_cli_only）。
             "--skittish" => skittish = true,
             // --no-chain 已随暗号链移除而作废（rulings.2026_10_31_realtime_
@@ -172,10 +171,10 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     }
     eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（Ctrl-C 离场）");
-    // P21 惊弓之鸟知情横幅：这不是默认行为，是用户自己选的易惊状态——
+    // P21 警惕模式知情横幅：这不是默认行为，是用户自己选的易惊状态——
     // 姿态必须在启动时响亮说清（rulings.2026_10_31_skittish_spec）。
     if skittish {
-        eprintln!("惊弓之鸟模式已开启：这台机器处于易惊状态——合盖或锁屏的瞬间，一切将被遗忘，程序蒸发离场。每次合盖都会杀死全部对话。");
+        eprintln!("警惕模式已开启：这台机器处于易惊状态——合盖或锁屏的瞬间，一切将被遗忘，程序蒸发离场。每次合盖都会杀死全部对话。");
     }
 
     // 输入线：独立 std 线程阻塞读 stdin，逐行递给异步世界（P20-E①）。
@@ -203,7 +202,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     // Ctrl-C / SIGTERM（unix）、控制台事件（windows：Ctrl-C/X 按钮/注销，
     // 经 SetConsoleCtrlHandler 桥到静态 Notify）——汇成一条通道。
     let (mut term, term_tx) = terminate_signal();
-    // P21 惊弓之鸟：布防触发面——合盖/锁屏（各平台的确定性物理事件）
+    // P21 警惕模式：布防触发面——合盖/锁屏（各平台的确定性物理事件）
     // 直通统一终止通道。触发在语义上就是一次终止手势，复用同一条
     // 干净退出路径（擦→清屏→走人，警惕模式下次序见函数尾）。
     if skittish {
@@ -249,7 +248,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     });
     drop(person);
     drop(events);
-    // P21 惊弓之鸟：警惕模式下一切退出都是蒸发——秘密销毁之后，屏幕上
+    // P21 警惕模式：警惕模式下一切退出都是蒸发——秘密销毁之后，屏幕上
     // 的影子（含滚回缓冲）一并清空；Ctrl-C 也一样（spec 钉死）。普通
     // 模式不清屏：回看最后几行是正当需求。
     if skittish {
@@ -260,7 +259,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
 /// 统一终止信号面（P20-E① + P21）：把平台上『可捕获的终止手势』汇成
 /// 一条通道。每收到一项 = 一次终止手势（Ctrl-C / SIGTERM / Windows
-/// 控制台事件；P21 起，惊弓之鸟的合盖/锁屏触发也走这里）。发送端随
+/// 控制台事件；P21 起，警惕模式的合盖/锁屏触发也走这里）。发送端随
 /// 接收端一并返回——触发面复用它，触发=终止手势，同一个语义。
 fn terminate_signal() -> (
     tokio::sync::mpsc::UnboundedReceiver<()>,
@@ -306,14 +305,14 @@ fn terminate_signal() -> (
 }
 
 // ═══════════════════════════════════════════════════════════════
-// P21 惊弓之鸟（--skittish，rulings.2026_10_31_skittish_spec）
+// P21 警惕模式（--skittish，rulings.2026_10_31_skittish_spec）
 // 触发=合盖+锁屏（只收确定性物理事件）；威胁模型=触发即当设备已被
 // 读型取证接管（写型=T0 边界）；动作=擦→清屏→统一退出；不关机不关窗
 //（伪装原则：机器只自动化不可见的事）。以下全是 CLI 消费端进程策略，
 // 与 harden_process 同族——库零改动（kept.skittish_cli_only）。
 // ═══════════════════════════════════════════════════════════════
 
-/// 清屏并抹掉滚回缓冲（惊弓之鸟的蒸发面）：CSI 2J 清可视区、CSI 3J
+/// 清屏并抹掉滚回缓冲（警惕模式的蒸发面）：CSI 2J 清可视区、CSI 3J
 /// 清滚回缓冲（真正的历史在那里）、CSI H 光标归位。诚实边界（P20-D
 /// 同款入档）：ANSI 清屏是终端的逻辑清除——终端进程自己的内存字节
 /// 未必归零（T2/T3 窗口），那一层由人手电源键覆盖（手册四档表）。
@@ -343,7 +342,7 @@ fn arm_skittish(fire: tokio::sync::mpsc::UnboundedSender<()>) {
         // Ctrl-C 清屏语义仍完整（skittish 退出路径不挑触发源）。
         let _ = fire;
         eprintln!(
-            "惊弓之鸟降级：此平台的合盖/锁屏监听未实现——触发面不可用，\
+            "警惕模式降级：此平台的合盖/锁屏监听未实现——触发面不可用，\
              警惕模式只剩 Ctrl-C 也清屏的语义。"
         );
     }
@@ -359,7 +358,7 @@ fn watch_linux_lock_screen(fire: tokio::sync::mpsc::UnboundedSender<()>) {
     tokio::spawn(async move {
         if let Err(e) = watch_lock_screen_inner(fire).await {
             eprintln!(
-                "惊弓之鸟降级：锁屏触发面不可用（{e}）——锁屏时程序不会\
+                "警惕模式降级：锁屏触发面不可用（{e}）——锁屏时程序不会\
                  自动离场；Ctrl-C 依然立即擦净。"
             );
         }
@@ -398,7 +397,7 @@ async fn watch_lock_screen_inner(
             }
         });
     }
-    eprintln!("惊弓之鸟：锁屏触发面已布防（会话总线屏保信号）。");
+    eprintln!("警惕模式：锁屏触发面已布防（会话总线屏保信号）。");
     Ok(())
 }
 
@@ -433,7 +432,7 @@ fn watch_lid_evdev(fire: tokio::sync::mpsc::UnboundedSender<()>) {
         Ok(e) => e,
         Err(_) => {
             eprintln!(
-                "惊弓之鸟降级：读不了 /dev/input（目录不存在或无权限）\
+                "警惕模式降级：读不了 /dev/input（目录不存在或无权限）\
                  ——合盖触发面不可用。合盖时程序不会自动离场；Ctrl-C 依然\
                  立即擦净。"
             );
@@ -482,13 +481,13 @@ fn watch_lid_evdev(fire: tokio::sync::mpsc::UnboundedSender<()>) {
     if watched.is_empty() {
         if saw_denied {
             eprintln!(
-                "惊弓之鸟降级：无权限读 /dev/input（把自己加入 input 组\
+                "警惕模式降级：无权限读 /dev/input（把自己加入 input 组\
                  可解）——合盖触发面不可用。合盖时程序不会自动离场；\
                  Ctrl-C 依然立即擦净。"
             );
         } else {
             eprintln!(
-                "惊弓之鸟降级：未找到盖子传感器（/dev/input 下没有\
+                "警惕模式降级：未找到盖子传感器（/dev/input 下没有\
                  SW_LID 设备——台式机/虚拟机常态）——合盖触发面不可用。\
                  合盖时程序不会自动离场；Ctrl-C 依然立即擦净。"
             );
@@ -496,7 +495,7 @@ fn watch_lid_evdev(fire: tokio::sync::mpsc::UnboundedSender<()>) {
         return;
     }
     eprintln!(
-        "惊弓之鸟：合盖触发面已布防（{} 个盖子开关在耳）。",
+        "警惕模式：合盖触发面已布防（{} 个盖子开关在耳）。",
         watched.len()
     );
 
@@ -521,7 +520,7 @@ fn watch_lid_evdev(fire: tokio::sync::mpsc::UnboundedSender<()>) {
             if e.kind() == std::io::ErrorKind::Interrupted {
                 continue; // 被信号打断，重听
             }
-            eprintln!("惊弓之鸟：盖子监听退出（poll 失败：{e}）——合盖触发面不再可用。");
+            eprintln!("警惕模式：盖子监听退出（poll 失败：{e}）——合盖触发面不再可用。");
             return;
         }
         for fd in &fds {
@@ -554,9 +553,11 @@ fn watch_lid_evdev(fire: tokio::sync::mpsc::UnboundedSender<()>) {
 
 /// Windows 触发面：一枚 message-only 窗口（不可见、不抢焦点）做消息泵——
 /// WTSRegisterSessionNotification 接会话锁（WM_WTSSESSION_CHANGE/
-/// WTS_SESSION_LOCK=0x7）；WM_POWERBROADCAST/PBT_APMSUSPEND 作合盖
-/// 代理（诚实入档：盖子本身没有控制台通知，OS 对合盖的默认动作是睡眠，
-/// 睡眠广播是它最近的影子——推荐配置是合盖『不做事』，见警惕者手册）。
+/// WTS_SESSION_LOCK=0x7）；盖子走 RegisterPowerSettingNotification 直听
+/// GUID_LIDSWITCH_STATE_CHANGE——硬件状态通知，与电源动作设置无关
+///（推翻早先『盖子无控制台通知』的错误入档，2026-11-01 owner 裁决）。
+/// 睡眠不是触发器：自动睡眠源自闲置计时器（机器推断出局）；主动入睡
+/// 的人有更快的手势——合盖/锁屏/Ctrl-C。
 #[cfg(windows)]
 fn watch_windows_session(fire: tokio::sync::mpsc::UnboundedSender<()>) {
     use std::cell::RefCell;
@@ -583,13 +584,24 @@ fn watch_windows_session(fire: tokio::sync::mpsc::UnboundedSender<()>) {
                 });
                 0
             }
-            m if m == win::WM_POWERBROADCAST && wparam == win::PBT_APMSUSPEND => {
-                FIRE.with(|f| {
-                    if let Some(tx) = f.borrow().as_ref() {
-                        let _ = tx.send(());
+            m if m == win::WM_POWERBROADCAST && wparam == win::PBT_POWERSETTINGCHANGE => {
+                // 载荷 = POWERBROADCAST_SETTING；盖子通知 Data：0x0=合上
+                //（微软文档钉死）。状态通知与电源动作两层独立——与用户
+                // 的合盖动作设置无关。
+                let s = lparam as *const win::PowerBroadcastSetting;
+                unsafe {
+                    if (*s).power_setting == win::GUID_LIDSWITCH_STATE_CHANGE
+                        && (*s).data_length >= 1
+                        && (*s).data[0] == 0
+                    {
+                        FIRE.with(|f| {
+                            if let Some(tx) = f.borrow().as_ref() {
+                                let _ = tx.send(());
+                            }
+                        });
                     }
-                });
-                1 // TRUE：电源广播已处理
+                }
+                1 // TRUE：已处理
             }
             _ => unsafe { win::DefWindowProcW(hwnd, msg, wparam, lparam) },
         }
@@ -611,7 +623,7 @@ fn watch_windows_session(fire: tokio::sync::mpsc::UnboundedSender<()>) {
         };
         if win::RegisterClassW(&wc) == 0 {
             eprintln!(
-                "惊弓之鸟降级：注册窗口类失败——锁屏/睡眠触发面不可用。\
+                "警惕模式降级：注册窗口类失败——合盖/锁屏触发面不可用。\
                  Ctrl-C 依然立即擦净。"
             );
             return;
@@ -629,26 +641,41 @@ fn watch_windows_session(fire: tokio::sync::mpsc::UnboundedSender<()>) {
         );
         if hwnd.is_null() {
             eprintln!(
-                "惊弓之鸟降级：创建通知窗口失败——锁屏/睡眠触发面不可用。\
+                "警惕模式降级：创建通知窗口失败——合盖/锁屏触发面不可用。\
                  Ctrl-C 依然立即擦净。"
             );
             return;
         }
+        // 盖子直听：状态通知与电源动作两层独立——合盖动作怎么设都照发
+        if win::RegisterPowerSettingNotification(
+            hwnd,
+            &win::GUID_LIDSWITCH_STATE_CHANGE,
+            0,
+        )
+        .is_null()
+        {
+            eprintln!(
+                "警惕模式降级：盖子通知注册失败——合盖触发面不可用\
+                 （锁屏触发面仍在）。Ctrl-C 依然立即擦净。"
+            );
+        } else {
+            eprintln!("警惕模式：合盖触发面已布防（盖子状态通知）。");
+        }
         // NOTIFY_FOR_THIS_SESSION = 0：只听本会话
         if win::WTSRegisterSessionNotification(hwnd, 0) == 0 {
             eprintln!(
-                "惊弓之鸟降级：WTSRegisterSessionNotification 失败——锁屏\
-                 触发面不可用（睡眠触发面仍在）。Ctrl-C 依然立即擦净。"
+                "警惕模式降级：WTSRegisterSessionNotification 失败——锁屏\
+                 触发面不可用（合盖触发面仍在）。Ctrl-C 依然立即擦净。"
             );
         } else {
-            eprintln!("惊弓之鸟：锁屏与睡眠触发面已布防（会话通知 + 电源广播）。");
+            eprintln!("警惕模式：锁屏触发面已布防（会话通知）。");
         }
         let mut msg: win::Msg = std::mem::zeroed();
         loop {
             let r = win::GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
             if r <= 0 {
                 // 0 = WM_QUIT（无人投递，不应发生）；-1 = 消息泵出错
-                eprintln!("惊弓之鸟：消息泵退出——触发面不再可用。");
+                eprintln!("警惕模式：消息泵退出——触发面不再可用。");
                 return;
             }
             let _ = win::TranslateMessage(&msg);
@@ -740,10 +767,10 @@ mod win {
     pub(super) const STD_INPUT_HANDLE: u32 = 0xFFFF_FFF6; // (DWORD)-10
     pub(super) const ENABLE_ECHO_INPUT: u32 = 0x0004;
 
-    // ── P21 惊弓之鸟触发面（message-only 窗口消息泵） ──────────────
+    // ── P21 警惕模式触发面（message-only 窗口消息泵） ──────────────
     pub(super) const WM_POWERBROADCAST: u32 = 0x0218; // 电源事件广播
     pub(super) const WM_WTSSESSION_CHANGE: u32 = 0x02B1; // 会话状态变化
-    pub(super) const PBT_APMSUSPEND: usize = 0x4; // 系统即将睡眠（合盖代理）
+    pub(super) const PBT_POWERSETTINGCHANGE: usize = 0x3271; // 电源设置状态变化（盖子通知的容器）
     pub(super) const WTS_SESSION_LOCK: usize = 0x7; // 会话已锁
 
     /// message-only 窗口的父句柄常量（HWND）(HWND)-3：不进 Z 序、
@@ -775,6 +802,33 @@ mod win {
         pub x: i32,
         pub y: i32,
     }
+
+    /// GUID（Win32 repr(C) 投影）
+    #[repr(C)]
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) struct Guid {
+        pub data1: u32,
+        pub data2: u16,
+        pub data3: u16,
+        pub data4: [u8; 8],
+    }
+
+    /// 电源设置通知载荷（POWERBROADCAST_SETTING 投影）
+    #[repr(C)]
+    pub(super) struct PowerBroadcastSetting {
+        pub power_setting: Guid,
+        pub data_length: u32,
+        pub data: [u8; 1],
+    }
+
+    /// 盖子开关状态通知（微软文档：Data 0x0=合上、0x1=掀开——状态
+    /// 通知与电源动作决策是两层，不依赖用户的合盖动作设置）
+    pub(super) const GUID_LIDSWITCH_STATE_CHANGE: Guid = Guid {
+        data1: 0xBA3E_0F4D,
+        data2: 0xB817,
+        data3: 0x4094,
+        data4: [0xA2, 0xD1, 0xD5, 0x63, 0x79, 0xE6, 0xA0, 0xF3],
+    };
 
     /// 消息泵缓冲（MSG 投影：内容不读，只递给系统转发）
     #[repr(C)]
@@ -847,6 +901,11 @@ mod win {
         pub(super) fn TranslateMessage(lpmsg: *const Msg) -> i32;
         pub(super) fn DispatchMessageW(lpmsg: *const Msg) -> isize;
         pub(super) fn GetModuleHandleW(lpmodulename: *const u16) -> *mut c_void;
+        pub(super) fn RegisterPowerSettingNotification(
+            hwnd: *mut c_void,
+            powersettingguid: *const Guid,
+            flags: u32,
+        ) -> *mut c_void;
     }
 
     // P21：会话通知（wtsapi32；锁屏事件 WM_WTSSESSION_CHANGE 的订阅端）

@@ -241,14 +241,17 @@ E2EE-Experiment --skittish [listen-addr] [-n name]
 
 It announces itself loudly at startup: **this machine is in a jumpy state.**
 
-**Triggers** — two deterministic physical events:
+**Triggers** — you turn two everyday gestures into self-destruct switches:
 
-- **Lid close** (the moment a laptop lid shuts)
-- **Session lock** (including the OS's own timed auto-lock — the event is the
-  fact "the session is now locked", manual or timer alike)
+- **Lid close** — the moment a laptop lid shuts
+- **Session lock** — the moment the screen locks (whether you locked it
+  yourself with Win+L / Super+L or the OS timer did — locked is locked)
 
-Only these two. Machine inference (idle detection, hotplug detection, …) never
-triggers anything — a guess is not a gesture.
+The filter in one line: **only what your hand does counts; what the machine
+guesses never does.** Both gestures are facts that simply happened; "you
+haven't moved for ten minutes, you're probably gone" is a guess — and a wrong
+guess (you went for coffee) would kill every conversation. So idle detection,
+hotplug detection and the like never enter.
 
 **What happens on trigger** — three steps, none of which wait for the network:
 
@@ -284,7 +287,7 @@ you have chosen to trust it.**
 | Gesture | Speed | Boundary |
 |---------|-------|----------|
 | Ctrl-C | milliseconds (full wipe chain) | software layer: works under read-only takeover, not under read-write |
-| Lid close / lock (--skittish) | milliseconds (plus one hop of event delivery) | same; see the sleep race below |
+| Lid close / lock (--skittish) | milliseconds (plus one hop of event delivery) | same; if the OS lid action is "sleep", a millisecond-scale race with the system freeze (the lid notice arrives first; we normally win) |
 | OS shutdown / logoff | seconds (SIGTERM / the X button already feed the same clean path) | same |
 | **Power button, held 4 s** | immediate power cut | **hardware layer: the only means that stays effective under full takeover** |
 
@@ -292,25 +295,26 @@ An honest limit of screen clearing: an ANSI clear is the terminal's *logical*
 clear; the terminal process's own memory bytes are not necessarily zeroed —
 that layer is covered by the power button.
 
-**Recommended configuration** (the lid action points the *opposite* way on
-the two platforms — do not copy one to the other):
+**No system settings need changing** — both triggers work out of the box on
+both platforms, whatever the OS is configured to do:
 
-- Linux: set the "lid close action" to **do nothing** — the program listens
-  to the lid switch directly (input devices), independent of what the OS
-  does; with the OS out of the way, the sleep race disappears too.
-- Windows: **keep the lid action at "sleep"** — there is no
-  application-level lid notification, so lid-close evaporation rides the
-  sleep broadcast (lid → OS sleeps → broadcast → gone); setting it to
-  "do nothing" silently disables the lid trigger. The pre-sleep wipe is a
-  millisecond-scale race that we normally win; when in doubt, lock the
-  screen instead (Win+L is a direct notification, no race).
-- Linux: lock-screen watching rides the session bus (D-Bus); lid watching
-  rides the input devices (`/dev/input`, needs read access via the `input`
-  group). If the bus is unreachable or no lid sensor exists, the program
-  **says so loudly** — it never silently pretends to guard. On headless
-  boxes (pure SSH) neither trigger face exists.
-- Windows: lock-screen watching rides session notifications (direct, no
-  race).
+- **Lid close**: both platforms listen to the lid's hardware state directly
+  (Linux via the input devices, needing read access via the `input` group;
+  Windows via the lid state notification) — independent of the OS's
+  "what to do when the lid closes" setting.
+- **Session lock**: both platforms listen to the system's session-lock
+  notification.
+- When a trigger face is unreachable (headless box, pure SSH) the program
+  **says so loudly** — it never silently pretends to guard.
+
+One honest limit (a statement of fact, not a setting requirement): if the
+OS lid action is "sleep", evaporation races the system freeze on the
+millisecond scale — the lid notice arrives first and the wipe completes in
+milliseconds, so we normally win; if that bothers you, the screen lock is
+a direct notification with no race. **Sleep itself is not a trigger**:
+automatic sleep comes from an idle timer (a machine guess — doesn't count),
+and someone going to sleep on purpose has faster moves — lid, lock, or
+Ctrl-C.
 
 ## For developers
 
