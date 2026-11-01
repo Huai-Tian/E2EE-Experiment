@@ -770,7 +770,7 @@ mod win {
     // ── P21 警惕模式触发面（message-only 窗口消息泵） ──────────────
     pub(super) const WM_POWERBROADCAST: u32 = 0x0218; // 电源事件广播
     pub(super) const WM_WTSSESSION_CHANGE: u32 = 0x02B1; // 会话状态变化
-    pub(super) const PBT_POWERSETTINGCHANGE: usize = 0x3271; // 电源设置状态变化（盖子通知的容器）
+    pub(super) const PBT_POWERSETTINGCHANGE: usize = 0x8013; // 电源设置状态变化（盖子通知的容器；微软钉值 32787，owner 实测对账）
     pub(super) const WTS_SESSION_LOCK: usize = 0x7; // 会话已锁
 
     /// message-only 窗口的父句柄常量（HWND）(HWND)-3：不进 Z 序、
