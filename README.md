@@ -309,9 +309,9 @@ both platforms, whatever the OS is configured to do:
 
 One honest limit (a statement of fact, not a setting requirement): if the
 OS lid action is "sleep", evaporation races the system freeze on the
-millisecond scale — the lid notice arrives first and the wipe completes in
-milliseconds, so we normally win; if that bothers you, the screen lock is
-a direct notification with no race. **Sleep itself is not a trigger**:
+millisecond scale — measured on real hardware, the lid notice arrives
+*ahead* of the OS action and the wipe completes in milliseconds; if that
+bothers you, the screen lock is a direct notification with no race. **Sleep itself is not a trigger**:
 automatic sleep comes from an idle timer (a machine guess — doesn't count),
 and someone going to sleep on purpose has faster moves — lid, lock, or
 Ctrl-C.
