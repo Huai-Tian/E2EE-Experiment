@@ -140,6 +140,10 @@ theory:
     2026_10_31_camouflage_principle: "伪装原则（owner，2026-10-31；--then poweroff 否决的推导根据）。裁决：机器只自动化『不可见的事』；一切可见的对抗由人手判断时机。根据：胁迫者看见机器当面断电，读到的不是『数据没了』而是『他在对抗我』——可见的对抗动作本身是攻击的触发器。动作梯度：合盖/锁屏（日常动作，✅自动化）｜内存擦除（不可见，✅自动化）｜清屏后的空终端（证明不了任何东西存在过，✅自动化）｜机器关机（对抗宣言，❌永不自动化）｜自动关终端窗（可见动作+窗口多半属于 shell、强关即杀用户会话，❌不自动化——X 按钮是人手版，已接干净路径）。与 duress 家族的关系：传统 duress 模式想靠『假装配合』回避挑衅——早已否决（无持久化的世界里无戏可演）；本原则更干净：根本不做任何可见的事，挑衅问题不存在。武器留给手册：长按电源键 4 秒=EC 级断电、OS 之下、软件（含恶意工具）不可拦——完全接管下唯一确定有效的人类动作；何时值得冒险按下是读者的判断，文档只写清它存在（P20-B 手册义务）。"
     2026_10_31_skittish_spec: "惊弓之鸟模式 spec（owner，2026-10-31 定稿；旗标 --skittish——owner 指定语义场：敏感/警惕/受惊/惶恐/如履薄冰/小心翼翼/害怕，英文取 skittish＝受一点惊就整只逃走的性情；中文文档名『惊弓之鸟模式』）。姿态：opt-in（owner 裁决：出厂安全性已由协议保证——零持久化/每场新钥/端到端，警惕模式只是客户端手势层，且并非每个用户都活在胁迫环境）。触发器：合盖 + 锁屏，只收确定性物理事件（手合的盖、手按的锁）——机器推断（闲置检测/热插拔检测）永久出局；锁屏保留的明确裁决：高风险姿态的用户接受 OS 自动锁（计时器到期）也触发——事件是『会话已锁』这一事实，不区分手动自动。威胁模型（触发即失守）：触发的那一刻，默认设备已被硬件取证器完全接管。分两支：读型接管（取证常态——取证纪律要求不改动目标，改动=证据污染）→ 我们的代码照常运行（读不改执行流），设计响应有效；写型接管（可改内存、patch 掉擦拭逻辑）→ 软件层终局、任何响应不可信（T0 级诚实边界，入档不修——『我们只是机器上的客人』）。动作序列：擦除（Drop 链全覆盖；链既死，跨对话冒充物不复存在，现存会话钥面 Drop 即全）→ 清屏（警惕模式下一切退出都是蒸发）→ 统一退出（复用 Ctrl-C 干净路径）。不关机不关窗（伪装原则）。知情义务：启动横幅响亮（『惊弓之鸟模式已开启：这台机器处于易惊状态——合盖或锁屏的瞬间，一切将被遗忘，程序蒸发离场。每次合盖都会杀死全部对话』）；警惕者手册进 README 双语正文（触发条件、触发后行为、设备信任诚实线『本程序不防御设备本身——你选了它，就是信了它』、四档蒸发速度表、电源键最后手段、推荐配置：OS 合盖动作设『不做事』让程序独占盖子）。"
     2026_10_31_timer_doctrine: "计时器分类学（owner，2026-10-31；『计时器不一定可靠』裁决的完备展开）。五物种按合法性排：①量有限等待（工程）——握手 10s/标签 TTL 90s/counter 有界乱序窗口，遍地都是、无争议；②量公理需要的『近期』——在场辩护 30 秒挂钟窗（2026_10_16_presence_wallclock，唯一协议级计时器；准入先例=必须先回答『它量的东西为什么没有别的表示法』——counter 无速率语义、水位不随沉默衰减，只有挂钟能表达『最近还在说』）；③声明式死线（对话租约 --forget-after：到点即忘，防『睡着了盖子开着程序跑一夜』）——2026-11-01 owner 终裁不做（rejected.forget_after_lease）：『我们本来就没有可以忘记的』——忘是手势不是钟点（Ctrl-C/合盖/锁屏全是手势）；进程开着本身=人让它活着的持续表达（A1），到点清场=机器替人做忘的决定；睡着场景由 skittish 物理前兆（合盖/锁屏）覆盖，持有量由最小持有集（P20-F）封顶——租约防的坏事已无立足点；④从时间推断意义（闲置=人走了/沉默=危险/mumble 密度=该点名）——永久出局（auto_suggest_roll_call 同族，机器猜测，且闲置计时器与真实使用赛跑必误报——咖啡问题）；⑤看守进程死亡（守门犬防 kill -9）——双重死：依赖计时器（owner 已裁不用）+ 物理无效（SIGKILL 后地址空间销毁、页归内核所有，另一个用户态进程无法定位或擦除死进程的页）。kill -9 的真实答案（P20 各层分摊）：不可捕获是 POSIX/Windows 的内核设计、非工程缺口；分层缓解=最小持有集（P20-F 流式，失守窗口内容封顶）+ 密钥集 mlock（P20-L，残留 RAM-only 不入 swap——T1 收窄为 T3）+ 可捕获的杀全部修干净（SIGINT/SIGTERM/EOF/X 按钮——最常见的手部动作从脏路改净路）+ init_on_free=1 文档推荐（Linux 内核页释放即清零，死后窗口彻底关闭；Windows 无等价物，诚实边界）。"
+    2026_11_01_file_consent_gate: "文件同意门槛（owner，2026-11-01 定稿；4.1.0 主工程，施工蓝图见 pending_work.P22）。递文件先问一声：发端 /file 只发 0x17 请求（名字+总长，布局同 0x06）；收端按态度裁决——ask（默认）屏幕一行问句+30 秒钟；always 直接收（一行告知）；never 一律婉拒且连问都不显示（请求不可见+自动回绝=防刷屏）。答复 0x14 四态码：0 应允/1 人拒/2 婉拒(30秒)/3 政策拒——发端区分显示（『不要』与『没应答』永远是两句话）。/yes /no 为独立命令：无参数、只认焦点线（非焦点线的请求照样显示，答前先 /talk）。no 四时机统一手势：拒（问题挂着）/停收（正在收）/停发（正在发）/撤回（等答复）；说过 no 这份就死了——no 后不可 yes（问题已不存在，yes 无处可答；重来靠对方重新递）。一条线一次一件：从请求起到收尾文件道占着（不分方向），聊天照常——问题不绑架人（『消息从来不绑架人：递话的不等，听话的不停』）。30 秒是全系统唯一的钟（rulings.2026_11_01_one_clock_thirty_seconds）。申报即准数：多一个字节不行、少一个字节也不行——短斤缺两=响亮失败+停，收方已到字节保留（覆水难收）。收讫回执 0x16：收齐后收端回执、发端『对方已收到』——『成功』对两边是同一个事实（也封上『线断在最后一刻发方误报成功』的角落）。32MB 上限废除（双侧流式内存有界保持；FileTooLarge 退役）。空文件照走全流程（提示 0 字节）。文件类事件补『来自谁』（from=线对端 0x05 自报名，显示用不构成身份——与 Heard 同构同源；FileChunk 不带，保持瘦）。版本 4.1.0：与旧版本聊天不受影响、文件互传不行——旧端对 0x17 静默跳过（unknown_kinds 既有机制）；新端对旧 0x06 照识=『旧版来问』（走问→响亮失败：旧发端不等答复，块当噪音丢；/yes 后首块序号不合即响亮作废；30 秒不答即婉拒，旧端对 0x14 静默跳过无害），不无声消失；README 写明两边都升级。"
+    2026_11_01_file_irrevocability: "覆水难收——半份是收到的人的财产（owner，2026-11-01；发方停发场景的 A3 对账修复）。发到一半不想发了，对方已经收到的那半份收不回——A3：说出的收不回，你能改变的只有未来；发方的 /no 封住未来（不再发），不假装收回过去。此前设计里『对方半份凭空消失』=发了一件物理世界没有的法宝：隔空删除——不对称表纪律：网络多出来的能力要么废除要么声明，此法宝废除。规矩一句话：删不删半份，永远是收到的人的事——收方自己的 /no=删自己的半份（我的东西我扔，物理成立）；发方停发/线断/被新文件顶替=半份保留（改名 .半份+响亮告知已收/总长）；一切事件性中止一律保留，手势性删除只有收方自己的 /no 一条路。想要回来=聊天里说一声（机器不代办求情，更不代办抢夺——与『说错话撤不回只能道歉』同构）。诚实账：字节本来就一块块交到对方手里（收方想留谁都拦不住——事件流全交出），旧『删』只是收方程序演听话；现在不演，发端屏幕说真话（不给人虚假的安心）。副产品：协议里没有『隔空删』原语——魔改客户端想骗删也无从下手。安全定性：非放松（bytes 本就在对方手里）；磁盘暴露面不变量级（.半份 与完成文件同级），always 政策下的堆积变体入 known_limitations（用户立的常设政策，认钥不认人——与 --guard 同族）。"
+    2026_11_01_one_clock_thirty_seconds: "唯一的钟——30 秒婉拒（owner，2026-11-01；timer_doctrine 物种①准入先例沿用：量有限等待）。全系统唯一的钟=收端问题挂起的 30 秒：问题到达起算，到点未答=自动婉拒（发 0x14 码 2+清档+响亮一行）；婉拒发出=发端请求自动取消——不存在重复的（owner 原话）。曾提出的两个伴随钟（递出 60 秒无回音自动收手、应允后 30 秒无字节自动作废）被裁死：重复的；对旧版本石沉大海/应了没字节/传一半停摆等一切悬挂，人的 /no 就是钟（机器不猜，人摆手）。一句话：问的时候有 30 秒，其余一切，你的手就是钟。测试用 rogue 旋钮调短（正式构建旋钮零存在）。"
+    2026_11_01_file_request_is_a_message: "请求就是一句话——文件请求非阻塞（owner，2026-11-01）。file_begin 发 0x17 后立即返回：库内零隐藏等待，请求=又一种消息而已（说完就走，该干嘛干嘛）。答复以事件到达（FileAccepted/FileDeclined）——事件一到才开始递；答应之前喂块=响亮拒绝（『对方还没答应』——点头之前手不伸向盒子）。send_file 便捷包装保留『递完为止』阻塞形态（愿意省事的用包装、想要事件流的用原语——两形态文档写明）。收向同构：问题不扣住对话（ask 下收方继续说话，下一个 /yes 答的就是那份未撤回的请求；『/yes 只认当前说话的人』=注意力老规矩）。API 面红利：file_begin/file_chunk/file_end/file_abort/send_file 五个签名全部不动（只变内部行为），FFI e2ee_file_* 四符号照旧——新增只有三个（file_yes/file_no/set_receive）：收方此前只有耳朵没有嘴。"
 
   decision_procedure:                       # 编码模型遇到任何设计问题时的裁决流程
     step_1: "找公理依据：提案的每个机制，问它由哪条公理生成。答不出 → 默认拒绝。"
@@ -289,6 +293,11 @@ wire_protocol:
     seat_accept: "0x11 + 行（名长u8 ‖ 名字 ‖ r(32B) ‖ sig_pk(32B) ‖ contrib_sig(64B)，与 0x09 行同构）— 落座署名（slice-4 已落地）：候选人自选 r、生成嗓音钥、自签整行，经 1:1 递回引荐人。r 自选（128bit+ 碰撞概率可忽略）+ 收端唯一性响亮检查（P-12 fix）"
     seat_roster: "0x12 + circle_id(8B) ‖ seats(u8) ‖ count(u8) ‖ 全部名单行（每行同 0x09 布局，含 r）— 座次表（slice-4 已落地）：1:1 帧，ADD 应用后引荐人把全表递给新人（新人由此持全部 r 计算群钥，按本人嗓音公钥找到自己的座位）。只递已成成员。收端验每行自署 + 名字/r 唯一性"
     # 0x0D/0x0E 曾预留给见证/分叉通告——死于理论重建（同步机整体退役）；不得复活
+    # ── 4.1.0 PLANNED（P22 文件同意门槛，blueprint-locked 2026-11-01；落地时在此转 as-built）：
+    #    0x17 请求（name_len‖name‖total，布局同 0x06；新发端 file_begin 发它，0x06 停止发射）
+    #    0x14 答复（code：0 应允/1 人拒/2 婉拒(30秒)/3 政策拒；收→发；码域外当噪音）
+    #    0x15 停（无载荷；双向；这件文件事到此为止——只封未来，不碰已到〔覆水难收〕）
+    #    0x16 回执（无载荷；收→发；received==total 恰好时）——spec 全文见 pending_work.P22
   unknown_kinds: "silently skipped — forward compatibility (this is what makes the v3 additions rollout-safe for old peers)"
   hangup: "empty plaintext frame | tcp close"
   teahouse_control:                          # plaintext frames on the courier line, before the splice
@@ -319,6 +328,9 @@ file_transfer:
   zero_persistence: "reassembly in RAM only; the LIBRARY never touches the fs; bytes surface as Event::FileArrived (Zeroizing)"
   memory_note: "the 32MB RAM residency is a T1 exposure — documented, accepted。4.0.0（LANDED 2026-10-31，P20-F）：双侧流式落地后 32MB 常驻降为 8-32KB 单块瞬态——T1 面收窄为本块在途窗口"
   ffi_status: "FileArrived/FileDeclined map to tag 0 in e2ee_poll; an e2ee file API is the natural add-only extension。4.0.0（LANDED 2026-10-31，P20-F）：FFI 12→16 符号——接收侧 FileChunk/FileComplete/FileAborted 事件族（FileArrived 退役，tag 保留定义永不触发）+ 发送侧流式 API；C 头保持 add-only（新符号零冲突新增，旧 12 符号签名零变更）；Rust Event 面=4.0.0 破坏性变更（与 SecretChained 移除同批）"
+  # 4.1.0 PLANNED（P22，blueprint-locked 2026-11-01）：文件同意门槛——先问后答（ask/always/never）+
+  # /yes /no 焦点手势 + 30 秒唯一钟 + 一线一次一件 + 覆水难收（.半份）+ 申报即准数 + 回执 +
+  # 32MB 上限废除 + 旧 0x06 照识。落地后本节整体改写；spec 全文见 pending_work.P22_file_consent_gate_4_1_0。
 
 # ───────────────────────────────────────────────────────────────
 # GROUP — P2 as-built (诚实债务版：代码是什么就写什么)
@@ -548,6 +560,7 @@ settled_decisions:
     lid_state_baseline: "盖子状态基线追踪（首条状态通知只作基线、仅开→合迁移才触发，2026-11-01 落地后同日被 owner 否决回滚）——过度修复：clamshell（合盖+外接屏）用户与警惕模式的目标人群几乎不相交（owner 原话『高危险场景的人根本不会外接显示器』）；且基线逻辑为假想场景引入真风险——注册后首条通知未到的窗口里合盖，真实手势被基线吞掉（竞态）。维持简单判定：盖子通知 data=0（合上）即触发；clamshell 用户万一启动即蒸发属响亮且可理解的行为，非静默失败。判例：不为想象中的用户加防护，也不为假想场景给真实用户开竞态窗口"
     win_lid_window_rework: "盖子监听窗口从 message-only 改隐藏顶层（2026-11-01，落地后撤）——未被定罪的防御性改动：owner 裁决只修常量即可，论据=锁屏通知（WTS，同为注册制定向投递）在 message-only 窗口上一直正常工作，证明该类窗口收定向通知；盖子通知同机制，c2729de 合盖无反应完全由 wParam 常量错误解释。判例：嫌疑阶段的重防御改动若未获独立定罪，修正定罪项后应撤——最小改动纪律"
     forget_after_lease: "--forget-after 对话租约（2026-11-01 终裁不做；原 timer_doctrine 物种③，曾挂 4.1 待裁）——owner 原话『我们本来就没有可以忘记的』：忘=手势（Ctrl-C/合盖/锁屏）不是钟点；进程开着=人让它活着的持续表达（A1），到点清场=机器替人做忘的决定；睡着跑一夜由 skittish 物理前兆覆盖、持有量由最小持有集（P20-F）封顶——租约防的坏事在 4.0.0 机制族里已无立足点。计时器合法区定格为物种①②（有限等待+挂钟在场窗）"
+    file_fingerprint_display: "收讫后显示文件指纹（sha256 上屏，2026-11-01 与 P22 设计同批裁决）——核对是人类自己的事（与『认出对面是谁是人自己的事』同宗：机器只管递，不替人做核对）；想要的人用任何工具自己算。协议里也不加哈希字段（传输完整性已是结构性保证：AEAD+序号+申报即准数）"
 
 # ───────────────────────────────────────────────────────────────
 # ATTACK PRECEDENTS — 判例库（已裁决攻击；新特性必须逐条过堂）
@@ -630,6 +643,11 @@ attack_precedents:
     root_cause: "A2 违反（映射变体）：线→名字的资格映射从未经圈协议建立——their_name（0x05 自报名）直接充当路由、裁决、见证三类依据。物理世界不存在『自称某人即获得该人的桌位感知与作证资格』：感知只能来自亲手见证（她署名的公告、她被引荐的手续），不能来自自称"
     fix: "方向 A（owner 裁决 2026-10-17，LANDED 同日）：路由/裁决/见证只认圈协议建立的线绑定（line→名），their_name 降为纯显示。绑定只有三种写入行为，全部是协议行为、无一以自报名为资格：① form_circle 发起者快照——邀请名单本就扫描自发起者自己的线（自洽的感知宣誓，与署名 genesis 同责），快照随成圈写全她的线；② 0x0F 送达——把署名公告递到这条线的人绑为 creator（转发天然良性：受邀者经第二路径入座、同圈号同名单同材料同 K，同圈重放保护既有；伪造 genesis = 幻影圈——join 替换旧桌故无真圈泄漏、二人圈机密性等价 1:1、与真圈 /word 群词必不同，telephone model 边界内）；③ seat flow 双侧——complete_bring 绑引荐人侧候选人线（既有），0x10/0x12 到达绑候选人侧引荐人线（新人的出话路径）。负结果入档（防再提案）：0x09 凑话到达**不**绑线（转发与本人直达在收端不可区分，绑它即开抢注面——新鲜自署行+自报名即可顶替）；发言到达也**不**需要绑线（发言只从发送方已绑的线发出，永远不会落到未绑线上——推演中提出的『验签发言绑线』是惰性机制，已弃）。连带迁移（同根修复，随 slice 落地）：genesis direct-lock（creator==their_name）退役——递署名公告是协议行为，自称不是，0x0F 送达绑定取代之；P-05 直连声明判定与 bye/crash 见证人判定从 their_name 改读线绑定（未绑线 = 非直连声明/非见证——比现行更诚实：自报名从来不该是裁决依据；代价：顶替场景从『直连声明取代』退为『响亮冲突 + 点名』，本来的裁决就可被攻击者操纵，这是修正不是退化）。已知代价（入档 known_limitations.mesh_direct_pair_relay / relay_half_open_edge）：发起者之外的 mesh 直连对（双方都不是 creator、也不是 seat-flow 对端）在下次点名前只经发起者中继（双方线未绑，发言只走各自已绑线）；任一成员 /circle 即全量重绑（快照绑一方 + genesis 送达绑另一方）——A4 完整保留，mesh 冗余的恢复路径就是点名。方向 B（自报名撞名响亮冲突）被否：只堵路由面、检测式补丁家族，且不覆盖 P-05/见证连带面。落地形状（实现细节，rulings 2026_10_17_p15_line_binding_spec 两处钉死全遵照）：LineBinding 两形态——Name(String)（快照/bring 写入；路由过信念检查，RM 后随信念熄灭但保留供迟到告别见证判定 points_to；apply_add 同名重入清除）/ Qualified{via, peer}（0x0F/0x10/0x12 送达授予；spec a：名字不进路由判定；**peer 键修复（复审阻断项 B，rulings.2026_10_17_p15_peer_keyed_revocation）**：via=帧内授予者纯溯源，peer=授予时刻线对端 0x05 捕获快照——路由 Qualified{peer}∈belief、apply_rm 撤 Qualified{peer:离场者}、apply_add 同名清账含 Qualified{peer}、见证 points_to 读 peer；撤销键曾错位在 via 上=转发送达线在转发者离席时续命泄漏 RM 帧新 r，A3 回归，回归测试自证修复前红/修复后绿）；ADD 处理器的契约类拒收（名字冲突/r 碰撞/封桌——签名已验过的合法帧）照转（星型路由下静默丢弃会让下游成员看不见违约尝试，违反『让违约响亮』；伪造类拒收仍到此为止）；同圈创世重放检查显式补上（direct-lock 退役后的唯一重放闸，先于绑定——重放不得授绑）"
     test: "圈外线自报成员名 → 零圈帧到达（路由不看 their_name）；已除名者重放凑话/发言 → 线不获绑（P-04 断递保持）；星型成圈说话点名全通（快照+送达绑定全覆盖）；链式经逐跳已绑线中继；mesh 直连对：点名前经发起者中继互通、任一方点名后直达恢复；伪造 genesis → 加入者与伪造者成二人圈且与真圈 /word 群词不同（确定性断言）；冒名+自署行顶替（P-05 迁移面）→ 未绑线非直连声明 → 响亮冲突不静默顶替；冒名线断开 → 不冒领见证（无伪证 RM）。复审追加（2026-10-17 landing audit）：阻断项 B 回归——转发送达线（via=creator、peer=转发者）在转发者离席时熄灭 + 除名者零圈帧（含 RM 帧自身）+ 幸存者同钥对话 + 点名自愈重绑出话路径（P15_B_转发资格线_对端离席熄灭_除名者零圈帧，修复前红/修复后绿自证）；收尾项 C——v1 离场后 v2 同名入席，v1 线死时 crash 见证读已清绑定 → 无据 RM 不发、v2 无恙、v2 新绑定在清除后存活（P15_C_同名重入_crash见证不误逐新任期）；单元——对端键熄灭/授予键留溯源/过度撤销消失/同名清账（线绑定_生死周期_对端键熄灭_授予键留溯源）"
+  P_16_file_disk_fill:
+    attack: "对端连续 /file 灌文件：4.0.0 行为=收到即自动落盘 ./received/（单份 ≤32MB 但份数无界）——受害者磁盘被灌满；叠加 open_received_file 建文件失败走 panic（release=abort）→ 盘满后受害者进程可被远程崩死"
+    root_cause: "递送无门槛——物理世界不存在『陌生人往你桌上无限摞盒子而你无暇说不』：接不接是身体的行为（A1），机器替人默认全收=『接收自动化』这一网络多余能力未废除（不对称表纪律）"
+    fix: "P22 文件同意门槛（4.1.0，blueprint-locked 2026-11-01）：先问后答；态度 ask/always/never（never=请求不可见+自动回绝）；一线一次一件；30 秒唯一钟——ask 下每份都要人点头、never 彻底关。连带修复：open_received_file 建文件失败 panic→响亮失败（盘满不再可崩进程；写盘路径 P20-F 已体面，建文件路径随本判例拉齐）。always=用户自立的常设政策（认钥不认人，与 --guard 同族）——堆积面入 known_limitations，不在此判例封堵范围"
+    test: "防灌盘红绿自证（安全修复落地标配）：临时还原自动收行为→连续灌盘测试真红（盘满 panic 断言）；开门槛→ask 未答零落盘、never 零事件零落盘；建文件失败→响亮一行+进程活着+下一份照常"
 
 # ───────────────────────────────────────────────────────────────
 # KNOWN LIMITATIONS — honest edges; do NOT paper over in docs
@@ -651,7 +669,7 @@ known_limitations:
   newcomer_roster_is_copy: "封桌被拒的新人（或任何刚拿到 0x12 的人）手里的座次表是引荐人信念的复印件，不是活视图——她看到五个名字却只听见引荐人说话时，可能不知道自己被拒了，除非引荐人告诉她。物理对应：朋友拿到一张座次表，但那只是引荐人的说法。不修——修法是『拒绝通告帧』，那是同步机 creeping back；A2 推到极致：连你手里的座次表都只是别人的直连感知"
   closed_table_dos_surface: "恶意成员在封桌圈反复 /bring 的 DoS 面极小：第一次 fork 后，后续 /bring 都作用于她自己已分叉的信念（她的信念里已有 N₁，第二次加 N₂……），其余成员的对话完全不受影响，代价只是响亮事件和与她的 mumble。成员间对 open/closed 信念不一致时同理：各自应用/不应用——同一部机器（T1 fork → mumble → 点名），无需新机制"
   transitional_window: "RM/ADD 应用不一致期间滞后发言可被刚拿到名单者解密——走向桌子时听见话尾，物理等价，入档。注意边界：这是『应用期间』的秒级窗口；入座前的历史对新人不可读（P-13 旋转修复后成立——ADD 后引荐人 r 已旋转，K_old 无从推导），两者不可混淆"
-  no_liveness_probes: "established conversations have no keepalive — a vanished peer hangs the line until /quit; under v3 a zombie member's contribution stays in the key until witness topup / roll call（4.0.0 frozen：/quit 废除后=挂到进程退出；修补候选=liveness_probe_4_1——直连感知定性，4.1 议题）"
+  no_liveness_probes: "established conversations have no keepalive — a vanished peer hangs the line until /quit; under v3 a zombie member's contribution stays in the key until witness topup / roll call（4.0.0 frozen：/quit 废除后=挂到进程退出；修补候选 liveness_probe_4_1 已终裁注销 2026-11-01——对端感知=推断家族死案，见 wire_protocol.punch.transport）"
   seized_device_reads_on: "a seized in-circle device reads until its lines die + topup lands; old plaintext remains readable to old key holders (history, not a leak); the coercion answer is inherent: close the program（4.0.0 frozen：--skittish 把『关程序』自动化为合盖/锁屏手势——触发即当设备已被读型接管，读型下响应有效/写型=T0 边界，见 rulings.2026_10_31_skittish_spec）"
   pcs_gap: "PCS（后妥协安全）缺口：被缴设备读过的不追索（A3：物理世界不存在『让他忘掉已听见的』）；MLS 有 PCS 我们没有——无持久化+无身份的价格，正面声明"
   identity_bounded_by_direct_links: "contribution name-binding under flooding is first-seen-tentative + witness-adjudicated — secrecy is mathematical, member-identity certainty is bounded by direct connections"
@@ -978,12 +996,51 @@ pending_work:
 2026-11-01 补裁落地（三裁决见 settled_decisions *_2026_11_01）：①改名——中文全量『警惕模式』（横幅/HELP/降级文案/双语 README/CHANGELOG/测试），参数与英文不变；②Windows 合盖直听——GUID_LIDSWITCH_STATE_CHANGE + RegisterPowerSettingNotification（user32 #[link]，WndProc 加 PBT_POWERSETTINGCHANGE 分支：载荷 PowerBroadcastSetting 投影、GUID 比对、Data[0]==0 即合上），PBT_APMSUSPEND 分支移除，盖子/锁屏两面独立布防报告；③睡眠否决——Linux 零改动（PrepareForSleep 不引入），睡眠触发面从两平台移除。验证：三 target（glibc/musl/windows-gnu）check 零警；skittish 测试 3/3（新名）；冒烟：警惕模式横幅+双降级+SIGINT→0+清屏序列。owner 实测清单（三硬件：Linux VM 无盖 + Windows 笔记本真盖 + Windows 台式机）：Linux VM 锁屏（预期：锁屏→程序蒸发）；Windows 笔记本合盖（默认睡眠动作=赛跑实测）/锁屏/Ctrl-C 三形态（预期：全清屏）；台式机以手动睡眠验证睡眠广播路径。实测准备期 owner 提示「台式机也没有合盖」——揪出手册缺陷并修正：推荐配置原句未分平台，Windows 语义相反（合盖触发依赖睡眠广播，设『不做事』= 合盖静默失灵）；手册/CHANGELOG 已改分平台表述（Linux=不做事消除赛跑且 evdev 照常触发；Windows=保持睡眠、拿不准用 Win+L 直达通知）。落地后 owner 审计链两笔补裁（墓碑治理，随 P21 patch 包 0002/0003 交付）：①头文件挂牌补全——SECRET_CHAINED（tag 7）在 C 头里的旧语义说明换成「已废弃的保留定义（4.0.0 起永不触发）」（P20-E② 承诺的 deprecated 注记此前只做了一半）；②墓碑零代码（owner 原话「墓碑不应该执行任何代码，并且应该提示已经废弃」）——删除 ffi 侧 EVENT_SECRET_CHAINED 死常量（零路径使用、C 侧不可见、dead_code 警告常驻）；「tag 7 编号永不复用」从死常量的 incidental 占位升级为机器断言（ffi tests 事件编号_退役区与唯一性：在用 tag 互异且 7 为禁区——安全性不得靠 incidental 成立的纪律同款适用）；e2ee_person_create_hidden 补 #[deprecated]（Rust 侧编译期提示；C 侧由头文件挂牌承担）。墓碑最终形态=一行挂牌注释 + 一条测试禁区，零代码。验证：ffi 2 测试过且构建零警告、FFI OK + ctypes OK、16 符号不变"
     engineering_notes: "范围（owner 2026-10-31）：仅两个平台的可执行程序；库=标准通信——触发观察=进程级策略住 main.rs（harden_process 同族）；清屏=终端 I/O 住 CLI；擦除=Person::drop 既有语义（库零改动）。触发接入点（实现期定夺，剃刀不变：只收确定性物理事件）：Linux——盖子（evdev SW_LID / udev input 事件面，或 logind 抑制锁+盖子状态面）+ 锁屏（会话 D-Bus 屏保 ActiveChanged 信号面）；Windows——WM_POWERBROADCAST 会话通知与 WTS_SESSION_LOCK。竞态文档义务：OS 默认合盖=睡眠时，擦拭须在冻结前落地（inhibitor/事件窗口毫秒级）；推荐配置（手册）=OS 合盖动作设『不做事』让程序独占盖子。清屏=ANSI 全清+滚回缓冲清除（CSI 2J + CSI 3J + 光标归位序列族）——警惕模式专用（普通模式退出不清屏：回看最后几行是正当需求）；不自动关窗（rejected.auto_close_terminal）。CLI 内实现若需新增依赖（evdev/dbus crate 面）或触碰 C 头：停下报裁决——手写 FFI 或 sysfs 读取为备选"
 
+  P22_file_consent_gate_4_1_0:                # 4.1.0 主工程：递文件先问一声（全套裁决 2026-11-01 owner 定稿；宪法=rulings 2026_11_01_file_consent_gate / file_irrevocability / one_clock_thirty_seconds / file_request_is_a_message 四条）
+    status: blueprint-locked-2026-11-01       # 设计对话全程闭环（含魔改客户端残面审计+畸形帧审计过堂）；实现未开工。本块=完整施工蓝图——上下文丢失时以本块+四裁决+P-16 原样重建，无遗漏
+    depends: []
+    version: "4.1.0（破坏性：wire——新发端停发 0x06、新增 0x14/0x15/0x16/0x17；Rust Event——FileDeclined 改义〔发方拒绝通知，带三态理由〕、FileChunk/FileComplete 补 from、新增 FileRequested/FileAccepted/FileDelivered；C ABI——add-only 16→19；32MB 上限+FileTooLarge 退役；跨版本文件断代〔聊天不受影响〕README 写明两边都升级。4.0.0 tag 未发——并入后随 tag 策略 owner 定）"
+    wire_spec:
+      request_0x17: "name_len(u8)‖name‖total(u64_be)——布局与 0x06 完全一致；新发端 file_begin 发它（0x06 停止发射）"
+      verdict_0x14: "code(u8)：0 应允/1 人拒/2 婉拒(30秒)/3 政策拒；收→发；码域外(4-255)当噪音"
+      stop_0x15: "无载荷；双向；『这件文件事到此为止』——只封未来，不碰已到（覆水难收）"
+      receipt_0x16: "无载荷；收→发；received==total 恰好时回执"
+      legacy_0x06: "照识——当『旧版来问』走同一门槛（旧发端不等答复：块在 consent 前当噪音丢；/yes 后首块序号不合=响亮作废；30 秒婉拒，旧端对 0x14 静默跳过无害）"
+    state_machine:                            # 每线一个文件档；一线一次一件（不分方向，请求起到收尾）；聊天道永不受影响
+      outbound: "空→等答复(0x17已发)→正在递(0x14=0)→等回执(file_end 全部发出)→空(0x16 到达)。出路：0x14∈{1,2,3}→FileDeclined(带理由)+空；自己 no→撤回/停发（发 0x15）+空；等回执态 no→不再等（本地清档+响亮，不发帧——对方的完整份是对方的）；线死→收摊清档"
+      inbound: "空→问题挂着(ask+30s 钟)→正在收(file_yes 或 always)→空。出路：自己 no→发 0x15+删自己半份；对端 0x15→保留半份(.半份)+响亮；线死→保留半份；新头到达→旧档响亮+半份保留+新问题按态度；seq 不合/越界/短斤→响亮+半份保留；never 态 0x17/0x06→发 0x14 码 3+零事件零状态"
+      one_per_line: "file_begin 前查双向占道（出向任何态或入向任何态）→ FileBusy『这条线还有一件文件事没完——等它结束再递』"
+    library_api:
+      new_methods: "file_yes()——答聚焦线挂着的问题（无待决=响亮 Err『现在没有问你文件的事——想要让对方重新递』）；file_no()——四时机统一手势（出向等答复=撤回/出向正在递=发 0x15 停发〔下一块喂入 Err〕/入向问题挂着=发 0x14 码 1/入向正在收=发 0x15+删自己半份/出向等回执=不再等；无事可摆=响亮 Err）；set_receive(Receive::{Ask,Always,Never})——聚焦线态度；切换瞬间裁决挂着的问题（→Always=发 0x14 码 0 转正在收；→Never=发 0x14 码 3 清档；→Ask=保持）"
+      extended_methods: "file_begin——改发 0x17、立即返回（请求就是一句话；出向登记『等答复』）；file_chunk——等答复态喂=响亮 Err；file_end——短斤缺两检查（sent<total=Err+发 0x15；申报即准数）；file_abort——行为补发 0x15（ABI 冻结保留，=file_no 的出向半边）；send_file——包装内部等 FileAccepted 再喂（阻塞便利形态，与事件流原语两形态文档写明）"
+      policy_store: "Inner 按线 HashMap<conv_id, Receive>——内存、随进程死、按线独立；缺项=ask"
+      the_clock: "30 秒=问题挂起时计时（唯一新增钟）：到点仍挂→发 0x14 码 2+清档+响亮一行；婉拒发出=发端请求自动取消。rogue::set_file_ask_window(ms) 测试旋钮（cfg(feature=rogue)，正式构建零存在）"
+      malformed_discipline: "四新帧解析继承全仓纪律：先闸长度再切片（0x17 沿 0x06 的 n>1 && n>=2+name_len+8 闸门）、from_utf8_lossy、码域外当噪音、0 长块当噪音、永不 panic（release panic=abort=一次远崩）"
+    events:
+      new: "FileRequested{id,from,name,size}——一份递送到达（ask：渲染问句；always：渲染『直接收』行；never：不发射——不可见在源头）；FileAccepted{id,from,name}——发端：对方收下了（CLI 由此起后台传输任务）；FileDelivered{id,from,name}——发端：回执到了（『对方已收到』）。事件 tag 按 ffi 现有序列 append；退役 tag 挂牌纪律照旧"
+      repurposed: "FileDeclined{id,from,name,reason}——发端收到拒绝（reason=人拒/婉拒/政策拒；原收端超限语义随上限退役，tag 复用）"
+      extended: "FileChunk/FileComplete 补 from（多线时『收到 [甲] 的文件』分得清；FileChunk 不带 from——保持瘦）；FileAborted{id,detail} 照旧复用（detail 承载半份数字『你手里有半份（{received}/{total} 字节）』）"
+    ffi_face: "e2ee_file_yes/e2ee_file_no/e2ee_set_receive(policy: 0=ask 1=always 2=never)——16→19 符号；事件载荷带 from；include/e2ee.h add-only；android.yml 名单 16→19；ffi_test.c/ctypes_test.py 跟进"
+    cli_spec:
+      commands: "/file PATH——记路径小账本（内存）+file_begin 立即返回；FileAccepted 按线号取路径起后台传输任务（边读边喂；命令行全程活着；发到一半 /no→下一块喂入 Err 任务退出）；/yes、/no（无参只认焦点线）；/receive always|never|ask（无参=显示当前态度——CLI 自记账，不问库）"
+      prompt_lines: "焦点线：『[甲] 想递给你 [猫.jpg]（2.3MB）——/yes 收，/no 不收；这条线今后：/receive always|never|ask』；非焦点线加『（先 /talk 甲 再答；30 秒不答即婉拒）』；30 秒到点收端补一行『（30 秒没应，[甲] 的 [猫.jpg] 已婉拒）』"
+      copy_set: "发端四态：『乙收下了，开始递 [猫.jpg]……』／『乙不要 [猫.jpg]』／『乙 30 秒没应答，婉拒了 [猫.jpg]——想要的话重新递』／『乙这条线不收文件（对方的设定），[又一个.zip] 婉拒』；发端收尾：『[猫.jpg] 发完了——等对方确认』→『乙已收到 [猫.jpg]』；收端：『开始收 [猫.jpg]……』／『收到 [甲] 的文件 [猫.jpg]（2.3MB），放在 ./received/猫.jpg』／always：『[甲] 递来 [猫.jpg]（2.3MB）——这条线设了都收，直接收』；半份两句——自删：『已停收 [报表.xlsx]，半份已删』／保留：『[报表.xlsx] 的递送停了——你手里有半份（412KB / 860KB），存在 ./received/报表.xlsx.半份，自己处置』；无待决：『现在没有问你文件的事——想要让对方重新递』；占道：『这条线还有一件文件事没完——等它结束再递』；建文件失败：『盘上建不了文件〔猫.jpg〕：盘满或没权限——这份收不了』（该份作废后续块丢弃不刷屏，下一份照常——open_received_file 的 panic! 改响亮失败，P-16 连带修复）"
+      partial_handling: "CLI inbound 账本：事件性中止（FileAborted）→关文件+改名 .半份+响亮；自己的 /no（方法返回）→关文件+删除；大小显示人类可读（B/KB/MB/GB）"
+    test_matrix:
+      new_rules: "顺利全程（问→/yes→块→收齐→回执，双端断言）；人拒/婉拒/政策拒三态码各自到端显示；30 秒到点（rogue 调短）双端收场行；always 直收不问+一行告知；never 不可见+发端政策拒；ask 复位恢复问句；一线一件双向占道（出向挂着时入向 begin 也 FileBusy）；停收=删自己半份+对端下一块 Err；停发=对端半份保留 .半份+数字正确（覆水难收断言）；撤回=对端问题响亮消解、零字节零半份；no 后 yes=响亮 Err；>32MB 照传（跨旧上限断言）；短斤缺两=file_end Err+发 0x15+对端半份保留；回执事件恰在收齐后；空文件全流程（0 字节问句→yes→立即收齐→回执）；非焦点线照问、切焦点后可答；传中聊天穿插（既有面保持）；传中切态度即刻裁决；线断半份保留；新头顶替旧档响亮+半份保留；旧版 0x06 来问→/yes 后序号不合响亮作废"
+      malformed_family: "rogue_frame 注入逐条：截断 0x17（name_len 谎报）/码域外 0x14/u64::MAX total/0 长块/控制字符名——断言进程活着、零落盘或响亮、状态不乱"
+      legacy_adaptation: "既有文件测试全部改先问后答（或设 always）；超限拒收测试删除（上限没了）；98 基线不回退（新测试全绿计入新基线）"
+      red_green: "防灌盘自证（P-16）：临时还原自动收行为→连续灌盘测试真红；开门槛→绿——安全修复落地标配"
+    residual_faces:                           # 魔改客户端残面审计 2026-11-01（全部有界、无新静默失败；解析层既有防线已核：长度闸门/lossy/路径消毒/序号对缝/AEAD 每线各钥/nonce 倒退即拒）
+      bounded: "带宽焚烧（线路固有，落不了盘，杀线即止）｜滚屏（聊天刷屏同类；never 下文件类零显示）｜always 磁盘（用户常设政策：完成堆积+.半份 堆积变体；ask 下每个半份都要人点头）｜悬挂（只锁自己那条线；/no 收场）｜冒名显示（0x05 自报名，含事件 from——只骗屏上文字，路由/判定读线不读名，P-15/16 战果继承）｜三态拒收码对端可辨（密文内仅对端可见，行为的诚实流露非泄漏；并码可遮但牺牲发端诚实渲染，默认不并）｜内容不可知（物理本体）｜重放自杀（nonce 倒退→线死）"
+    doc_face: "README.md/README_ZH.md 文件节重写（门槛流程+三命令+跨版本说明）+命令表补 /yes /no /receive；CHANGELOG 4.1.0 置顶破坏性声明；Cargo 4.0.0→4.1.0；本档案落地时：file_transfer 节整体改写、commands.file 改写、known_limitations 增补（always 堆积/.半份 边界/跨版本断代）、P22 翻 LANDED、post_3_0_0_backlog.src_4529_allow 顺带执行（P22 触碰 src——单点 #[allow(non_snake_case)]+注释，修法已锁）"
+
   post_3_0_0_backlog:                       # tag 后线索板（3.0.0 发布收笔归档 2026-10-18——全部「tag 后」状态，各自独立 slice 过堂，不丢线索）
     cargo_audit_in_ci: "cargo audit 进 CI——tag 时点人工核查快照见 verify.release_v3_0_0（dalek 双件不在已知 advisory 影响面）；自动化排期 owner 裁决"
     musl_staticlib: "musl-target staticlib 立项条件：出现需要静态链 e2ee 的 musl 下游场景才开工。背景：glibc .a 已验证可行（裸链 -lm 一枚，2026-10-18 沙箱实测 FFI OK）但默认不提供——Linux 需求由 .so + musl 静态 exe 覆盖；851917b 已加 Windows staticlib 形态（crate-type 行），Linux 侧照抄一行即得、待真实需求触发"
     src_4529_allow: "src/person.rs:4529 单测名 non_snake_case 单点 allow——修法已锁（单点 #[allow] + 注释；禁改名〔判例术语 RM〕、禁 Cargo.toml [lints]〔过宽〕，P19 裁决 2026-10-18），待未来触碰 src 的 slice 顺带处理"
-    ttl_fuse_4_1: "--forget-after 声明式死线（对话租约：N 小时后无论如何全忘——堵『睡着了盖子开着程序跑一夜』的缝，惊弓之鸟合盖触发管不到没合盖的场景）。owner 挂起 2026-10-31（原话『计时器不一定可靠，相关裁决待定』）。挂起的实质问题=剃刀家族扩格：『声明的死线』到点即忘是确定性的、无推断的、与惊弓之鸟同构的声明反射，但它不是『人的手势』——扩不扩格 owner 再裁。不阻塞 4.0.0 任何 slice"
-    liveness_probe_4_1: "no_liveness_probes 修补候选：心跳把『沉默的半开线』变成可观察的线死事件→见证 RM 自动触发→僵尸自清（现为挂到进程退出）。定性（2026-10-31 会话分析）：直连感知（在线上问『你还在吗』）非意义推断——A2 相容，与 timer_inference_family 不同族；代价=周期流量时序指纹（P-11 族）+ 既有语义变化。4.1 议题，不阻塞"
+    ttl_fuse_4_1: "【已死 2026-11-01】终裁不做——rejected.forget_after_lease（忘是手势不是钟点；计时器合法区定格物种①②）。原挂起文本作废"
+    liveness_probe_4_1: "【已死 2026-11-01】候选注销、永不再提——对端感知=推断家族死案（wire_protocol.punch.transport 终裁注记，e5d7d31）。原定性文本作废"
 
   research_track:                            # 非代码轨——论文工作，不阻塞任何 P 项；细节另档
     note: "T1-T5 Tamarin 形式化（P3 落地后建模）；取证测量论文（Signal/Telegram/Briar/本系统 本地残留对比）；trilemma 以猜想形态入论文一。README 不承载研究细节。"
