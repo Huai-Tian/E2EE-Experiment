@@ -11,7 +11,8 @@
 #              2026-11-01 (P22 file consent gate landed, see pending_work
 #              status lines + landed chains; 114 tests — rogue 22 unit + 87
 #              integration + 1 pq + 1 dumpable + 3 skittish[bin]). Prior: 4.0.0
-#              COMPLETE 2026-10-31 (P20 all slices + P21 skittish, 98 tests);
+#              RELEASED（tag 4.0.0 → ad58f74，2026-11-01 切 tag；P20 all
+#              slices + P21 skittish, 98 tests）;
 #              v3.0.0 RELEASED 2026-10-18 (tag 3.0.0 → 851917b; CI 7/7 green; 12
 #              artifacts on GitHub Release; 92 tests). 4.0.0 doctrines:
 #              theory.rulings 2026_10_31_* (six incl. skittish_spec); 4.1.0
@@ -36,7 +37,7 @@ project:
     - cli
   core_metaphor: executable == person        # NOT marketing — drives every decision below
   theory: conversation-physics               # NEW v3: see theory block — the project now HAS an explicit theory
-  maturity: early-development                 # 3.0.0 released 2026-10-18; 4.0.0 complete 2026-10-31; 4.1.0 complete 2026-11-01 (P22 文件同意门槛, tag pending)
+  maturity: early-development                 # 3.0.0 released 2026-10-18; 4.0.0 released（tag 4.0.0 → ad58f74，2026-11-01）; 4.1.0 complete 2026-11-01 (P22 文件同意门槛, tag pending)
   ui_language: zh                            # user-facing strings are chinese; keep style
   comment_language: zh-with-person-metaphors # see glossary at bottom
 
@@ -1007,7 +1008,7 @@ pending_work:
   P22_file_consent_gate_4_1_0:                # 4.1.0 主工程：递文件先问一声（全套裁决 2026-11-01 owner 定稿；宪法=rulings 2026_11_01_file_consent_gate / file_irrevocability / one_clock_thirty_seconds / file_request_is_a_message 四条）
     status: landed-2026-11-01                   # blueprint-locked（doc-only 蓝图先行，ff6f896）→ 全项落地同日；宪法=四裁决 + P-16 判例；验证链见 landed
     depends: []
-    version: "4.1.0（破坏性：wire——新发端停发 0x06、新增 0x14/0x15/0x16/0x17；Rust Event——FileDeclined 改义〔发方拒绝通知，带三态理由〕、FileChunk/FileComplete 补 from、新增 FileRequested/FileAccepted/FileDelivered；C ABI——add-only 16→19；32MB 上限+FileTooLarge 退役；跨版本文件断代〔聊天不受影响〕README 写明两边都升级。4.0.0 tag 未发——并入后随 tag 策略 owner 定）"
+    version: "4.1.0（破坏性：wire——新发端停发 0x06、新增 0x14/0x15/0x16/0x17；Rust Event——FileDeclined 改义〔发方拒绝通知，带三态理由〕、FileChunk/FileComplete 补 from、新增 FileRequested/FileAccepted/FileDelivered；C ABI——add-only 16→19；32MB 上限+FileTooLarge 退役；跨版本文件断代〔聊天不受影响〕README 写明两边都升级。4.0.0 已发布〔tag 4.0.0 → ad58f74，2026-11-01〕——4.1.0 为其上的常规跟进版，正常打 tag 即可）"
     wire_spec:
       request_0x17: "name_len(u8)‖name‖total(u64_be)——布局与 0x06 完全一致；新发端 file_begin 发它（0x06 停止发射）"
       verdict_0x14: "code(u8)：0 应允/1 人拒/2 婉拒(30秒)/3 政策拒；收→发；码域外(4-255)当噪音"
@@ -1072,8 +1073,9 @@ pending_work:
       ctypes OK；双进程冒烟（真 CLI 实例×2）：问句/四态收场/政策拒静默/
       md5 一致/400MB 中途停发留 .半份 341MB（数字带全）/停收零残留全对。
       待 owner 侧：push 后 CI 7 job（test-linux/windows 用 rogue 全量）、
-      tag 4.1.0 策略（4.0.0 tag 未发——并入或分开发，owner 定）、四 ABI
-      产物重建（android.yml 断言名单已 19）。
+      tag 4.1.0（4.0.0 已发布：tag 4.0.0 → ad58f74，2026-11-01 切——
+      4.1.0 为常规跟进版，正常打 tag）、四 ABI 产物重建（android.yml
+      断言名单已 19）。
 
   post_3_0_0_backlog:                       # tag 后线索板（3.0.0 发布收笔归档 2026-10-18——全部「tag 后」状态，各自独立 slice 过堂，不丢线索）
     cargo_audit_in_ci: "cargo audit 进 CI——tag 时点人工核查快照见 verify.release_v3_0_0（dalek 双件不在已知 advisory 影响面）；自动化排期 owner 裁决"
