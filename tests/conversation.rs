@@ -8,7 +8,7 @@
 // 锁定见 README_AGENT（src/person.rs 单点 allow，禁改名禁 [lints]）。
 #![allow(non_snake_case)]
 
-use e2ee::{Event, LeaveReason, Person};
+use e2ee::{DeclineReason, Event, FileNoResult, LeaveReason, Person, PersonError, Receive};
 use e2ee::person::{SEATS_CLOSED, SEATS_OPEN};
 // 判例注入面：feature 门控（缺 feature 时库不编译它，canary 响亮提示）
 #[cfg(feature = "rogue")]
@@ -386,6 +386,46 @@ async fn collect_file(events: &mut UnboundedReceiver<Event>) -> Vec<u8> {
     assembled
 }
 
+/// 从事件里取出 FileRequested（名字、总长）。
+fn file_requested(ev: &Event) -> Option<(String, u64)> {
+    if let Event::FileRequested { name, size, .. } = ev {
+        Some((name.clone(), *size))
+    } else {
+        None
+    }
+}
+
+/// 等问题、应允（P22 同意门槛）：返回（文件名, 总长）。
+async fn consent_file(events: &mut UnboundedReceiver<Event>, person: &Person) -> (String, u64) {
+    let (name, size) = expect(events, file_requested).await;
+    let got = person.file_yes().await.expect("应允");
+    assert_eq!(got, name, "file_yes 应回文件名");
+    (name, size)
+}
+
+/// 断言事件流里**没有**文件类事件（毫秒窗口；P22：never 的不可见断言、
+/// 事件性中止后的安静断言）。其他事件照常放行——只盯文件面。
+async fn assert_no_file_events(events: &mut UnboundedReceiver<Event>, ms: u64) {
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    while let Ok(Some(ev)) =
+        timeout(deadline.saturating_duration_since(Instant::now()), events.recv()).await
+    {
+        assert!(
+            !matches!(
+                ev,
+                Event::FileRequested { .. }
+                    | Event::FileAccepted { .. }
+                    | Event::FileDeclined { .. }
+                    | Event::FileDelivered { .. }
+                    | Event::FileChunk { .. }
+                    | Event::FileComplete { .. }
+                    | Event::FileAborted { .. }
+            ),
+            "不该出现的文件事件：{ev:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn 介绍人_打洞直连密谈() {
     let teahouse = spawn_teahouse().await;
@@ -761,7 +801,7 @@ async fn 开放台_上一场带暗号_下场陌生来客不被锁() {
 
 #[tokio::test]
 async fn 文件_无损往返_二进制字节一毫不差() {
-    let (_alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
     let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
 
     bob.dial(&alice_addr).await.expect("拨通");
@@ -779,12 +819,38 @@ async fn 文件_无损往返_二进制字节一毫不差() {
     }
     // 破 UTF-8 序列：过长 C0、代理区 ED A0 80、越界 F5 80 80、截断 E2 82
     data.extend_from_slice(&[0xC0, 0xAF, 0xED, 0xA0, 0x80, 0xF5, 0x80, 0x80, 0xE2, 0x82]);
-    bob.send_file("bi-ji.dat", &data).await.expect("发文件");
+    // P22 同意门槛：先问后答（send_file 内部等应允——测试里并发应答）
+    let payload = data.clone();
+    let bob_p = bob.clone();
+    let send =
+        tokio::spawn(async move { bob_p.send_file("bi-ji.dat", &payload).await });
+    consent_file(&mut alice_ev, &alice).await;
 
     // P20-F 流式：逐块经 FileChunk 交出，FileComplete 收尾
     let got = collect_file(&mut alice_ev).await;
     assert_eq!(got.len(), data.len(), "长度必须一致");
     assert_eq!(&got[..], &data[..], "字节必须一毫不差（无损，非法 UTF-8 原样到达）");
+    send.await.expect("发送任务不惊慌").expect("发文件");
+
+    // 发端经历：收下了 → 已收到（回执——「成功」对两边是同一个事实）
+    let name = expect(&mut bob_ev, |ev| {
+        if let Event::FileAccepted { name, .. } = ev {
+            Some(name.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(name, "bi-ji.dat");
+    let name = expect(&mut bob_ev, |ev| {
+        if let Event::FileDelivered { name, .. } = ev {
+            Some(name.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(name, "bi-ji.dat");
 
     // 文件之后聊天照常——两条车道互不干扰
     bob.speak("wen zi hai neng shuo").await.expect("聊天照常");
@@ -795,31 +861,55 @@ async fn 文件_无损往返_二进制字节一毫不差() {
             None
         }
     })
-        .await;
+    .await;
     assert_eq!((from.as_str(), text.as_str()), ("Bob", "wen zi hai neng shuo"));
 }
 
 #[tokio::test]
-async fn 文件_超上限当场拒绝() {
-    let (_alice, _alice_ev, alice_addr) = spawn_person("Alice").await;
+async fn 文件_名字安检与跨旧上限照传() {
+    // 32MB 上限已随同意门槛废除（rulings.2026_11_01_file_consent_gate）：
+    // 33MB 照传（流式内存有界照旧）；名字安检照旧。
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
     let (bob, _bob_ev, _b) = spawn_person("Bob").await;
     bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
 
-    let huge = vec![0u8; e2ee::person::MAX_FILE_BYTES + 1];
-    let err = bob.send_file("ju-wen-jian.bin", &huge).await.expect_err("超限必须拒绝");
-    assert!(err.to_string().contains("32MB"), "错误应说明上限：{err}");
-
-    // 空名同样拒绝
-    let err = bob.send_file("  ", b"x").await.expect_err("空名必须拒绝");
+    // 空名/坏名照旧当场拒绝（不进网络）
+    let err = bob.file_begin("  ", 10).await.expect_err("空名必须拒绝");
     assert!(err.to_string().contains("文件名"), "错误应指向文件名：{err}");
+    let err = bob.file_begin("a\0b", 10).await.expect_err("带零字节的名必须拒绝");
+    assert!(err.to_string().contains("文件名"), "错误应指向文件名：{err}");
+
+    // 33MB：跨过旧上限的整份传输
+    let mut data = Vec::with_capacity(33 * 1024 * 1024 + 13);
+    for i in 0..(33 * 1024 * 1024 / 4096) {
+        let base = (i % 251) as u8;
+        data.extend(std::iter::repeat(base).take(4096));
+    }
+    data.extend_from_slice(b"kua-jie-xian"); // 尾巴跨块
+    assert!(data.len() as u64 > 32 * 1024 * 1024, "必须跨过旧上限");
+    let payload = data.clone();
+    let bob_p = bob.clone();
+    let send =
+        tokio::spawn(async move { bob_p.send_file("da-wen-jian.bin", &payload).await });
+    let (name, size) = consent_file(&mut alice_ev, &alice).await;
+    assert_eq!((name.as_str(), size), ("da-wen-jian.bin", data.len() as u64));
+    let got = collect_file(&mut alice_ev).await;
+    assert_eq!(got.len(), data.len());
+    assert_eq!(&got[..], &data[..], "33MB 一毫不差（上限已废）");
+    send.await.expect("发送任务不惊慌").expect("发文件");
 }
 
+// rogue 门控修复（P22 顺手）：本测试用 rogue_frame 注入乱序块——P20-F
+// 落地时漏了门控，无 feature 构建在基线（ad58f74）即编译失败（金丝雀
+// 契约违约同族，rogue_injection_feature_gated）；随 P22 触碰测试面补上门
+#[cfg(feature = "rogue")]
 #[tokio::test]
 async fn 文件_序号不合_响亮作废() {
-    // P20-F loud-failure 对账：3.0.0 时代序号不合=静默作废（整份丢、没声音）；
-    // 4.0.0 = FileAborted 响亮（静默=罪）。rogue_frame 模拟坏实现/恶意对端
-    // 直接喂乱序块。红绿自证：恢复旧行为（remove 无事件）本测试变红。
-    let (_alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    // P20-F loud-failure 对账 + P22 门槛：rogue 头（0x06=旧版来问）→
+    // 问题 → 应允 → 乱序块 → FileAborted 响亮。红绿自证：恢复旧行为
+    //（remove 无事件）本测试变红。
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
     let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
     bob.dial(&alice_addr).await.expect("拨通");
     let convo = expect(&mut bob_ev, |ev| {
@@ -837,6 +927,8 @@ async fn 文件_序号不合_响亮作废() {
     head.extend_from_slice(b"huai.dat");
     head.extend_from_slice(&10u64.to_be_bytes());
     bob.rogue_frame(convo, rogue::FILE_HEAD, &head).await.expect("家门");
+
+    consent_file(&mut alice_ev, &alice).await;
 
     // 第一块序号就跳到 5：立户在、序号不合 → FileAborted 响亮
     let mut bad = Vec::new();
@@ -874,9 +966,627 @@ async fn 文件_打洞线上也照传() {
 
     // 40KB = 两块：验证 32KB 的块装得进 UDP 数据报（这是块大小的设计依据）
     let data: Vec<u8> = (0..40_000u32).map(|i| (i.wrapping_mul(31) % 256) as u8).collect();
-    bob.send_file("tu-pian.bin", &data).await.expect("打洞线上发文件");
+    let payload = data.clone();
+    let bob_p = bob.clone();
+    let send =
+        tokio::spawn(async move { bob_p.send_file("tu-pian.bin", &payload).await });
+    consent_file(&mut alice_ev, &alice).await;
     let got = collect_file(&mut alice_ev).await;
     assert_eq!(&got[..], &data[..], "打洞线上字节同样一毫不差");
+    send.await.expect("发送任务不惊慌").expect("发文件");
+}
+
+#[tokio::test]
+async fn 门槛_人拒_发端拒绝事件与收场错误() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("ju-jue.dat", b"bu yao").await });
+    let (name, size) = expect(&mut alice_ev, file_requested).await;
+    assert_eq!((name.as_str(), size), ("ju-jue.dat", 6));
+    match alice.file_no().await.expect("拒绝手势") {
+        FileNoResult::Rejected { name } => assert_eq!(name, "ju-jue.dat"),
+        other => panic!("应是拒问题：{other:?}"),
+    }
+    // 发端：拒绝事件（人拒——「不要」与「没应答」是两句话）
+    let reason = expect(&mut bob_ev, |ev| {
+        if let Event::FileDeclined { reason, .. } = ev {
+            Some(*reason)
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(reason, DeclineReason::Human);
+    let err = send.await.expect("任务不惊慌").expect_err("人拒必须报错");
+    assert!(matches!(err, PersonError::FileNotStarted), "收场错误：{err:?}");
+    // no 后不可 yes：问题已死
+    let err = alice.file_yes().await.expect_err("问题已死");
+    assert!(matches!(err, PersonError::NoFileQuestion), "{err:?}");
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn 门槛_三十秒婉拒_双端收场() {
+    // 30 秒是全系统唯一的钟（rulings.2026_11_01_one_clock_thirty_seconds）；
+    // rogue 旋钮按人调短（测试并行互不污染）。红绿自证：把门槛改成
+    // ask 也不婉拒（钟不动作）本测试变红。
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    alice.rogue_set_file_ask_window(150).await;
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("wan-ju.txt", b"mei ren jia").await });
+    expect(&mut alice_ev, file_requested).await; // 不应允
+    // 收端：婉拒响亮一行
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("30 秒没应"), "收端应见婉拒：{detail}");
+    // 发端：拒绝事件（婉拒）+ send_file 错误返回（请求自动取消）
+    let reason = expect(&mut bob_ev, |ev| {
+        if let Event::FileDeclined { reason, .. } = ev {
+            Some(*reason)
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(reason, DeclineReason::Timeout);
+    let err = send.await.expect("任务不惊慌").expect_err("婉拒必须报错");
+    assert!(matches!(err, PersonError::FileNotStarted), "{err:?}");
+}
+
+#[tokio::test]
+async fn 门槛_always_直接收_不问() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    alice.set_receive(Receive::Always).await.expect("设态度");
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("zhi-jie.dat", b"zi dong").await });
+    // 一行告知（auto=true），没有问句等待
+    let (name, auto) = expect(&mut alice_ev, |ev| {
+        if let Event::FileRequested { name, auto, .. } = ev {
+            Some((name.clone(), *auto))
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!((name.as_str(), auto), ("zhi-jie.dat", true), "always：auto 标记");
+    let got = collect_file(&mut alice_ev).await;
+    assert_eq!(&got[..], b"zi dong");
+    send.await.expect("任务不惊慌").expect("发文件");
+    expect(&mut bob_ev, |ev| matches!(ev, Event::FileDelivered { .. }).then_some(())).await;
+}
+
+#[tokio::test]
+async fn 门槛_never_不可见_政策拒_与ask复位() {
+    // P-16 防灌盘的门槛断言：never 下零事件零状态——不可见在源头。
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    alice.set_receive(Receive::Never).await.expect("设态度");
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("jing-yin.dat", b"ting bu jian").await });
+    // 收端：零文件事件（400ms 安静窗口——事件若来必在毫秒级）
+    assert_no_file_events(&mut alice_ev, 400).await;
+    // 发端：政策拒
+    let reason = expect(&mut bob_ev, |ev| {
+        if let Event::FileDeclined { reason, .. } = ev {
+            Some(*reason)
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(reason, DeclineReason::Policy);
+    send.await.expect("任务不惊慌").expect_err("政策拒必须报错");
+    // ask 复位：问题回来了
+    alice.set_receive(Receive::Ask).await.expect("复位");
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("hui-lai.dat", b"hui lai").await });
+    let (name, auto) = expect(&mut alice_ev, |ev| {
+        if let Event::FileRequested { name, auto, .. } = ev {
+            Some((name.clone(), *auto))
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!((name.as_str(), auto), ("hui-lai.dat", false), "复位后照问");
+    alice.file_yes().await.expect("复位后可答");
+    let got = collect_file(&mut alice_ev).await;
+    assert_eq!(&got[..], b"hui lai");
+    send.await.expect("任务不惊慌").expect("发文件");
+}
+
+#[tokio::test]
+async fn 一线一件_双向占道() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    // bob 的请求挂着（入向占道）——alice 反向递 = FileBusy
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("zhan-dao.dat", &[0u8; 100]).await });
+    expect(&mut alice_ev, file_requested).await;
+    let err = alice.file_begin("fan-xiang.dat", 5).await.expect_err("入向占道");
+    assert!(matches!(err, PersonError::FileBusy), "{err:?}");
+    // 正在收（出向反向占道）
+    alice.file_yes().await.expect("应允");
+    let err = alice.file_begin("fan-xiang2.dat", 5).await.expect_err("正在收也占道");
+    assert!(matches!(err, PersonError::FileBusy), "{err:?}");
+    collect_file(&mut alice_ev).await;
+    send.await.expect("任务不惊慌").expect("发文件");
+    // 收完道空了：可递，再撤回收场
+    alice.file_begin("dao-kong.dat", 3).await.expect("收完即可递");
+    match alice.file_no().await.expect("撤回") {
+        FileNoResult::Withdrawn { name } => assert_eq!(name, "dao-kong.dat"),
+        o => panic!("应是撤回：{o:?}"),
+    }
+}
+
+#[tokio::test]
+async fn 停收_半份自删语义_发端下一块报错() {
+    // 库面断言（CLI 的 .半份/.删除在外层）：停收 = 收方清自己的账、
+    // 发端收到叫停 + 下一块喂入响亮报错
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    bob.file_begin("ban-fen.dat", 100).await.expect("开门");
+    expect(&mut alice_ev, file_requested).await;
+    alice.file_yes().await.expect("应允");
+    // 事件契约：喂块要等「对方收下了」先到（P22 file_request_is_a_message）
+    expect(&mut bob_ev, |ev| matches!(ev, Event::FileAccepted { .. }).then_some(())).await;
+    bob.file_chunk(&[0u8; 40]).await.expect("前 40 字节");
+    expect(&mut alice_ev, |ev| matches!(ev, Event::FileChunk { .. }).then_some(())).await;
+    match alice.file_no().await.expect("停收") {
+        FileNoResult::StoppedReceiving { name } => assert_eq!(name, "ban-fen.dat"),
+        o => panic!("应是停收：{o:?}"),
+    }
+    // 发端：叫停事件先到，下一块喂入报错
+    let detail = expect(&mut bob_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("已停发"), "发端应见叫停：{detail}");
+    let err = bob.file_chunk(&[0u8; 10]).await.expect_err("停发后喂块必错");
+    assert!(matches!(err, PersonError::FileNotStarted), "{err:?}");
+}
+
+#[tokio::test]
+async fn 停发_覆水难收_对端半份保留() {
+    // P22 覆水难收断言：发方摆手只封未来——收方手里已到的字节
+    // 以「半份（已收/总长）」响亮呈现，不是消失
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    bob.file_begin("fu-shui.dat", 100).await.expect("开门");
+    expect(&mut alice_ev, file_requested).await;
+    alice.file_yes().await.expect("应允");
+    expect(&mut bob_ev, |ev| matches!(ev, Event::FileAccepted { .. }).then_some(())).await;
+    bob.file_chunk(&[7u8; 60]).await.expect("发 60 字节");
+    expect(&mut alice_ev, |ev| matches!(ev, Event::FileChunk { .. }).then_some(())).await;
+    match bob.file_no().await.expect("停发") {
+        FileNoResult::StoppedSending { name } => assert_eq!(name, "fu-shui.dat"),
+        o => panic!("应是停发：{o:?}"),
+    }
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("递送停了"), "{detail}");
+    assert!(
+        detail.contains("60") && detail.contains("100"),
+        "半份数字要说清（60/100）：{detail}"
+    );
+}
+
+#[tokio::test]
+async fn 撤回_对方问题响亮消解() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    bob.file_begin("che-hui.dat", 10).await.expect("开门");
+    expect(&mut alice_ev, file_requested).await;
+    match bob.file_no().await.expect("撤回") {
+        FileNoResult::Withdrawn { name } => assert_eq!(name, "che-hui.dat"),
+        o => panic!("{o:?}"),
+    }
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("收回"), "{detail}");
+    // 问题已消解：yes 无处可答（no 后不可 yes 的镜像：撤回后同样不可）
+    let err = alice.file_yes().await.expect_err("问题已消解");
+    assert!(matches!(err, PersonError::NoFileQuestion), "{err:?}");
+}
+
+#[tokio::test]
+async fn 短斤缺两_响亮失败_收方半份保留() {
+    // 申报即准数：少一个字节也不行——file_end 报错 + 发停 + 收方半份响亮
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    bob.file_begin("duan-jin.dat", 100).await.expect("开门");
+    expect(&mut alice_ev, file_requested).await;
+    alice.file_yes().await.expect("应允");
+    expect(&mut bob_ev, |ev| matches!(ev, Event::FileAccepted { .. }).then_some(())).await;
+    bob.file_chunk(&[1u8; 60]).await.expect("只发 60");
+    expect(&mut alice_ev, |ev| matches!(ev, Event::FileChunk { .. }).then_some(())).await;
+    let err = bob.file_end().await.expect_err("短斤缺两必须失败");
+    assert!(
+        matches!(err, PersonError::FileIncomplete { declared: 100, sent: 60 }),
+        "{err:?}"
+    );
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(
+        detail.contains("60") && detail.contains("100"),
+        "半份要说清：{detail}"
+    );
+}
+
+#[tokio::test]
+async fn 空文件_全流程_回执照发() {
+    // 空文件照走全流程（0 字节也要问；应允即收齐；回执一并发回）
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("kong.dat", b"").await });
+    let (name, size) = expect(&mut alice_ev, file_requested).await;
+    assert_eq!((name.as_str(), size), ("kong.dat", 0), "0 字节也要问");
+    alice.file_yes().await.expect("应允");
+    let total = expect(&mut alice_ev, |ev| {
+        if let Event::FileComplete { total, .. } = ev {
+            Some(*total)
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(total, 0, "应允即收齐");
+    send.await.expect("任务不惊慌").expect("发文件");
+    expect(&mut bob_ev, |ev| matches!(ev, Event::FileDelivered { .. }).then_some(())).await;
+}
+
+#[tokio::test]
+async fn 非焦点线_照问_切焦点后可答() {
+    // 注意力老规矩：/yes 只认当前说话的人；非焦点线的请求照样显示
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (carol, mut carol_ev, _carol_addr) = spawn_person("Carol").await;
+    let (bob, _bob_ev, _b) = spawn_person("Bob").await;
+    carol.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut carol_ev, met).await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    let (bob_convo, focused) = expect(&mut alice_ev, |ev| {
+        if let Event::Met { id, focused, .. } = ev {
+            Some((*id, *focused))
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(!focused, "bob 的线不抢注意力（carol 先到先聚焦）");
+
+    let bob_p = bob.clone();
+    let send = tokio::spawn(async move { bob_p.send_file("bei-jing.dat", b"fei jiao dian").await });
+    let (focused, auto) = expect(&mut alice_ev, |ev| {
+        if let Event::FileRequested { focused, auto, .. } = ev {
+            Some((*focused, *auto))
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(!focused, "非焦点线的请求照样显示（focused=false）");
+    assert!(!auto);
+    // 切过去可答
+    alice.talk_to(bob_convo).await.expect("切焦点");
+    alice.file_yes().await.expect("切过去就能答");
+    let got = collect_file(&mut alice_ev).await;
+    assert_eq!(&got[..], b"fei jiao dian");
+    send.await.expect("任务不惊慌").expect("发文件");
+}
+
+#[tokio::test]
+async fn 传中切态度_即刻裁决挂着的问题() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    // 挂着的问题 + 切 always → 直接收下
+    bob.file_begin("qie-tai.dat", 7).await.expect("开门");
+    expect(&mut alice_ev, file_requested).await;
+    alice.set_receive(Receive::Always).await.expect("切 always");
+    let name = expect(&mut bob_ev, |ev| {
+        if let Event::FileAccepted { name, .. } = ev {
+            Some(name.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(name, "qie-tai.dat");
+    bob.file_chunk(b"qie tai").await.expect("喂块");
+    let got = collect_file(&mut alice_ev).await;
+    assert_eq!(&got[..], b"qie tai");
+    // 回执清档后这条道才空（一线一次一件——等回执也占道）
+    expect(&mut bob_ev, |ev| matches!(ev, Event::FileDelivered { .. }).then_some(())).await;
+    // 复位回 ask——第二段要测的是「挂着的问题被 never 裁决」，不复位的话
+    // 第二份会被 always 自动收下，永远没有挂起的问题
+    alice.set_receive(Receive::Ask).await.expect("复位 ask");
+
+    // 第二份：挂着的问题 + 切 never → 政策拒
+    bob.file_begin("qie-never.dat", 7).await.expect("开门");
+    expect(&mut alice_ev, file_requested).await;
+    alice.set_receive(Receive::Never).await.expect("切 never");
+    let reason = expect(&mut bob_ev, |ev| {
+        if let Event::FileDeclined { reason, .. } = ev {
+            Some(*reason)
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!(reason, DeclineReason::Policy);
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("不收"), "{detail}");
+}
+
+#[tokio::test]
+async fn 线断_在途档响亮_收方半份数字() {
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    bob.file_begin("duan-xian.dat", 100).await.expect("开门");
+    expect(&mut alice_ev, file_requested).await;
+    alice.file_yes().await.expect("应允");
+    expect(&mut bob_ev, |ev| matches!(ev, Event::FileAccepted { .. }).then_some(())).await;
+    bob.file_chunk(&[3u8; 50]).await.expect("发 50");
+    expect(&mut alice_ev, |ev| matches!(ev, Event::FileChunk { .. }).then_some(())).await;
+    bob.bye().await.expect("道别（只有这条线断）");
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(
+        detail.contains("线断") && detail.contains("50") && detail.contains("100"),
+        "{detail}"
+    );
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn 新头顶替_旧档响亮_半份保留() {
+    // 连发两个头（旧版/魔改不等答复的行径）：第二个顶替第一个——
+    // 旧档响亮 + 半份数字，新问题照问
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    let convo = expect(&mut bob_ev, |ev| {
+        if let Event::Met { id, .. } = ev {
+            Some(*id)
+        } else {
+            None
+        }
+    })
+    .await;
+    expect(&mut alice_ev, met).await;
+
+    let mut head1 = vec![7u8];
+    head1.extend_from_slice(b"jiu.dat");
+    head1.extend_from_slice(&100u64.to_be_bytes());
+    bob.rogue_frame(convo, rogue::FILE_REQUEST, &head1).await.expect("请求1");
+    expect(&mut alice_ev, file_requested).await;
+    alice.file_yes().await.expect("应允第一份");
+    // 直接 rogue 灌 30 字节（bob 的出向档不经 file_begin——旧版行径）
+    let mut c1 = Vec::new();
+    c1.extend_from_slice(&0u32.to_be_bytes());
+    c1.extend_from_slice(&[9u8; 30]);
+    bob.rogue_frame(convo, rogue::FILE_CHUNK, &c1).await.expect("块1");
+    expect(&mut alice_ev, |ev| matches!(ev, Event::FileChunk { .. }).then_some(())).await;
+    // 第二个头到达：顶替（响亮 + 半份数字）
+    let mut head2 = vec![7u8];
+    head2.extend_from_slice(b"xin.dat");
+    head2.extend_from_slice(&8u64.to_be_bytes());
+    bob.rogue_frame(convo, rogue::FILE_REQUEST, &head2).await.expect("请求2");
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("顶替") && detail.contains("30"), "{detail}");
+    let (name, _) = expect(&mut alice_ev, file_requested).await;
+    assert_eq!(name, "xin.dat");
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn 旧版来问_应允后序号不合响亮作废() {
+    // 旧版行径（0x06 + 不等答复连灌）：应允前的块当噪音丢；应允后
+    // 序号对不上 → 响亮作废（不是无声消失）
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    let convo = expect(&mut bob_ev, |ev| {
+        if let Event::Met { id, .. } = ev {
+            Some(*id)
+        } else {
+            None
+        }
+    })
+    .await;
+    expect(&mut alice_ev, met).await;
+
+    let mut head = vec![8u8];
+    head.extend_from_slice(b"jiu-ban.dat");
+    head.extend_from_slice(&10u64.to_be_bytes());
+    bob.rogue_frame(convo, rogue::FILE_HEAD, &head).await.expect("旧头");
+    // 应允前硬灌的块：噪音丢弃（状态不被污染——期望序号仍是 0）
+    let mut early = Vec::new();
+    early.extend_from_slice(&0u32.to_be_bytes());
+    early.extend_from_slice(b"0123456789");
+    bob.rogue_frame(convo, rogue::FILE_CHUNK, &early).await.expect("硬灌");
+    expect(&mut alice_ev, file_requested).await;
+    alice.file_yes().await.expect("应允");
+    // 旧端不知道门在哪，接着连灌：序号已是 1 → 序号不合响亮
+    let mut late = Vec::new();
+    late.extend_from_slice(&1u32.to_be_bytes());
+    late.extend_from_slice(b"0123456789");
+    bob.rogue_frame(convo, rogue::FILE_CHUNK, &late).await.expect("连灌");
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("序号不合") && detail.contains("期望 0"), "{detail}");
+}
+
+#[cfg(feature = "rogue")]
+#[tokio::test]
+async fn 畸形帧族_进程活着_零落盘_状态不乱() {
+    // P22 畸形纪律：先闸长度再切片、码域外当噪音、0 长块当噪音、
+    // lossy 解码、永不 panic。每一条都断言「当没听见/安全呈现」。
+    let (alice, mut alice_ev, alice_addr) = spawn_person("Alice").await;
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+    bob.dial(&alice_addr).await.expect("拨通");
+    let convo = expect(&mut bob_ev, |ev| {
+        if let Event::Met { id, .. } = ev {
+            Some(*id)
+        } else {
+            None
+        }
+    })
+    .await;
+    expect(&mut alice_ev, met).await;
+
+    // 截断的 0x17：name_len 谎报 200、实际只给 3 字节 → 长度闸门拦下
+    let mut lie = vec![200u8];
+    lie.extend_from_slice(b"huai");
+    bob.rogue_frame(convo, rogue::FILE_REQUEST, &lie).await.expect("谎报长度");
+    // 码域外的 0x14（code 7）与缺码的 0x14（n==1）→ 噪音
+    bob.rogue_frame(convo, rogue::FILE_VERDICT, &[7u8]).await.expect("非法码");
+    bob.rogue_frame(convo, rogue::FILE_VERDICT, &[]).await.expect("无码");
+    // 凭空 0x15 / 0x16（无在途档）→ 无后果行为
+    bob.rogue_frame(convo, rogue::FILE_STOP, &[]).await.expect("凭空停");
+    bob.rogue_frame(convo, rogue::FILE_RECEIPT, &[]).await.expect("凭空回执");
+    // 0 长块（n==5，一个字节都不带）→ 噪音
+    let mut empty = Vec::new();
+    empty.extend_from_slice(&0u32.to_be_bytes());
+    bob.rogue_frame(convo, rogue::FILE_CHUNK, &empty).await.expect("空块");
+    // u64::MAX 总长：问句照问（天文数字人自己拒），不崩、无预分配
+    let mut huge = vec![4u8];
+    huge.extend_from_slice(b"max!");
+    huge.extend_from_slice(&u64::MAX.to_be_bytes());
+    bob.rogue_frame(convo, rogue::FILE_REQUEST, &huge).await.expect("天文数字");
+    // 第一个到达的问句应是 max!（谎报长度的那个被闸门无声拦下）
+    let (name, size) = expect(&mut alice_ev, file_requested).await;
+    assert_eq!((name.as_str(), size), ("max!", u64::MAX));
+    // 控制字符名：lossy 解码后到达事件（无效字节 → 替换符）
+    let mut ctrl = vec![3u8];
+    ctrl.extend_from_slice(b"a\xffb");
+    ctrl.extend_from_slice(&4u64.to_be_bytes());
+    bob.rogue_frame(convo, rogue::FILE_REQUEST, &ctrl).await.expect("坏名字");
+    // 顶替响亮（max! 被 a?b 顶替）
+    let detail = expect(&mut alice_ev, |ev| {
+        if let Event::FileAborted { detail, .. } = ev {
+            Some(detail.clone())
+        } else {
+            None
+        }
+    })
+    .await;
+    assert!(detail.contains("顶替"), "{detail}");
+    let (name2, _) = expect(&mut alice_ev, file_requested).await;
+    assert!(
+        name2.starts_with('a') && name2.ends_with('b') && name2.contains('\u{FFFD}'),
+        "lossy 应把无效字节换成替换符：{name2:?}"
+    );
+    // 拒掉收尾，道别——进程全程活着
+    alice.file_no().await.expect("拒");
+    bob.bye().await.expect("道别收场");
+    expect(&mut alice_ev, |ev| matches!(ev, Event::Left { .. }).then_some(())).await;
 }
 
 #[tokio::test]
@@ -2211,6 +2921,9 @@ async fn P12_碰撞r_响亮拒收_不静默驱逐() {
 /// （关 = 字节暂存不转发），目标→来客方向永远透传；**入口断开后
 /// 扣留字节继续持有**，闸门重开时冲货并收线。迟到告别竞态的确定性
 /// 搬运工——物理对应：载体扣了一个数据包，发送者已死，包迟到。
+///（rogue 门控：调用者全是判例注入测试——无 feature 构建曾因基线
+/// 漏门控根本编译不过，此 helper 的孤儿警告随 P22 修复一并消除）
+#[cfg(feature = "rogue")]
 async fn delaying_proxy(target_addr: &str) -> (String, tokio::sync::watch::Sender<bool>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

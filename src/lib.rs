@@ -22,7 +22,10 @@ pub mod person;
 pub mod punch;
 pub mod wire;
 
-pub use person::{Event, Events, LeaveReason, Person, PersonError, RosterEntry, SasReport};
+pub use person::{
+    DeclineReason, Event, Events, FileNoResult, LeaveReason, Person, PersonError, Receive,
+    RosterEntry, SasReport,
+};
 
 // 判例注入面：feature 门控重导出（e2ee::rogue::...）
 #[cfg(feature = "rogue")]

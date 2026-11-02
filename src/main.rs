@@ -1,7 +1,7 @@
 //! 第一号使用者：终端里的一个人。
 //! 库负责语义——动作从方法进，经历从事件出；这里只把事件说成人话。
 
-use e2ee::{Event, LeaveReason, Person};
+use e2ee::{DeclineReason, Event, FileNoResult, LeaveReason, Person, PersonError, Receive};
 use std::io::BufRead;
 use std::process::ExitCode;
 
@@ -43,8 +43,15 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
   /await <暗号>
       备好切口：下一位来客对得上才谈得成（一位一验，验完即焚）
   /file <文件路径>
-      递一份文件给当前对话的人（≤32MB，分块加密，字节无损；
-      收到的文件自动放进 ./received/ 目录）
+      递一份文件给当前对话的人——先问一声，对方 /yes 之后才开始传
+      （多大都行，分块加密、字节无损；收到的放进 ./received/）。
+      传到一半想收场：/no（对方的半份收不回——覆水难收）
+  /yes                答应当前对话的人正递来的文件（30 秒不答即婉拒）
+  /no                 不要了：拒掉挂着的请求，或停掉正在收/正在发的
+                      这一份（说过 no 这份就死了，想要让对方重新递）
+  /receive always|never|ask
+                      这条线今后的收文件态度：都直接收 / 一律婉拒且
+                      不再询问 / 每份都问（默认）。无参数 = 显示当前态度
   /talk <编号|名字>     把注意力切到另一场对话
   /list                看看在场的人
   /card                打印自己的名片（名字 + 各网卡地址）
@@ -227,7 +234,7 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             maybe = events.recv() => {
                 let Some(ev) = maybe else { break };
-                render(ev);
+                render(ev, &person);
             }
             _ = term.recv() => break,
         }
@@ -1291,53 +1298,92 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
         }
         "file" => {
             // 路径取整行余文（可含空格）；读盘是 CLI 这个使用者的事——库只收字节
-            let path = cmd.strip_prefix("file").unwrap_or("").trim();
+            let path = cmd.strip_prefix("file").unwrap_or("").trim().to_string();
             if path.is_empty() {
                 eprintln!("/file 需要文件路径，例如：/file ./tu-pian.png");
                 return Ok(false);
             }
-            let name = std::path::Path::new(path)
+            let name = std::path::Path::new(&path)
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "file".into());
-            // P20-F 流式：边读边发（file_begin / file_chunk / file_end）——
-            // 内存里同时只有一块，不再整读 32MB。块边界随机化在库内
-            //（file_chunk 再切片），CLI 只管 16KB 地喂。
-            {
-                use tokio::io::AsyncReadExt;
-                let outcome = async {
-                    let mut f = tokio::fs::File::open(path)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let total = f
-                        .metadata()
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .len();
-                    person
-                        .file_begin(&name, total)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                    let mut buf = vec![0u8; 16 * 1024];
-                    loop {
-                        let n = f.read(&mut buf).await.map_err(|e| e.to_string())?;
-                        if n == 0 {
-                            break;
-                        }
-                        person
-                            .file_chunk(&buf[..n])
-                            .await
-                            .map_err(|e| e.to_string())?;
-                    }
-                    person.file_end().await.map_err(|e| e.to_string())
+            // P22 同意门槛：请求就是一句话——file_begin 发完即返，答应
+            // 以事件来（FileAccepted 到达时由此起后台传输任务，命令行
+            // 全程活着，发到一半 /no 收场）。读盘延后到对方点头之后。
+            let total = match tokio::fs::metadata(&path).await {
+                Ok(m) => m.len(),
+                Err(e) => {
+                    eprintln!("打不开 {path}：{e}");
+                    return Ok(false);
                 }
-                .await;
-                match outcome {
-                    Ok(()) => eprintln!("文件〔{}〕递出去了。", safe(&name)),
-                    Err(msg) => {
-                        let _ = person.file_abort().await;
-                        eprintln!("{msg}");
+            };
+            match person.file_begin(&name, total).await {
+                Ok(()) => {
+                    if let Some(id) = focused_id(person).await {
+                        send_pending()
+                            .lock()
+                            .expect("待发账本没被毒化")
+                            .insert(id, (name.clone(), total));
                     }
+                    eprintln!(
+                        "已向对方请求递文件〔{}〕（{}），等答复……",
+                        safe(&name),
+                        human_size(total)
+                    );
+                }
+                Err(e) => eprintln!("{e}"),
+            }
+        }
+        "yes" => match person.file_yes().await {
+            Ok(name) => eprintln!("开始收〔{}〕……", safe(&name)),
+            Err(e) => eprintln!("{e}"),
+        },
+        "no" => {
+            // 统一手势（P22 四时机）：先记下聚焦线（收方停收要删自己的半份）
+            let id = focused_id(person).await;
+            match person.file_no().await {
+                Ok(FileNoResult::Rejected { name }) => {
+                    eprintln!("不要〔{}〕。", safe(&name));
+                }
+                Ok(FileNoResult::StoppedReceiving { name }) => {
+                    // 删自己的半份——我的东西我扔（覆水难收的唯一删除路径）
+                    if let Some(id) = id {
+                        drop_inbound_half(id);
+                    }
+                    eprintln!("已停收〔{}〕——半份已删。", safe(&name));
+                }
+                Ok(FileNoResult::StoppedSending { name }) => {
+                    eprintln!(
+                        "已停发〔{}〕——已发出的部分在对方手里，收不回（覆水难收）。",
+                        safe(&name)
+                    );
+                }
+                Ok(FileNoResult::Withdrawn { name }) => {
+                    eprintln!("已撤回〔{}〕。", safe(&name));
+                }
+                Ok(FileNoResult::ForgotReceipt { name }) => {
+                    eprintln!("〔{}〕不再等回执——字节都已发出（覆水难收）。", safe(&name));
+                }
+                Err(e) => eprintln!("{e}"),
+            }
+        }
+        "receive" => {
+            // /receive always|never|ask（无参=显示当前态度——CLI 自记账：
+            // 态度只有本进程设过，库是真身，这里只是镜子）
+            let Some(id) = focused_id(person).await else {
+                eprintln!("你现在没在跟任何人说话。");
+                return Ok(false);
+            };
+            match parts.next() {
+                None => {
+                    let cur = receive_policy(id);
+                    eprintln!("这条线目前的态度：{}", describe_receive(cur));
+                }
+                Some("ask") => set_receive_cmd(person, id, Receive::Ask).await,
+                Some("always") => set_receive_cmd(person, id, Receive::Always).await,
+                Some("never") => set_receive_cmd(person, id, Receive::Never).await,
+                Some(other) => {
+                    eprintln!("/receive 的参数是 always、never 或 ask（你给的是 {other}）。");
                 }
             }
         }
@@ -1350,30 +1396,68 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
         other => {
             eprintln!(
                 "不认识的指令：/{other}。可用：/dial /meet /punch /await /talk /list /card \
-                 /circle /gsay /bring /sit /word /file /bye。退出：Ctrl-C（立即擦净，不告别）"
+                 /circle /gsay /bring /sit /word /file /yes /no /receive /bye。退出：Ctrl-C（立即擦净，不告别）"
             )
         }
     }
     Ok(false)
 }
 
-/// 收端在途文件的落盘账本（P20-F 流式）：对话编号 →（句柄, 目标路径）。
-/// CLI 是外层使用者——字节到哪由它决定（库只交块）；逐块落盘，
-/// 内存里不同时存在整份文件。
+/// 收端在途文件的落盘账本（P20-F 流式 + P22）：对话编号 → 开着的句柄，
+/// 或「建不了、丢弃中」的标记（盘满/权限——该份作废，后续块静默丢：
+/// 失败已说过一遍，不刷屏）。CLI 是外层使用者——字节到哪由它决定
+///（库只交块）；逐块落盘，内存里不同时存在整份文件。
+enum InboundLedger {
+    Open(std::fs::File, std::path::PathBuf),
+    Dead,
+}
+
 static INBOUND_FILES: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<u64, (std::fs::File, std::path::PathBuf)>>,
+    std::sync::Mutex<std::collections::HashMap<u64, InboundLedger>>,
 > = std::sync::OnceLock::new();
 
 /// 账本的单例取用（HashMap::new 非 const，OnceLock 惰性立）
 fn inbound_files() -> &'static std::sync::Mutex<
-    std::collections::HashMap<u64, (std::fs::File, std::path::PathBuf)>,
+    std::collections::HashMap<u64, InboundLedger>,
 > {
     INBOUND_FILES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
+/// /file 之后、对方点头之前的待发文件（P22）：FileAccepted 事件到达时
+/// 按线号取名字与总长、起后台传输任务。内存、随进程死。
+static SEND_PENDING: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<u64, (String, u64)>>,
+> = std::sync::OnceLock::new();
+
+fn send_pending() -> &'static std::sync::Mutex<std::collections::HashMap<u64, (String, u64)>> {
+    SEND_PENDING.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 这条线的收文件态度镜像（P22）：库是真身，这里是 CLI 的记账
+///（/receive 无参显示用——态度只有本进程经 set_receive 设过）。
+/// 内存、随进程死；线没了条目自然作废。
+static RECEIVE_POLICY: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<u64, Receive>>,
+> = std::sync::OnceLock::new();
+
+fn receive_policy_map() -> &'static std::sync::Mutex<std::collections::HashMap<u64, Receive>> {
+    RECEIVE_POLICY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn receive_policy(id: u64) -> Receive {
+    receive_policy_map()
+        .lock()
+        .expect("态度账本没被毒化")
+        .get(&id)
+        .copied()
+        .unwrap_or(Receive::Ask)
+}
+
 /// 在 ./received/ 开一个新文件（名字过安检：控制字符中和、路径分隔剥掉、
-/// 只剩点儿的当没名字、重名加序）。开不出来 = 大声死：收文件这条命就靠盘。
-fn open_received_file(name: &str) -> (std::fs::File, std::path::PathBuf) {
+/// 只剩点儿的当没名字、重名加序）。开不出来 = 响亮失败返回 None
+///（P-16 连带修复：旧版这里 panic——盘满可被 always 政策下的灌盘触到，
+/// 一次远崩；写盘路径 P20-F 早已体面，此处拉齐）。
+fn open_received_file(name: &str) -> Option<(std::fs::File, std::path::PathBuf)> {
     let cleaned = safe(name).replace(['/', '\\'], "·");
     let cleaned = if cleaned.trim_matches(['.', ' ']).is_empty() {
         "file".to_string()
@@ -1387,9 +1471,131 @@ fn open_received_file(name: &str) -> (std::fs::File, std::path::PathBuf) {
         n += 1;
         dest = std::path::Path::new("received").join(format!("{n}-{cleaned}"));
     }
-    let f = std::fs::File::create(&dest)
-        .unwrap_or_else(|e| panic!("在 {} 落不了盘：{e}——收不了文件", dest.display()));
-    (f, dest)
+    match std::fs::File::create(&dest) {
+        Ok(f) => Some((f, dest)),
+        Err(e) => {
+            eprintln!("盘上建不了文件〔{}〕：{e}——这份收不了。", safe(name));
+            None
+        }
+    }
+}
+
+/// 收方自己的 /no：删自己的半份（覆水难收的唯一删除路径——我的东西
+/// 我扔）。账本记 Dead 而非清空：飞行中的迟到块继续静默丢弃（否则会
+/// 重建出一个残缺文件）；新递送的问题到达时才翻篇（render 清账）。
+fn drop_inbound_half(id: u64) {
+    let mut map = inbound_files().lock().expect("在途文件账本没被毒化");
+    if let Some(InboundLedger::Open(_f, dest)) = map.remove(&id) {
+        drop(_f);
+        let _ = std::fs::remove_file(&dest);
+    }
+    map.insert(id, InboundLedger::Dead);
+}
+
+/// 聚焦线的编号（P22：/file 记账、/receive、/no 删半份都要它）。
+async fn focused_id(person: &Person) -> Option<u64> {
+    person
+        .roster()
+        .await
+        .into_iter()
+        .find(|r| r.focused)
+        .map(|r| r.id)
+}
+
+/// 态度说成人话。
+fn describe_receive(p: Receive) -> &'static str {
+    match p {
+        Receive::Ask => "每份文件都问（ask）",
+        Receive::Always => "都直接收（always）",
+        Receive::Never => "一律婉拒、不再询问（never）",
+    }
+}
+
+/// /receive 的执行面：设库 + 记镜像 + 说人话。
+async fn set_receive_cmd(person: &Person, id: u64, policy: Receive) {
+    if let Err(e) = person.set_receive(policy).await {
+        eprintln!("{e}");
+        return;
+    }
+    receive_policy_map()
+        .lock()
+        .expect("态度账本没被毒化")
+        .insert(id, policy);
+    let msg = match policy {
+        Receive::Ask => "这条线今后：每份文件都问。",
+        Receive::Always => "这条线今后：对方递来的文件都直接收。",
+        Receive::Never => "这条线今后：对方递来的文件一律婉拒，不再询问。",
+    };
+    eprintln!("{msg}");
+}
+
+/// 字节数说成人话（问句与收讫行用）。
+fn human_size(n: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if n >= GB {
+        format!("{:.1}GB", n as f64 / GB as f64)
+    } else if n >= MB {
+        format!("{:.1}MB", n as f64 / MB as f64)
+    } else if n >= KB {
+        format!("{:.1}KB", n as f64 / KB as f64)
+    } else {
+        format!("{n} 字节")
+    }
+}
+
+/// 后台传输任务（P22）：对方点头之后才起——边读盘边喂块，内存里只有
+/// 一块。命令行全程活着；发到一半 /no 或对端叫停 → 下一块喂入报错、
+/// 任务退出（故事已由事件面说清，不重复刷屏）。
+async fn transfer_out(person: Person, name: String, total: u64, path: String) {
+    use tokio::io::AsyncReadExt;
+    let mut f = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("打不开 {path}：{e}——〔{name}〕递不出去了。");
+            return;
+        }
+    };
+    // 申报即准数从源头守起：盘上的大小变了就不递
+    let real = match f.metadata().await {
+        Ok(m) => m.len(),
+        Err(e) => {
+            eprintln!("读不了 {path} 的大小：{e}——〔{name}〕递不出去了。");
+            return;
+        }
+    };
+    if real != total {
+        eprintln!("盘上的〔{name}〕大小变了（申报 {total}，现在 {real}）——不递了。");
+        return;
+    }
+    let mut buf = vec![0u8; 16 * 1024];
+    loop {
+        let n = match f.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("读盘失败：{e}——〔{name}〕递不完。");
+                return;
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        if let Err(e) = person.file_chunk(&buf[..n]).await {
+            if matches!(e, PersonError::FileNotStarted) {
+                // 已被 /no 或对端叫停收场——事件面已说清故事，静默退出
+                return;
+            }
+            eprintln!("{e}");
+            return;
+        }
+    }
+    match person.file_end().await {
+        Ok(()) => eprintln!("〔{}〕发完了——等对方确认。", safe(&name)),
+        // 同上：收场过的不再喊
+        Err(PersonError::FileNotStarted) => {}
+        Err(e) => eprintln!("{e}"),
+    }
 }
 
 /// 把一句话说成终端里的人话。
@@ -1407,7 +1613,8 @@ fn safe(s: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// 把一个人的经历说成终端里的人话。
-fn render(ev: Event) {
+/// person 只为 FileAccepted 起;后台传输任务（P22）——其余渲染纯展示。
+fn render(ev: Event, person: &Person) {
     match ev {
         Event::Knocked { peer } => eprintln!("{}", safe(&peer)),
         Event::Met { id, name, focused } => {
@@ -1464,46 +1671,142 @@ fn render(ev: Event) {
                 table.iter().map(|n| safe(n).into_owned()).collect::<Vec<_>>().join("、")
             );
         }
+        Event::FileRequested { id, from, name, size, focused, auto } => {
+            // 新递送翻篇：清掉这条线的旧账（停收后的 Dead 标记——迟到块
+            // 窗口关闭；被顶替的旧档已由 FileAborted 先行清账，此处空手）
+            inbound_files().lock().expect("在途文件账本没被毒化").remove(&id);
+            if auto {
+                // always 政策直收：一行告知（问句免了——用户立的常设政策）
+                eprintln!(
+                    "[{}] 递来〔{}〕（{}）——这条线设了都收，直接收。",
+                    safe(&from),
+                    safe(&name),
+                    human_size(size)
+                );
+            } else if focused {
+                eprintln!(
+                    "[{}] 想递给你〔{}〕（{}）——/yes 收，/no 不收；这条线今后：/receive always|never|ask",
+                    safe(&from),
+                    safe(&name),
+                    human_size(size)
+                );
+            } else {
+                eprintln!(
+                    "[{}] 想递给你〔{}〕（{}）——/yes 收，/no 不收（先 /talk {id} 再答；30 秒不答即婉拒）",
+                    safe(&from),
+                    safe(&name),
+                    human_size(size)
+                );
+            }
+        }
+        Event::FileAccepted { id, from, name } => {
+            eprintln!("[{}] 收下了，开始递〔{}〕……", safe(&from), safe(&name));
+            if let Some((fname, total, path)) = send_pending()
+                .lock()
+                .expect("待发账本没被毒化")
+                .remove(&id)
+                .map(|(p, t)| (name.clone(), t, p))
+            {
+                let person = person.clone();
+                tokio::spawn(async move {
+                    transfer_out(person, fname, total, path).await;
+                });
+            }
+        }
+        Event::FileDeclined { from, name, reason, .. } => match reason {
+            DeclineReason::Human => {
+                eprintln!("[{}] 不要〔{}〕。", safe(&from), safe(&name));
+            }
+            DeclineReason::Timeout => {
+                eprintln!(
+                    "[{}] 30 秒没应答，婉拒了〔{}〕——想要的话重新递。",
+                    safe(&from),
+                    safe(&name)
+                );
+            }
+            DeclineReason::Policy => {
+                eprintln!(
+                    "[{}] 这条线不收文件（对方的设定），〔{}〕婉拒。",
+                    safe(&from),
+                    safe(&name)
+                );
+            }
+            _ => eprintln!("[{}] 拒绝了〔{}〕。", safe(&from), safe(&name)),
+        },
+        Event::FileDelivered { from, name, .. } => {
+            eprintln!("[{}] 已收到〔{}〕。", safe(&from), safe(&name));
+        }
         Event::FileChunk { id, name, data, .. } => {
             // P20-F 流式：序号校验已在库内（对不上=FileAborted），CLI 顺序落盘。
             // 库永不落盘；CLI 是外层使用者，替人把东西放进 ./received/。
             use std::io::Write;
             let mut map = inbound_files().lock().expect("在途文件账本没被毒化");
-            let entry = map
-                .entry(id)
-                .or_insert_with(|| open_received_file(&name));
-            if let Err(e) = entry.0.write_all(&data) {
-                eprintln!("写盘失败：{e}——文件〔{}〕收不全了。", safe(&name));
-                map.remove(&id);
+            // 确保这一线有账：没有就建；建不了（盘满/权限）记 Dead——
+            // 失败已响亮说过，该份后续块静默丢弃，不刷屏
+            if let std::collections::hash_map::Entry::Vacant(v) = map.entry(id) {
+                match open_received_file(&name) {
+                    Some((f, dest)) => {
+                        v.insert(InboundLedger::Open(f, dest));
+                    }
+                    None => {
+                        v.insert(InboundLedger::Dead);
+                        return;
+                    }
+                }
+            }
+            match map.get_mut(&id) {
+                Some(InboundLedger::Dead) => {} // 建不了的份：静默丢
+                Some(InboundLedger::Open(f, _)) => {
+                    if let Err(e) = f.write_all(&data) {
+                        eprintln!("写盘失败：{e}——文件〔{}〕收不全了。", safe(&name));
+                        map.remove(&id);
+                    }
+                }
+                None => unreachable!("账刚建或刚记"),
             }
         }
-        Event::FileComplete { id, name, total } => {
+        Event::FileComplete { id, from, name, total } => {
             // 收齐：句柄随条目移除而关闭（空文件在此创建）
             let mut map = inbound_files().lock().expect("在途文件账本没被毒化");
-            let dest = map
-                .entry(id)
-                .or_insert_with(|| open_received_file(&name))
-                .1
-                .clone();
-            map.remove(&id);
-            eprintln!("收到文件〔{}〕（{total} 字节），放在 {}。", safe(&name), dest.display());
+            let dest = match map.remove(&id) {
+                Some(InboundLedger::Open(_f, dest)) => {
+                    drop(_f);
+                    dest
+                }
+                Some(InboundLedger::Dead) => return, // 建不了的份：「收不了」已说过
+                None => match open_received_file(&name) {
+                    Some((_f, dest)) => dest,
+                    None => return,
+                },
+            };
+            eprintln!(
+                "收到 [{}] 的文件〔{}〕（{}），放在 {}。",
+                safe(&from),
+                safe(&name),
+                human_size(total),
+                dest.display()
+            );
         }
         Event::FileAborted { id, detail } => {
-            // 作废：半份文件没意义，删掉（P20-F loud-failure 的 CLI 面）
+            // 事件性中止（P22 覆水难收）：半份是收方的财产——保留改名
+            // .半份、响亮告知，自行处置。唯一的删除路径是收方自己的
+            // /no（drop_inbound_half），事件从来不删。
             let mut map = inbound_files().lock().expect("在途文件账本没被毒化");
-            if let Some((_f, dest)) = map.remove(&id) {
-                let _ = std::fs::remove_file(&dest);
-                eprintln!("文件作废（{detail}）——半份已删。");
-            } else {
-                eprintln!("文件作废：{detail}。");
+            match map.remove(&id) {
+                Some(InboundLedger::Open(_f, dest)) => {
+                    drop(_f);
+                    let mut half = dest.clone().into_os_string();
+                    half.push(".半份");
+                    let half = std::path::PathBuf::from(half);
+                    match std::fs::rename(&dest, &half) {
+                        Ok(()) => eprintln!("{detail}——半份保留在 {}，自行处置。", half.display()),
+                        Err(e) => {
+                            eprintln!("{detail}——半份留在 {}（改名失败：{e}），自行处置。", dest.display())
+                        }
+                    }
+                }
+                _ => eprintln!("{detail}。"),
             }
-        }
-        Event::FileDeclined { from, name, size } => {
-            eprintln!(
-                "[{}] 想递一份超大的文件〔{}〕（{size} 字节，超过 32MB 上限），婉拒了。",
-                safe(&from),
-                safe(&name)
-            );
         }
         _ => {} // 库将来新增的经历，终端暂时不渲染
     }

@@ -35,9 +35,13 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(5);
 /// 连上却不吭声的（端口扫描之类），不该一直占着门厅与切口。
 const MEET_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 单个文件的大小上限，收发同限。收方在内存里重组（零持久化：库永不
-/// 落盘），32MB 对任何现代机器都轻松，又足以拦下恶意巨块。
-pub const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
+/// 递文件的问句挂钟（P22，rulings.2026_11_01_one_clock_thirty_seconds）：
+/// 请求到达起 30 秒没应 = 自动婉拒（发 0x14 码 2 + 清档 + 响亮一行）。
+/// 这是全系统唯一的文件钟——其余一切悬挂（对旧版本石沉大海、应了没
+/// 字节、传一半停摆）都由人的 /no 收场：机器不猜，人摆手。
+///（32MB 上限已随同意门槛废除，rulings.2026_11_01_file_consent_gate——
+/// 流式内存有界照旧：账本只有几个数字，字节一块一块走。）
+const FILE_ASK_WINDOW: Duration = Duration::from_secs(30);
 /// 每块数据的大小：2+1+4+32768 = 32775 < 65507——一块加帧头装得进
 /// UDP 数据报，于是文件在直连、茶馆、打洞线上都同样能传。
 const FILE_CHUNK_LEN: usize = 32 * 1024;
@@ -79,15 +83,29 @@ pub enum Event {
     /// 有人给你看座（0x10 到达）：from = 引荐人（到达线对端名），
     /// table = 桌上的名字（席位骨架，无 r）。想坐就 /sit。
     SeatOffered { from: String, table: Vec<String> },
-    /// 对方想递一份超过上限的文件，婉拒了（提醒人类，不中断会话）。
-    FileDeclined { from: String, name: String, size: u64 },
-    /// 一块文件字节进门（P20-F 流式）：data 是本块明文（Zeroizing，用后
-    /// 即焚）——外层使用者逐块取走落盘或转存，内存里只有这一块在途。
-    /// seq 从 0 起单调递增；收到 FileComplete 之前的中间态。
-    FileChunk { id: u64, name: String, seq: u32, data: Zeroizing<Vec<u8>> },
+    /// 一份递送请求来了（P22 同意门槛）：对面想递〔name〕（size 字节）。
+    /// from = 对端自报名（显示用，不构成身份）。focused = 这条线是否
+    /// 注意力所在（非焦点线答前先 /talk）；auto = true 表示 always 政策
+    /// 已直接收下（渲染「直接收」行，不必再答）。never 政策不发射本
+    /// 事件（不可见在源头）。
+    FileRequested { id: u64, from: String, name: String, size: u64, focused: bool, auto: bool },
+    /// 对方收下了（发端，P22）：file_begin 的请求被应允——现在可以喂块
+    /// 了（应允之前 file_chunk 响亮拒绝：点头之前手不伸向盒子）。
+    FileAccepted { id: u64, from: String, name: String },
+    /// 对方拒绝了这份递送（发端，P22）：说过 no 这份就死了——想要，
+    /// 让对方重新递。
+    FileDeclined { id: u64, from: String, name: String, reason: DeclineReason },
+    /// 回执到了（发端，P22）：对方已收到，全须全尾——「成功」对两边是
+    /// 同一个事实。
+    FileDelivered { id: u64, from: String, name: String },
+    /// 一块文件字节进门（P20-F 流式 + P22）：data 是本块明文（Zeroizing，
+    /// 用后即焚）——外层使用者逐块取走落盘或转存，内存里只有这一块在途。
+    /// from = 递送人（多线时屏上分得清）；seq 从 0 起单调递增。
+    FileChunk { id: u64, from: String, name: String, seq: u32, data: Zeroizing<Vec<u8>> },
     /// 一份文件收齐了（流式收尾）：此前每一块都已经过 FileChunk 交出。
-    /// total = 申报总长（也是实际收到总长——对不上根本走不到这）。
-    FileComplete { id: u64, name: String, total: u64 },
+    /// total = 申报总长（也是实际收到总长——申报即准数，对不上根本走
+    /// 不到这）。from = 递送人。
+    FileComplete { id: u64, from: String, name: String, total: u64 },
     /// 一份在途文件作废（loud-failure，P20-F：静默作废=罪）：序号不合、
     /// 越过申报总长、被新文件顶替、线断……detail 说人话。
     FileAborted { id: u64, detail: String },
@@ -146,14 +164,18 @@ pub enum PersonError {
     Encrypt(#[source] snow::Error),
     #[error("话没送到——[{name}] 恐怕已经走了。")]
     ByeFailed { name: String },
-    #[error("这份文件太大了（{size} 字节）：一次至多 32MB。")]
-    FileTooLarge { size: usize },
     #[error("文件名不能用：留了空、或超过 255 字节。")]
     FileNameBad,
-    #[error("上一份文件还没递完，一份递完再递下一份。")]
+    #[error("这条线还有一件文件事没完——等它结束再递。")]
     FileBusy,
     #[error("这场对话没有在途的出门文件——先 file_begin 开门。")]
     FileNotStarted,
+    #[error("对方还没答应——先等答复再喂字节（点头之前手不伸向盒子）。")]
+    FileNotConsented,
+    #[error("现在没有问你文件的事——想要让对方重新递。")]
+    NoFileQuestion,
+    #[error("现在没有在进行的文件往来。")]
+    NoFileTransaction,
     #[error("出门文件没收齐就收尾：申报 {declared} 字节，实发 {sent}。")]
     FileIncomplete { declared: u64, sent: u64 },
     #[error("喂进来的字节越过了申报总长（{sent} > {declared}），在途已作废。")]
@@ -248,11 +270,75 @@ mod frame_kind {
     /// 绑死本线，截获重放跨线必败。验签失败/无行可对 = 当没听见
     ///（无后果行为，静默语义与 bye-sig 去重同哲学）。
     pub const LINE_PROOF: u8 = 0x13;
+    /// 递文件先问一声（4.1.0 P22，rulings.2026_11_01_file_consent_gate）：
+    /// 0x17 请求（发→收，布局同 0x06：名长‖名字‖总长）——请求就是一句话，
+    /// file_begin 发完即返；0x14 答复（收→发，1 字节码：0 应允/1 人拒/
+    /// 2 婉拒(30秒)/3 政策拒，码域外当噪音）；0x15 停（双向，无载荷——
+    /// 这件文件事到此为止，只封未来不碰已到〔覆水难收〕）；0x16 回执
+    ///（收→发，无载荷——收齐了，全须全尾）。0x06 头照识：旧版来问走
+    /// 同一门槛（响亮失败路径，不无声消失），新发端不再发射它。
+    pub const FILE_VERDICT: u8 = 0x14;
+    pub const FILE_STOP: u8 = 0x15;
+    pub const FILE_RECEIPT: u8 = 0x16;
+    pub const FILE_REQUEST: u8 = 0x17;
 }
 
 /// 席位标志：多人成圈默认封桌（私人圆桌）；一人成圈默认开台（舞台）。
 pub const SEATS_CLOSED: u8 = 0;
 pub const SEATS_OPEN: u8 = 1;
+
+/// 0x14 答复帧的四种码（P22）：收方对一份递送请求的态度。发端区分显示
+///（『不要』与『没应答』永远是两句话——人话在 DeclineReason）。
+pub mod file_verdict {
+    /// 应允（ask 下人点头 / always 政策直收——收下就是收下，同一码）
+    pub const ACCEPT: u8 = 0;
+    /// 人拒（/no）
+    pub const HUMAN_NO: u8 = 1;
+    /// 婉拒（30 秒没应）
+    pub const TIMEOUT_NO: u8 = 2;
+    /// 政策拒（这条线设了 never）
+    pub const POLICY_NO: u8 = 3;
+}
+
+/// 一条线的收文件态度（P22）：默认 ask。按线独立、只在内存、随进程死、
+/// 会话内可随时改；改的瞬间也裁决当时挂着的问题。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Receive {
+    /// 每份都问（默认）
+    Ask,
+    /// 都直接收（用户立的常设政策，认钥不认人——与 --guard 同族）
+    Always,
+    /// 都不收：请求不可见 + 自动回绝（防刷屏）
+    Never,
+}
+
+/// 一份递送被拒的方式（P22）：发端据此说人话。
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclineReason {
+    /// 对方亲手拒了（/no）
+    Human,
+    /// 30 秒没应，婉拒
+    Timeout,
+    /// 这条线设了不收（never）
+    Policy,
+}
+
+/// file_no 收场了哪一件（P22 四时机统一手势：拒/停收/停发/撤回/不再等
+/// 回执）：外层据此说人话。删半份是收方对外层账本的事——库不碰盘。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileNoResult {
+    /// 拒了挂着的问题（发 0x14 码 1）
+    Rejected { name: String },
+    /// 停收：半份自删（发 0x15）
+    StoppedReceiving { name: String },
+    /// 停发：已发出的部分在对方手里，收不回（发 0x15，覆水难收）
+    StoppedSending { name: String },
+    /// 撤回了还没被答的请求（发 0x15）
+    Withdrawn { name: String },
+    /// 不再等回执（字节都已发出——对方收到与否已不可撤）
+    ForgotReceipt { name: String },
+}
 
 /// 在场辩护窗口（挂钟 30 秒）：RM 点名者在窗口内有已验签发言
 /// ⇒ 与 RM 矛盾 ⇒ 扣下补话 + 响亮冲突。「还在说话即不可被判离开」。
@@ -682,12 +768,27 @@ struct Inner {
     /// 一次性切口（/await）若在，优先生效；烧掉之后门禁照常。
     /// P20-L：同上，锁定页存放（进程寿命级的最长寿命用户秘密）。
     stable_secret: Option<crate::lock::SecretBytes>,
-    /// 正在进门的文件（每场对话至多一份在途）：流式记账，P20-F——
-    /// 每块经 FileChunk 即时交出，不驻留整份。
+    /// 正在进门的文件（每场对话至多一份在途，P22 同意门槛——问题挂着
+    /// 或正在收都占着这条道的文件档）：流式记账，P20-F——每块经
+    /// FileChunk 即时交出，不驻留整份。
     inbound_files: HashMap<u64, InboundFile>,
-    /// 正在出门的文件（每场对话至多一份在途）：流式记账（P20-F）——
-    /// 防两份并发交错成乱麻。
+    /// 正在出门的文件（每场对话至多一份在途，P22：等答复/正在递/等回执
+    /// 都占着这条道的文件档——一线一次一件，不分方向）。
     outgoing_files: HashMap<u64, OutboundFile>,
+    /// 每条线的收文件态度（P22）：缺项 = ask。只在内存、随进程死。
+    file_policy: HashMap<u64, Receive>,
+    /// 最近一次出向文件已送达的线号（P22）：回执清档后留的记号——
+    /// send_file 的内部等待由此分辨「送达后消失」与「未应允即消失」
+    ///（空文件必然竞态：回执与答复同批到达）。begin 新件时清。
+    file_delivered: std::collections::HashSet<u64>,
+    /// 问题挂钟测试旋钮（P22 rogue）：Some(ms) 时本人的钟用毫秒值。
+    /// 正式构建此字段不存在——按人隔离，测试并行互不污染。
+    #[cfg(feature = "rogue")]
+    rogue_file_ask_window_ms: Option<u64>,
+    /// 文件档变动的一次性闹钟（P22）：出向状态一变（答复/停/收场）就叫
+    /// 醒 send_file 的内部等待。notify_one 的许可语义（无等者时存一张
+    /// 许可）让「锁内查状态→锁外睡」的循环无竞态——丢叫醒不可能。
+    file_wake: std::sync::Arc<tokio::sync::Notify>,
     /// 正在围坐的圈子，按圈号索引（P6 嵌套，rulings.2026_10_17_p6_spec_approved）：
     /// 一个人可同时坐在多张桌——协议眼里只有 N 个平行圈共享一些线，
     /// 圈与圈的关系不存在于任何协议状态里（嵌套=人类语义）。BTreeMap：
@@ -748,22 +849,23 @@ struct PendingBring {
     expected: Option<String>,
 }
 
-/// 一份正在进门的东西：名字、总长、已收字节数、下一块序号。
-/// P20-F 流式：不再驻留整份 buf——每块经 FileChunk 即时交出，
-/// 这里只记账（32MB 常驻 → 单块瞬态）。
-struct InboundFile {
-    name: String,
-    total: u64,
-    received: u64,
-    next_seq: u32,
+/// 一份正在进门的文件（4.1.0 P22 同意门槛）：问题挂着（钟在走）→ 正在收。
+/// 流式记账（P20-F）照旧——每块经 FileChunk 即时交出，不驻留整份。
+enum InboundFile {
+    /// 对方想递，问用户呢——FILE_ASK_WINDOW 秒没答自动婉拒
+    Pending { name: String, total: u64 },
+    /// 已应允（或 always 直收），等块/收块中
+    Receiving { name: String, total: u64, received: u64, next_seq: u32 },
 }
 
-/// 一份正在出门的东西（P20-F 流式发送的记账）：
-/// 申报总长、已发字节数、下一块序号。
-struct OutboundFile {
-    total: u64,
-    sent: u64,
-    next_seq: u32,
+/// 一份正在出门的文件（4.1.0 P22）：等答复 → 正在递 → 等回执。
+enum OutboundFile {
+    /// 0x17 已发，等对方点头（请求就是一句话，说完就走）
+    AwaitingConsent { name: String, total: u64 },
+    /// 对方收下了，字节在飞
+    Streaming { name: String, total: u64, sent: u64, next_seq: u32 },
+    /// 字节全部发出，等「收好了」回执（0x16 到达即 FileDelivered）
+    AwaitingReceipt { name: String },
 }
 
 /// 一个人。克隆不产生新的人，只是多一只手牵着他。
@@ -826,6 +928,11 @@ impl Person {
                 stable_secret: None,
                 inbound_files: HashMap::new(),
                 outgoing_files: HashMap::new(),
+                file_policy: HashMap::new(),
+                file_delivered: std::collections::HashSet::new(),
+                #[cfg(feature = "rogue")]
+                rogue_file_ask_window_ms: None,
+                file_wake: std::sync::Arc::new(tokio::sync::Notify::new()),
                 gatherings: std::collections::BTreeMap::new(),
                 active_circle: None,
                 pending_contribs: std::collections::VecDeque::new(),
@@ -1062,18 +1169,47 @@ impl Person {
         send_chat(&cipher, &writer, text.as_bytes()).await
     }
 
-    /// 递一份文件给此刻注意力所在的人（便捷形态）：一次性把整份字节
-    /// 交给库，库内部分块发出——调用方仍需自备整份（内存驻留在调用方
-    /// 一侧）。真正的流式（边产生边发、内存只有一块）用
-    /// file_begin / file_chunk / file_end 三步。字节原样走密文、原样
-    /// 进门——二进制不欠文字的安检（无损）。上限收发同限（32MB）；
-    /// 库不读盘也不写盘：字节从哪来、到哪去，都由外层使用者决定。
-    /// 一场对话同一时刻只递一份（并发递第二份会被拒），聊天照常穿插。
+    /// 递一份文件给此刻注意力所在的人（便捷形态·阻塞版，P22）：file_begin
+    /// 发出请求后在库内**等对方的答复**——答应了就一口气把整份字节分块
+    /// 发出，被拒了就带着语义错误回来。想要事件流的消费者（GUI/手机
+    /// App）用 file_begin / file_chunk / file_end 原语：请求就是一句话，
+    /// 说完就走，答复以 FileAccepted / FileDeclined 事件到达
+    ///（rulings.2026_11_01_file_request_is_a_message——两形态文档写明）。
+    /// 字节原样走密文、原样进门（无损）；库不读盘也不写盘。一场对话
+    /// 同一时刻只递一份（一线一次一件），聊天照常穿插。
     pub async fn send_file(&self, name: &str, data: &[u8]) -> Result<(), PersonError> {
-        if data.len() > MAX_FILE_BYTES {
-            return Err(PersonError::FileTooLarge { size: data.len() });
+        let id = self.file_begin_id(name, data.len() as u64).await?;
+        // 阻塞便利形态：睡等「对方收下了」（许可闹钟，无竞态）。对旧版本
+        // 石沉大海则一直等——唯一的钟在收端，发端的收场手势是 /no
+        //（rulings.2026_11_01_one_clock_thirty_seconds）。
+        let wake = {
+            let p = self.inner.lock().await;
+            p.file_wake.clone()
+        };
+        loop {
+            {
+                let p = self.inner.lock().await;
+                match p.outgoing_files.get(&id) {
+                    // 已被收场：送达（回执清档——空文件必然竞态）则是成功；
+                    // 拒绝/停/撤回的错误由事件面与手势自己讲
+                    None if p.file_delivered.contains(&id) => return Ok(()),
+                    None => return Err(PersonError::FileNotStarted),
+                    Some(OutboundFile::AwaitingConsent { .. }) => {}
+                    Some(_) => break,
+                }
+            }
+            wake.notified().await;
         }
-        self.file_begin(name, data.len() as u64).await?;
+        if data.is_empty() {
+            // 空文件：应允即全部发出。file_end 幂等确认；档已清 = 回执
+            // 抢先到了（已送达）——同为成功。收场手势竞态在此无害：零
+            // 字节无「半途」可言，停发的故事由手势自己的返回值讲。
+            return match self.file_end().await {
+                Ok(()) => Ok(()),
+                Err(PersonError::FileNotStarted) => Ok(()),
+                Err(e) => Err(e),
+            };
+        }
         match self.file_chunk(data).await {
             Ok(()) => self.file_end().await,
             Err(e) => {
@@ -1083,15 +1219,17 @@ impl Person {
         }
     }
 
-    /// 流式开门（P20-F）：申报名字与总长——字节随后经 file_chunk 分批
-    /// 喂入，file_end 收尾。库不读盘：字节从哪来（盘、网络、内存）由
-    /// 外层决定。一场对话同一时刻一份在途；发送中途想放弃用 file_abort。
-    ///（注意：file_chunk/file_end 应对同一场对话顺序调用——账本不设
-    /// 并发锁，交错喂块是调用方的错。）
+    /// 流式开门（P20-F + P22）：申报名字与总长，**只发一条 0x17 请求就
+    /// 返回**——对方答应了没有、何时答应，以 FileAccepted / FileDeclined
+    /// 事件到达；答应之前喂块会被响亮拒绝（点头之前手不伸向盒子）。
+    /// 库不读盘：字节从哪来（盘、网络、内存）由外层决定。一场对话同一
+    /// 时刻一份在途（一线一次一件：出入向任何在途档都占道）。
     pub async fn file_begin(&self, name: &str, total: u64) -> Result<(), PersonError> {
-        if total > MAX_FILE_BYTES as u64 {
-            return Err(PersonError::FileTooLarge { size: total as usize });
-        }
+        self.file_begin_id(name, total).await.map(|_| ())
+    }
+
+    /// file_begin 的内里（多回一个线号——send_file 的睡等要用它定位出向档）。
+    async fn file_begin_id(&self, name: &str, total: u64) -> Result<u64, PersonError> {
         let name = name.trim();
         if name.is_empty() || name.len() > 255 || name.contains('\0') {
             return Err(PersonError::FileNameBad);
@@ -1101,72 +1239,107 @@ impl Person {
             let Some(id) = p.focus else {
                 return Err(PersonError::NoFocus);
             };
-            // 一场对话一份在途：两份交错会让对方的重组乱序
-            if p.outgoing_files.contains_key(&id) {
+            // 一线一次一件（P22）：出向任何态或入向任何态都占着这条道的文件档
+            if p.outgoing_files.contains_key(&id) || p.inbound_files.contains_key(&id) {
                 return Err(PersonError::FileBusy);
             }
             let Some(c) = p.convos.get(&id) else {
                 return Err(PersonError::NoConvo);
             };
             let pair = (c.cipher.clone(), c.writer.clone());
+            p.file_delivered.remove(&id);
             p.outgoing_files.insert(
                 id,
-                OutboundFile {
+                OutboundFile::AwaitingConsent {
+                    name: name.to_string(),
                     total,
-                    sent: 0,
-                    next_seq: 0,
                 },
             );
             (id, pair.0, pair.1)
         };
-        let mut head = Vec::with_capacity(2 + name.len());
-        head.push(name.len() as u8);
-        head.extend_from_slice(name.as_bytes());
-        head.extend_from_slice(&total.to_be_bytes());
-        if send_typed(&cipher, &writer, frame_kind::FILE_HEAD, &head)
+        let mut req = Vec::with_capacity(2 + name.len());
+        req.push(name.len() as u8);
+        req.extend_from_slice(name.as_bytes());
+        req.extend_from_slice(&total.to_be_bytes());
+        if send_typed(&cipher, &writer, frame_kind::FILE_REQUEST, &req)
             .await
             .is_err()
         {
-            self.inner.lock().await.outgoing_files.remove(&id);
+            let mut p = self.inner.lock().await;
+            if matches!(
+                p.outgoing_files.get(&id),
+                Some(OutboundFile::AwaitingConsent { .. })
+            ) {
+                p.outgoing_files.remove(&id);
+            }
             return Err(PersonError::NoConvo);
         }
-        Ok(())
+        Ok(id)
     }
 
-    /// 喂一块字节（P20-F 流式）：这一块在库内再按 [8KB, 32KB] 随机边界
+    /// 喂一块字节（P20-F 流式 + P22 同意门槛）：**对方答应之后**才喂得进
+    /// ——等答复态喂 = 响亮拒绝。这一块在库内再按 [8KB, 32KB] 随机边界
     /// 切成帧（「每块都恰好 32KB」的固定形状是指纹，随机化把它抹掉——
     /// 块边界纯属发送方的私事，收方来多大收多大，旧版照收）。总量的形状
     ///（这份文件大约多大）是另一层：要抹它得靠应用层把容器凑整。
-    /// 累计越过申报总长 = 响亮失败并在途作废。
+    /// 累计越过申报总长 = 响亮失败并在途作废（申报即准数的上半边）。
     pub async fn file_chunk(&self, data: &[u8]) -> Result<(), PersonError> {
-        let (id, cipher, writer, start_seq, sent_before) = {
+        // 判定枚举：先在借用内读账，再在借用外动手
+        enum Gate {
+            Go { next_seq: u32, sent: u64 },
+            NotConsented,
+            NotStarted,
+            Overflow { sent: u64, declared: u64 },
+        }
+        let (id, cipher, writer, gate) = {
             let mut p = self.inner.lock().await;
             let Some(id) = p.focus else {
                 return Err(PersonError::NoFocus);
             };
-            let Some(ob) = p.outgoing_files.get(&id) else {
-                return Err(PersonError::FileNotStarted);
-            };
-            if ob.sent + data.len() as u64 > ob.total {
-                let (sent, declared) = (ob.sent + data.len() as u64, ob.total);
-                p.outgoing_files.remove(&id);
-                return Err(PersonError::FileOverflow { sent, declared });
-            }
             let Some(c) = p.convos.get(&id) else {
                 return Err(PersonError::NoConvo);
             };
-            (
-                id,
-                c.cipher.clone(),
-                c.writer.clone(),
-                ob.next_seq,
-                ob.sent,
-            )
+            let pair = (c.cipher.clone(), c.writer.clone());
+            let gate = match p.outgoing_files.get(&id) {
+                None => Gate::NotStarted,
+                Some(OutboundFile::AwaitingConsent { .. }) => Gate::NotConsented,
+                // 都发完了还喂 = 没有在途的出门文件
+                Some(OutboundFile::AwaitingReceipt { .. }) => Gate::NotStarted,
+                Some(OutboundFile::Streaming { total, sent, next_seq, .. }) => {
+                    if sent + data.len() as u64 > *total {
+                        Gate::Overflow {
+                            sent: sent + data.len() as u64,
+                            declared: *total,
+                        }
+                    } else {
+                        Gate::Go {
+                            next_seq: *next_seq,
+                            sent: *sent,
+                        }
+                    }
+                }
+            };
+            if matches!(gate, Gate::Overflow { .. }) {
+                p.outgoing_files.remove(&id);
+                p.file_wake.notify_one();
+            }
+            (id, pair.0, pair.1, gate)
         };
-        // 逐帧发送（锁外——Inner 锁内不 await，teardown_lock_fix 纪律）
+        let (start_seq, sent_before) = match gate {
+            Gate::Go { next_seq, sent } => (next_seq, sent),
+            Gate::NotStarted => return Err(PersonError::FileNotStarted),
+            Gate::NotConsented => return Err(PersonError::FileNotConsented),
+            Gate::Overflow { sent, declared } => {
+                return Err(PersonError::FileOverflow { sent, declared })
+            }
+        };
+        // 逐帧发送（锁外——Inner 锁内不 await，teardown_lock_fix 纪律）。
+        // 记账随帧走（P22 回执竞态封口）：每帧落笔即更新计数，最后一帧
+        // 写完的同一锁段里转入「等回执」——对方的回执（收齐后才可能发）
+        // 永远落在等回执态上，不会扑空。
         let mut rest = data;
         let mut seq = start_seq;
-        let mut frames = 0u32;
+        let mut sent_now = sent_before;
         while !rest.is_empty() {
             let take = if rest.len() > FILE_CHUNK_LEN {
                 Self::random_in(FILE_CHUNK_LEN / 4, FILE_CHUNK_LEN)
@@ -1186,45 +1359,244 @@ impl Person {
             }
             rest = tail;
             seq += 1;
-            frames += 1;
-        }
-        {
+            sent_now += take as u64;
             let mut p = self.inner.lock().await;
-            if let Some(ob) = p.outgoing_files.get_mut(&id) {
-                ob.sent = sent_before + data.len() as u64;
-                ob.next_seq = start_seq + frames;
+            let done = match p.outgoing_files.get_mut(&id) {
+                Some(OutboundFile::Streaming { sent, next_seq, total, .. }) => {
+                    *sent = sent_now;
+                    *next_seq = seq;
+                    *sent == *total
+                }
+                // 中途被收场（/no、对端叫停、线死）：故事已由事件面说清，
+                // 剩下的帧一帧也不再多发
+                _ => return Err(PersonError::FileNotStarted),
+            };
+            if done {
+                let name = match p.outgoing_files.get(&id) {
+                    Some(OutboundFile::Streaming { name, .. }) => name.clone(),
+                    _ => unreachable!("刚核对过在档"),
+                };
+                p.outgoing_files.insert(id, OutboundFile::AwaitingReceipt { name });
+                p.file_wake.notify_one();
             }
         }
         Ok(())
     }
 
-    /// 收尾（P20-F 流式）：校验实发总长 == 申报总长，销账。
-    /// 不足就收尾 = 响亮失败（对端收不齐会一直等——宁可这边喊出来）。
+    /// 收尾（P20-F + P22）：校验实发总长 == 申报总长（申报即准数——不足
+    /// 就收尾 = 响亮失败 + 发停字条：短斤缺两不是说好的那份，收方已到
+    /// 字节保留，覆水难收）。足秤则转入「等回执」——0x16 到达即
+    /// FileDelivered（「对方已收到」）。
     pub async fn file_end(&self) -> Result<(), PersonError> {
-        let mut p = self.inner.lock().await;
-        let Some(id) = p.focus else {
-            return Err(PersonError::NoFocus);
+        // 判定枚举：先在借用内读账（只取值），再在借用外动手
+        enum End {
+            Done { name: String },
+            Short { declared: u64, sent: u64 },
+            NotConsented,
+            NotStarted,
+        }
+        let (id, end, pair) = {
+            let mut p = self.inner.lock().await;
+            let Some(id) = p.focus else {
+                return Err(PersonError::NoFocus);
+            };
+            let pair = p
+                .convos
+                .get(&id)
+                .map(|c| (c.cipher.clone(), c.writer.clone()));
+            let end = match p.outgoing_files.get(&id) {
+                None => End::NotStarted,
+                Some(OutboundFile::AwaitingConsent { .. }) => End::NotConsented,
+                // 已在等回执：最后一帧落笔时自动转入的（或空文件应允即入）
+                //——幂等收尾，Ok
+                Some(OutboundFile::AwaitingReceipt { .. }) => End::Done { name: String::new() },
+                Some(OutboundFile::Streaming { name, total, sent, .. }) => {
+                    if sent != total {
+                        End::Short {
+                            declared: *total,
+                            sent: *sent,
+                        }
+                    } else {
+                        // 理论上到不了（最后一帧落笔即转等回执）；防御性兜底
+                        End::Done { name: name.clone() }
+                    }
+                }
+            };
+            match &end {
+                End::Done { name } => {
+                    if !name.is_empty() {
+                        p.outgoing_files.insert(
+                            id,
+                            OutboundFile::AwaitingReceipt { name: name.clone() },
+                        );
+                    }
+                }
+                End::Short { .. } => {
+                    p.outgoing_files.remove(&id);
+                }
+                _ => {}
+            }
+            p.file_wake.notify_one();
+            (id, end, pair)
         };
-        let Some(ob) = p.outgoing_files.remove(&id) else {
+        let _ = id;
+        match end {
+            End::Done { .. } => Ok(()),
+            End::Short { declared, sent } => {
+                // 短斤缺两：发停字条收场（锁外）
+                if let Some((cipher, writer)) = pair {
+                    let _ = send_typed(&cipher, &writer, frame_kind::FILE_STOP, &[]).await;
+                }
+                Err(PersonError::FileIncomplete { declared, sent })
+            }
+            End::NotConsented => Err(PersonError::FileNotConsented),
+            End::NotStarted => Err(PersonError::FileNotStarted),
+        }
+    }
+
+    /// 主动作废在途的出门文件（P20-F + P22）：发一条停字条（0x15——只封
+    /// 未来，不碰已到：对方的半份是对方的，覆水难收），销账即止。
+    ///（官方 CLI 的停发/撤回手势走 file_no——本符号随流式 API 冻结保留，
+    /// = file_no 的出向半边。）
+    pub async fn file_abort(&self) -> Result<(), PersonError> {
+        let (had, pair) = {
+            let mut p = self.inner.lock().await;
+            let Some(id) = p.focus else {
+                return Err(PersonError::NoFocus);
+            };
+            let had = p.outgoing_files.remove(&id).is_some();
+            let pair = p
+                .convos
+                .get(&id)
+                .map(|c| (c.cipher.clone(), c.writer.clone()));
+            p.file_wake.notify_one();
+            (had, pair)
+        };
+        if !had {
             return Err(PersonError::FileNotStarted);
-        };
-        if ob.sent != ob.total {
-            return Err(PersonError::FileIncomplete {
-                declared: ob.total,
-                sent: ob.sent,
-            });
+        }
+        if let Some((cipher, writer)) = pair {
+            let _ = send_typed(&cipher, &writer, frame_kind::FILE_STOP, &[]).await;
         }
         Ok(())
     }
 
-    /// 主动作废在途的出门文件（P20-F 流式）：销账即止，不发帧——
-    /// 对端侧由新家门顶替或线死触发其 FileAborted。
-    pub async fn file_abort(&self) -> Result<(), PersonError> {
-        let mut p = self.inner.lock().await;
-        let Some(id) = p.focus else {
-            return Err(PersonError::NoFocus);
+    /// 答应聚焦线上挂着的文件请求（P22）：问题消解为「正在收」，给对方
+    /// 发应允（0x14 码 0）；空文件（0 字节）当场收齐——FileComplete 与
+    /// 回执一并发回（空文件照走全流程，一步不省）。返回文件名（外层好
+    /// 说人话）。没有挂着的问题 = 响亮拒绝（NoFileQuestion——说过 no 的
+    /// 问题也一样：那份已经死了，no 后不可 yes）。
+    pub async fn file_yes(&self) -> Result<String, PersonError> {
+        let (id, name, frames) = {
+            let mut p = self.inner.lock().await;
+            let Some(id) = p.focus else {
+                return Err(PersonError::NoFocus);
+            };
+            let (name, total) = match p.inbound_files.get(&id) {
+                Some(InboundFile::Pending { name, total }) => (name.clone(), *total),
+                _ => return Err(PersonError::NoFileQuestion),
+            };
+            let frames = accept_inbound_locked(&mut p, id, &name, total);
+            (id, name, frames)
         };
-        p.outgoing_files.remove(&id);
+        send_frames(&self.inner, id, frames).await;
+        Ok(name)
+    }
+
+    /// 统一的「不要了」手势（P22 四时机）：聚焦线上现在正在进行的文件
+    /// 往来，一件 /no 收场——拒（问题挂着）/ 停收（正在收）/ 停发（正在
+    /// 发）/ 撤回（等答复）/ 不再等回执（字节都已发出）。说过 no 这份
+    /// 就死了：想要，让对方重新递。返回收场明细（外层据此说人话；删
+    /// 半份是收方对外层账本的事——库不碰盘）。
+    pub async fn file_no(&self) -> Result<FileNoResult, PersonError> {
+        let (id, result) = {
+            let mut p = self.inner.lock().await;
+            let Some(id) = p.focus else {
+                return Err(PersonError::NoFocus);
+            };
+            let result = if let Some(ob) = p.outgoing_files.get(&id) {
+                match ob {
+                    OutboundFile::AwaitingConsent { name, .. } => {
+                        FileNoResult::Withdrawn { name: name.clone() }
+                    }
+                    OutboundFile::Streaming { name, .. } => {
+                        FileNoResult::StoppedSending { name: name.clone() }
+                    }
+                    OutboundFile::AwaitingReceipt { name, .. } => {
+                        FileNoResult::ForgotReceipt { name: name.clone() }
+                    }
+                }
+            } else if let Some(ib) = p.inbound_files.get(&id) {
+                match ib {
+                    InboundFile::Pending { name, .. } => {
+                        FileNoResult::Rejected { name: name.clone() }
+                    }
+                    InboundFile::Receiving { name, .. } => {
+                        FileNoResult::StoppedReceiving { name: name.clone() }
+                    }
+                }
+            } else {
+                return Err(PersonError::NoFileTransaction);
+            };
+            // 摆手收场：清档（一线一次一件，出向入向至多一方有档——防御
+            // 性地两边都清）
+            p.outgoing_files.remove(&id);
+            p.inbound_files.remove(&id);
+            p.file_wake.notify_one();
+            (id, result)
+        };
+        // 锁外发帧：拒 = 答复码 1；撤回/停发/停收 = 停字条；不再等回执
+        // = 不发任何帧（对方的完整份是对方的——覆水难收）。
+        let frame: Option<(u8, Vec<u8>)> = match &result {
+            FileNoResult::Rejected { .. } => {
+                Some((frame_kind::FILE_VERDICT, vec![file_verdict::HUMAN_NO]))
+            }
+            FileNoResult::Withdrawn { .. }
+            | FileNoResult::StoppedSending { .. }
+            | FileNoResult::StoppedReceiving { .. } => {
+                Some((frame_kind::FILE_STOP, Vec::new()))
+            }
+            FileNoResult::ForgotReceipt { .. } => None,
+        };
+        if let Some((kind, payload)) = frame {
+            send_frames(&self.inner, id, vec![(kind, payload)]).await;
+        }
+        Ok(result)
+    }
+
+    /// 设这条线（聚焦线）的收文件态度（P22）：ask / always / never，会话
+    /// 内可随时改。切换的瞬间也裁决当时挂着的问题——改 always：直收；
+    /// 改 never：自动婉拒；改 ask：保持挂问。
+    pub async fn set_receive(&self, policy: Receive) -> Result<(), PersonError> {
+        let (id, frames) = {
+            let mut p = self.inner.lock().await;
+            let Some(id) = p.focus else {
+                return Err(PersonError::NoFocus);
+            };
+            p.file_policy.insert(id, policy);
+            let mut frames: Vec<(u8, Vec<u8>)> = Vec::new();
+            if let Some(InboundFile::Pending { name, total }) = p.inbound_files.get(&id) {
+                let (name, total) = (name.clone(), *total);
+                match policy {
+                    Receive::Always => {
+                        frames = accept_inbound_locked(&mut p, id, &name, total);
+                    }
+                    Receive::Never => {
+                        p.inbound_files.remove(&id);
+                        p.events
+                            .send(Event::FileAborted {
+                                id,
+                                detail: format!("这条线改为不收，〔{name}〕的请求自动婉拒"),
+                            })
+                            .ok();
+                        frames.push((frame_kind::FILE_VERDICT, vec![file_verdict::POLICY_NO]));
+                    }
+                    Receive::Ask => {}
+                }
+            }
+            (id, frames)
+        };
+        send_frames(&self.inner, id, frames).await;
         Ok(())
     }
 
@@ -2755,6 +3127,169 @@ async fn register_convo(
     Ok(id)
 }
 
+// ───────────────────────────────────────────────────────────────
+// 递文件先问一声（4.1.0 P22）——ear 侧帮手
+// ───────────────────────────────────────────────────────────────
+
+/// 应允一份递送（锁内决断，P22）：问题转「正在收」；空文件（0 字节）
+/// 当场收齐（FileComplete + 回执帧）。返回待发帧（调用方在锁外发出）。
+/// 不做档位检查——调用方保证此刻该应允（问题挂着 / always 直收）。
+fn accept_inbound_locked(p: &mut Inner, id: u64, name: &str, total: u64) -> Vec<(u8, Vec<u8>)> {
+    let mut frames = vec![(frame_kind::FILE_VERDICT, vec![file_verdict::ACCEPT])];
+    let from = p
+        .convos
+        .get(&id)
+        .map(|c| c.their_name.clone())
+        .unwrap_or_default();
+    if total == 0 {
+        // 空文件照走全流程：应允即收齐，回执一并带回
+        p.inbound_files.remove(&id);
+        p.events
+            .send(Event::FileComplete {
+                id,
+                from,
+                name: name.to_string(),
+                total: 0,
+            })
+            .ok();
+        frames.push((frame_kind::FILE_RECEIPT, Vec::new()));
+    } else {
+        p.inbound_files.insert(
+            id,
+            InboundFile::Receiving {
+                name: name.to_string(),
+                total,
+                received: 0,
+                next_seq: 0,
+            },
+        );
+    }
+    frames
+}
+
+/// 锁外把一组帧发到指定线（P22 帮手）：线已不在就安静放弃——线死由
+/// 收摊讲故事，这里补枪没有意义。
+async fn send_frames(inner: &Arc<Mutex<Inner>>, id: u64, frames: Vec<(u8, Vec<u8>)>) {
+    if frames.is_empty() {
+        return;
+    }
+    let Some((cipher, writer)) = ({
+        let p = inner.lock().await;
+        p.convos
+            .get(&id)
+            .map(|c| (c.cipher.clone(), c.writer.clone()))
+    }) else {
+        return;
+    };
+    for (kind, payload) in frames {
+        let _ = send_typed(&cipher, &writer, kind, &payload).await;
+    }
+}
+
+/// 一份递送请求进门（P22 同意门槛；0x17 新版与 0x06 旧版同走此门）。
+/// 态度裁决：never 回绝且不可见（防刷屏）；always 直接收下；ask 问
+/// 用户并起 30 秒钟。旧档让位（响亮；半份是收方的财产，事件性中止由
+/// 外层保留为 .半份——覆水难收）。
+async fn file_offer(
+    inner: &Arc<Mutex<Inner>>,
+    id: u64,
+    their_name: &str,
+    name: String,
+    total: u64,
+) {
+    let mut frames: Vec<(u8, Vec<u8>)> = Vec::new();
+    {
+        let mut p = inner.lock().await;
+        // 旧档让位：一线一次一件是发端的纪律；收端对破坏者（旧版/魔改）
+        // 宽容让位——被顶替的旧档响亮（静默=罪）。
+        if let Some(old) = p.inbound_files.remove(&id) {
+            let detail = match old {
+                InboundFile::Receiving { name, received, total, .. } => format!(
+                    "〔{name}〕被新递送顶替，作废——你手里有半份（{received} / {total} 字节）"
+                ),
+                InboundFile::Pending { name, .. } => {
+                    format!("〔{name}〕的请求被新递送顶替，消解")
+                }
+            };
+            p.events.send(Event::FileAborted { id, detail }).ok();
+        }
+        let from = their_name.to_string();
+        match p.file_policy.get(&id).copied().unwrap_or(Receive::Ask) {
+            Receive::Never => {
+                // 不可见 + 自动回绝（防刷屏：连问都不显示）
+                frames.push((frame_kind::FILE_VERDICT, vec![file_verdict::POLICY_NO]));
+            }
+            Receive::Always => {
+                let focused = p.focus == Some(id);
+                p.events
+                    .send(Event::FileRequested {
+                        id,
+                        from,
+                        name: name.clone(),
+                        size: total,
+                        focused,
+                        auto: true,
+                    })
+                    .ok();
+                frames.extend(accept_inbound_locked(&mut p, id, &name, total));
+            }
+            Receive::Ask => {
+                let focused = p.focus == Some(id);
+                p.events
+                    .send(Event::FileRequested {
+                        id,
+                        from,
+                        name: name.clone(),
+                        size: total,
+                        focused,
+                        auto: false,
+                    })
+                    .ok();
+                p.inbound_files
+                    .insert(id, InboundFile::Pending { name, total });
+                // 30 秒钟（P22 唯一的钟）：到点仍挂着 → 自动婉拒。
+                // 已被 yes/no/切态度/顶替/线死解决的问题，钟不追认。
+                // rogue 构建下按人可调短（测试旋钮，互不污染）。
+                #[cfg(feature = "rogue")]
+                let window = p
+                    .rogue_file_ask_window_ms
+                    .map(Duration::from_millis)
+                    .unwrap_or(FILE_ASK_WINDOW);
+                #[cfg(not(feature = "rogue"))]
+                let window = FILE_ASK_WINDOW;
+                let inner2 = inner.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(window).await;
+                    file_ask_expired(&inner2, id).await;
+                });
+            }
+        }
+    }
+    send_frames(inner, id, frames).await;
+}
+
+/// 30 秒到点（P22 唯一的钟）：问题还挂着 → 自动婉拒——发 0x14 码 2 +
+/// 清档 + 响亮一行。婉拒发出 = 发端请求自动取消（不存在重复的取消）。
+async fn file_ask_expired(inner: &Arc<Mutex<Inner>>, id: u64) {
+    let frames = {
+        let mut p = inner.lock().await;
+        if !matches!(p.inbound_files.get(&id), Some(InboundFile::Pending { .. })) {
+            return; // 已被解决：钟不追认
+        }
+        let Some(InboundFile::Pending { name, .. }) = p.inbound_files.remove(&id) else {
+            return;
+        };
+        p.events
+            .send(Event::FileAborted {
+                id,
+                detail: format!("30 秒没应，〔{name}〕已婉拒"),
+            })
+            .ok();
+        vec![(frame_kind::FILE_VERDICT, vec![file_verdict::TIMEOUT_NO])]
+    };
+    send_frames(inner, id, frames).await;
+}
+
 /// 耳朵：收帧 → 解密 → 按帧类型处理。空明文帧 = 对方道别。
 /// 这只耳朵合上时顺手收摊：摘对话、关线路、必要时挪回注意力。
 ///（P20-E②：writer/peer_addr 参数已随暗号链移除——它们的存在只为
@@ -3643,13 +4178,13 @@ async fn ear(
                                 handle_line_proof(&inner, id, &plain[1..n]).await;
                             }
                         }
-                        frame_kind::FILE_HEAD => {
-                            // 对方递来一份文件的家门：名字＋总长。
-                            // 超上限的婉拒（提醒人类，不中断会话，也不立户）；
-                            // 合限的立户等块。已有在途的，让位给新的——
-                            // 内存有界，且恶意的半截文件不该堵住正经的
-                            //（被顶替的旧文件响亮作废，P20-F：静默=罪）。
-                            // 家门既要有名字又要有总长，缺一角就当没听见
+                        frame_kind::FILE_HEAD | frame_kind::FILE_REQUEST => {
+                            // 对方递来一份文件（P22 同意门槛）：0x17 是新版
+                            // 请求；0x06 是旧版头——照识，当「旧版来问」走
+                            // 同一道门（旧发端不等答复：块在应允前当噪音
+                            // 丢，/yes 后首块序号不合即响亮作废——响亮失败
+                            // 而非无声消失）。布局相同：名长‖名字‖总长；
+                            // 缺一角就当没听见（先闸长度再切片，畸形纪律）。
                             if n > 1 && n >= 2 + plain[1] as usize + 8 {
                                 let name_len = plain[1] as usize;
                                 let name =
@@ -3659,75 +4194,20 @@ async fn ear(
                                         .try_into()
                                         .expect("定长切８字节"),
                                 );
-                                let mut p = inner.lock().await;
-                                if total > MAX_FILE_BYTES as u64 {
-                                    // 超限家门若顶掉了在途文件，旧的也要响亮作废
-                                    if let Some(old) = p.inbound_files.remove(&id) {
-                                        p.events
-                                            .send(Event::FileAborted {
-                                                id,
-                                                detail: format!(
-                                                    "〔{}〕被一份超限文件的家门顶替，作废",
-                                                    old.name
-                                                ),
-                                            })
-                                            .ok();
-                                    }
-                                    p.events
-                                        .send(Event::FileDeclined {
-                                            from: their_name.clone(),
-                                            name,
-                                            size: total,
-                                        })
-                                        .ok();
-                                } else if total == 0 {
-                                    // 空文件：家门即全部——收齐事件直接发
-                                    if let Some(old) = p.inbound_files.remove(&id) {
-                                        p.events
-                                            .send(Event::FileAborted {
-                                                id,
-                                                detail: format!(
-                                                    "〔{}〕被一份空文件的家门顶替，作废",
-                                                    old.name
-                                                ),
-                                            })
-                                            .ok();
-                                    }
-                                    p.events
-                                        .send(Event::FileComplete { id, name, total: 0 })
-                                        .ok();
-                                } else {
-                                    if let Some(old) = p.inbound_files.insert(
-                                        id,
-                                        InboundFile {
-                                            name: name.clone(),
-                                            total,
-                                            received: 0,
-                                            next_seq: 0,
-                                        },
-                                    ) {
-                                        p.events
-                                            .send(Event::FileAborted {
-                                                id,
-                                                detail: format!(
-                                                    "〔{}〕被新文件〔{}〕的家门顶替，作废",
-                                                    old.name, name
-                                                ),
-                                            })
-                                            .ok();
-                                    }
-                                }
+                                file_offer(&inner, id, &their_name, name, total).await;
                             }
                         }
                         frame_kind::FILE_CHUNK => {
-                            // 一块字节进门（P20-F 流式）：序号对得上才收，
+                            // 一块字节进门（P20-F 流式 + P22）：序号对得上才收，
                             // 每块经 FileChunk 即时交出（内存里只有这一块）；
-                            // 收满申报总长，最后一块先交出再补 FileComplete。
+                            // 收满申报总长（恰好等于——申报即准数），最后一块
+                            // 先交出再补 FileComplete + 给发端回执（0x16）。
                             // 序号不合或越过总长（坏实现与恶意对端的铁栏杆）
-                            // → FileAborted 响亮作废（原为静默丢弃，
-                            // loud-failure 对账）。凭空来块（无在途户）：
-                            // 噪音，沉默跳过——无物可废、无名可报。
-                            if n > 4 {
+                            // → FileAborted 响亮作废。凭空来块（无在途户）与
+                            // 问题还挂着时的块（旧版/魔改不等答复硬灌）：
+                            // 噪音，沉默跳过——无物可废、无名可报。空块
+                            //（n==5，一个字节都不带）同样是噪音。
+                            if n > 5 {
                                 let seq =
                                     u32::from_be_bytes(plain[1..5].try_into().expect("定长切４字节"));
                                 let chunk = plain[5..n].to_vec();
@@ -3740,43 +4220,57 @@ async fn ear(
                                 let verdict = {
                                     let mut p = inner.lock().await;
                                     match p.inbound_files.get_mut(&id) {
-                                        Some(f)
-                                            if seq == f.next_seq
-                                                && f.received
-                                                    + chunk.len() as u64
-                                                    <= f.total =>
+                                        // 问题还挂着 = 应允还没给：硬灌的块丢噪音
+                                        Some(InboundFile::Pending { .. }) => Step::NoFile,
+                                        Some(InboundFile::Receiving {
+                                            name,
+                                            total,
+                                            received,
+                                            next_seq,
+                                        }) if seq == *next_seq
+                                            && *received + chunk.len() as u64 <= *total =>
                                         {
-                                            f.received += chunk.len() as u64;
-                                            f.next_seq += 1;
+                                            *received += chunk.len() as u64;
+                                            *next_seq += 1;
                                             Step::Deliver {
-                                                name: f.name.clone(),
-                                                total: f.total,
-                                                done: f.received == f.total,
+                                                name: name.clone(),
+                                                total: *total,
+                                                done: *received == *total,
                                             }
                                         }
-                                        Some(f) => Step::Mismatch {
-                                            name: f.name.clone(),
-                                            expected: f.next_seq,
-                                        },
+                                        Some(InboundFile::Receiving { name, next_seq, .. }) => {
+                                            Step::Mismatch {
+                                                name: name.clone(),
+                                                expected: *next_seq,
+                                            }
+                                        }
                                         None => Step::NoFile,
                                     }
                                 };
                                 let mut out: Vec<Event> = Vec::with_capacity(2);
+                                let mut receipt = false;
                                 {
                                     let mut p = inner.lock().await;
                                     match verdict {
                                         Step::Deliver { name, total, done } => {
                                             if done {
                                                 p.inbound_files.remove(&id);
+                                                receipt = true; // 收齐：回执随后锁外发
                                             }
                                             out.push(Event::FileChunk {
                                                 id,
+                                                from: their_name.clone(),
                                                 name: name.clone(),
                                                 seq,
                                                 data: Zeroizing::new(chunk),
                                             });
                                             if done {
-                                                out.push(Event::FileComplete { id, name, total });
+                                                out.push(Event::FileComplete {
+                                                    id,
+                                                    from: their_name.clone(),
+                                                    name,
+                                                    total,
+                                                });
                                             }
                                         }
                                         Step::Mismatch { name, expected } => {
@@ -3795,6 +4289,143 @@ async fn ear(
                                     let p = inner.lock().await;
                                     for ev in out {
                                         p.events.send(ev).ok();
+                                    }
+                                }
+                                if receipt {
+                                    send_frames(
+                                        &inner,
+                                        id,
+                                        vec![(frame_kind::FILE_RECEIPT, Vec::new())],
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+                        frame_kind::FILE_VERDICT => {
+                            // 答复（P22）：码域外(4-255)当噪音；只有等答复的
+                            // 出向受它影响——迟到/重复/伪造落在别的态上 =
+                            // 无后果行为。
+                            if n == 2 && plain[1] <= file_verdict::POLICY_NO {
+                                let code = plain[1];
+                                let mut p = inner.lock().await;
+                                if let Some((name, total)) = match p.outgoing_files.get(&id) {
+                                    Some(OutboundFile::AwaitingConsent { name, total }) => {
+                                        Some((name.clone(), *total))
+                                    }
+                                    _ => None,
+                                } {
+                                    if code == file_verdict::ACCEPT {
+                                        p.outgoing_files.insert(
+                                            id,
+                                            OutboundFile::Streaming {
+                                                name: name.clone(),
+                                                total,
+                                                sent: 0,
+                                                next_seq: 0,
+                                            },
+                                        );
+                                        p.events
+                                            .send(Event::FileAccepted {
+                                                id,
+                                                from: their_name.clone(),
+                                                name,
+                                            })
+                                            .ok();
+                                    } else {
+                                        p.outgoing_files.remove(&id);
+                                        let reason = match code {
+                                            file_verdict::HUMAN_NO => DeclineReason::Human,
+                                            file_verdict::TIMEOUT_NO => DeclineReason::Timeout,
+                                            _ => DeclineReason::Policy,
+                                        };
+                                        p.events
+                                            .send(Event::FileDeclined {
+                                                id,
+                                                from: their_name.clone(),
+                                                name,
+                                                reason,
+                                            })
+                                            .ok();
+                                    }
+                                    p.file_wake.notify_one();
+                                }
+                            }
+                        }
+                        frame_kind::FILE_STOP => {
+                            // 停（P22，双向，无载荷）：这件文件事到此为止——
+                            // 只封未来，不碰已到（覆水难收：半份是收方的财产，
+                            // 事件性中止由外层保留为 .半份）。
+                            if n == 1 {
+                                let mut p = inner.lock().await;
+                                // 入向：正在收 → 停收（响亮，带半份数字）；
+                                // 问题挂着 → 对方撤回（响亮消解）
+                                if let Some(ib) = p.inbound_files.remove(&id) {
+                                    let detail = match ib {
+                                        InboundFile::Receiving { name, received, total, .. } => {
+                                            format!(
+                                                "〔{name}〕的递送停了——你手里有半份（{received} / {total} 字节）"
+                                            )
+                                        }
+                                        InboundFile::Pending { name, .. } => {
+                                            format!("〔{name}〕对方收回了递送请求")
+                                        }
+                                    };
+                                    p.events.send(Event::FileAborted { id, detail }).ok();
+                                }
+                                // 出向：正在递 → 对方叫停（下一块喂入将响亮
+                                // 失败；事件面先说清故事）
+                                if matches!(
+                                    p.outgoing_files.get(&id),
+                                    Some(OutboundFile::Streaming { .. })
+                                ) {
+                                    if let Some(OutboundFile::Streaming { name, .. }) =
+                                        p.outgoing_files.remove(&id)
+                                    {
+                                        p.events
+                                            .send(Event::FileAborted {
+                                                id,
+                                                detail: format!(
+                                                    "对方收到一半不要了，〔{name}〕已停发"
+                                                ),
+                                            })
+                                            .ok();
+                                        p.file_wake.notify_one();
+                                    }
+                                }
+                            }
+                        }
+                        frame_kind::FILE_RECEIPT => {
+                            // 回执（P22）：等回执态，或「全部已发出、收尾未至」
+                            // 的在递档（空文件：应允即发完，回执比 file_end 先到
+                            //——非空时最后一帧落笔同锁转等回执，此分支结构性
+                            // 不可达，留给空文件的合法竞速）——即送达。
+                            // 早到/重复/伪造落在别的态上 = 无后果行为。
+                            if n == 1 {
+                                let mut p = inner.lock().await;
+                                let take = match p.outgoing_files.get(&id) {
+                                    Some(OutboundFile::AwaitingReceipt { .. }) => true,
+                                    Some(OutboundFile::Streaming { sent, total, .. }) => {
+                                        sent == total
+                                    }
+                                    _ => false,
+                                };
+                                if take {
+                                    if let Some(ob) = p.outgoing_files.remove(&id) {
+                                        let name = match ob {
+                                            OutboundFile::AwaitingReceipt { name }
+                                            | OutboundFile::Streaming { name, .. } => name,
+                                            // take 只放行上两态；此臂结构性不可达
+                                            OutboundFile::AwaitingConsent { name, .. } => name,
+                                        };
+                                        p.events
+                                            .send(Event::FileDelivered {
+                                                id,
+                                                from: their_name.clone(),
+                                                name,
+                                            })
+                                            .ok();
+                                        p.file_delivered.insert(id);
+                                        p.file_wake.notify_one();
                                     }
                                 }
                             }
@@ -3824,9 +4455,36 @@ async fn ear(
             })
             .ok();
         let closed = p.convos.remove(&id).map(|c| c.writer);
-        // 线都断了，进出门的文件一并散伙（内存随之归还）
-        p.inbound_files.remove(&id);
-        p.outgoing_files.remove(&id);
+        // 线都断了，进出门的文件一并散伙（内存随之归还）。盘上半份由外层
+        // 保留改名——覆水难收：删不删半份永远是收到的人的事，事件性中止
+        // 一律保留（P22 rulings.2026_11_01_file_irrevocability）。
+        p.file_delivered.remove(&id);
+        if let Some(ib) = p.inbound_files.remove(&id) {
+            let detail = match ib {
+                InboundFile::Receiving { name, received, total, .. } => {
+                    format!("线断：〔{name}〕只收到 {received} / {total} 字节")
+                }
+                InboundFile::Pending { name, .. } => {
+                    format!("线断：〔{name}〕的请求随之消解")
+                }
+            };
+            p.events.send(Event::FileAborted { id, detail }).ok();
+        }
+        if let Some(ob) = p.outgoing_files.remove(&id) {
+            let detail = match ob {
+                OutboundFile::AwaitingConsent { name, .. } => {
+                    format!("线断：〔{name}〕的请求石沉大海")
+                }
+                OutboundFile::Streaming { name, sent, total, .. } => {
+                    format!("线断：〔{name}〕只发出 {sent} / {total} 字节")
+                }
+                OutboundFile::AwaitingReceipt { name, .. } => {
+                    format!("线断：〔{name}〕已全部发出，回执没等到")
+                }
+            };
+            p.events.send(Event::FileAborted { id, detail }).ok();
+            p.file_wake.notify_one();
+        }
         if p.focus == Some(id) {
             p.focus = p.convos.keys().max().copied();
             let to = p.focus;
@@ -4174,6 +4832,10 @@ pub mod rogue {
     /// 帧类型常量（注入面引用——线格式见 frame_kind 与 README_AGENT）
     pub const FILE_HEAD: u8 = super::frame_kind::FILE_HEAD;
     pub const FILE_CHUNK: u8 = super::frame_kind::FILE_CHUNK;
+    pub const FILE_VERDICT: u8 = super::frame_kind::FILE_VERDICT;
+    pub const FILE_STOP: u8 = super::frame_kind::FILE_STOP;
+    pub const FILE_RECEIPT: u8 = super::frame_kind::FILE_RECEIPT;
+    pub const FILE_REQUEST: u8 = super::frame_kind::FILE_REQUEST;
     pub const CONTRIB_V2: u8 = super::frame_kind::CONTRIB_V2;
     pub const CIRCLE_BYE: u8 = super::frame_kind::CIRCLE_BYE;
     pub const SEAT_ACCEPT: u8 = super::frame_kind::SEAT_ACCEPT;
@@ -4182,6 +4844,14 @@ pub mod rogue {
     pub const LINE_PROOF: u8 = super::frame_kind::LINE_PROOF;
 
     impl Person {
+        /// 问题挂钟测试旋钮（P22）：本人的钟从此用毫秒值（只影响本人——
+        /// 测试并行互不污染；只影响此后新起的钟，已在走的不改）。正式构建
+        /// 此方法不存在（rogue_injection_feature_gated 纪律）。
+        pub async fn rogue_set_file_ask_window(&self, ms: u64) {
+            let mut p = self.inner.lock().await;
+            p.rogue_file_ask_window_ms = Some(ms.max(1));
+        }
+
         /// 在指定 1:1 线上注入任意帧（经真实发送路径：该线 Noise 加密）。
         /// 恶意/故障对端的本职能力——P-12 的注入通道（0x11 回执侧）。
         pub async fn rogue_frame(
@@ -4619,6 +5289,10 @@ mod tests {
     }
 
     #[test]
+    // 单点 allow（P19 裁决 2026-10-18 修法锁定：判例术语 RM 是刻意的；
+    // 禁改名、禁 Cargo.toml [lints] 过宽——随 P22 触碰 src 顺带执行，
+    // post_3_0_0_backlog.src_4529_allow 兑现）
+    #[allow(non_snake_case)]
     fn 交换代数_双见证人RM_任意顺序同终态() {
         // P-06：Carol 离席有两个直接对端（Bob、Dave）——各自发 RM
         //（删同一人 + 各旋转各自的行）= 不相交变更，T2 序无关收敛
