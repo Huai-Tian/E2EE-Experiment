@@ -7,16 +7,17 @@
 #              NORMATIVE (constraints), not decoration. File body is pure YAML.
 #              STRUCTURAL INVARIANT: the whole file MUST parse as ONE valid
 #              YAML document.
-# SCOPE      : as-built facts describe HEAD = 4.0.0 implementation COMPLETE
-#              2026-10-31 (P20 all slices + P21 skittish landed, see
-#              pending_work status lines + landed chains; 98 tests — rogue
-#              22 unit + 74 integration + 1 pq + 1 dumpable). Prior: v3.0.0
-#              RELEASED 2026-10-18 (tag 3.0.0 → 851917b; CI 7/7 green; 12
+# SCOPE      : as-built facts describe HEAD = 4.1.0 implementation COMPLETE
+#              2026-11-01 (P22 file consent gate landed, see pending_work
+#              status lines + landed chains; 114 tests — rogue 22 unit + 87
+#              integration + 1 pq + 1 dumpable + 3 skittish[bin]). Prior: 4.0.0
+#              COMPLETE 2026-10-31 (P20 all slices + P21 skittish, 98 tests);
+#              v3.0.0 RELEASED 2026-10-18 (tag 3.0.0 → 851917b; CI 7/7 green; 12
 #              artifacts on GitHub Release; 92 tests). 4.0.0 doctrines:
-#              theory.rulings 2026_10_31_* (six incl. skittish_spec);
-#              settled_decisions carries the kept/rejected deltas. NEVER
-#              document planned work as built; NEVER re-propose anything listed
-#              in settled_decisions (rejected items = permanent rejection).
+#              theory.rulings 2026_10_31_* (six incl. skittish_spec); 4.1.0
+#              doctrines: theory.rulings 2026_11_01_* 四条（文件同意门槛）。
+#              NEVER document planned work as built; NEVER re-propose anything
+#              listed in settled_decisions (rejected items = permanent rejection).
 #
 # THE ONE RULE ABOVE ALL RULES: 本项目的第一性原理是对人类社会物理对话的
 # 抽象（见 theory 四公理）。任何设计决策、任何代码变更、任何你（AI）想提的
@@ -35,7 +36,7 @@ project:
     - cli
   core_metaphor: executable == person        # NOT marketing — drives every decision below
   theory: conversation-physics               # NEW v3: see theory block — the project now HAS an explicit theory
-  maturity: early-development                 # 3.0.0 released 2026-10-18; 4.0.0 implementation complete 2026-10-31 (P20+P21, tag pending)
+  maturity: early-development                 # 3.0.0 released 2026-10-18; 4.0.0 complete 2026-10-31; 4.1.0 complete 2026-11-01 (P22 文件同意门槛, tag pending)
   ui_language: zh                            # user-facing strings are chinese; keep style
   comment_language: zh-with-person-metaphors # see glossary at bottom
 
@@ -199,7 +200,10 @@ architecture:
     bring: { syntax: "/bring [拟名]", behavior: "领人入座（slice-4 已落地）：向聚焦对端（候选人）发 0x10 看座。带拟名 → 期望门（0x11 自署名不匹配 → CircleConflict 响亮暂停 + 回执丢弃 + 待座保留；放行=重跑 /bring）；不带 → 无门直接自动。封桌时 CLI 警告但照发（拒绝是全员契约行为）。库面 bring(Option<&str>) -> seats，外层据此警告" }
     sit: { syntax: "/sit [名字]", behavior: "落座（slice-4 已落地）：候选人收到看座事件后触发——0x11 落座署名必须是候选人本人的手势（A1）。默认取本人 0x05 自报名，可覆盖（「这桌叫我阿花」）；多份邀约按 /talk 模式列候选（聚焦线优先→唯一→歧义响亮）。库面 sit(Option<&str>)" }
     word: { syntax: "/word", behavior: "对词（slice-5 已落地）：聚焦 1:1 时显示会话短词（Noise transcript 哈希 HKDF(p2p-sas) 派生，两端相同）；在圈时显示群短词（HKDF(K, circle-sas) 派生，全员相同）——两者兼有时都报。12 位数字分 4 组（~40bit）。即时计算零落盘。库面 sas_word() -> SasReport（NoSasChannel）。见 group_v3.sas" }
-    file:  { syntax: "/file PATH", behavior: "hand a file to the focused conversation: 0x06 head + 0x07 chunks; lossless; 32MB cap both ways; received files auto-save to ./received/" }
+    file:  { syntax: "/file PATH", behavior: "递文件先问一声（P22，4.1.0 LANDED）：只发 0x17 请求即返（请求就是一句话）；FileAccepted 事件到达才起后台传输任务（命令行全程活着，发到一半 /no 收场）；对方 30 秒不答自动婉拒；多大都行（上限已废）；收到的放 ./received/；事件性中止半份保留为 .半份（覆水难收）" }
+    yes:   { syntax: "/yes", behavior: "答应当前对话正递来的文件（P22，4.1.0 LANDED）：问题消解为正在收；空文件应允即收齐；无参数、只认焦点线" }
+    no:    { syntax: "/no", behavior: "不要了（P22 四时机统一手势，4.1.0 LANDED）：拒（问题挂着）/ 停收（半份自删）/ 停发（对端半份保留——覆水难收）/ 撤回（等答复）/ 不再等回执；说过 no 这份就死了" }
+    receive: { syntax: "/receive always|never|ask", behavior: "这条线的收文件态度（P22，4.1.0 LANDED）：无参=显示当前；never=不可见+自动回绝（防刷屏）；always=直接收；切换瞬间裁决挂着的问题；按线、随进程死" }
     bye:   { syntax: "/bye", behavior: "offer next secret (chainable lines only), then circle_bye (0x0C) if in a circle, then empty-plaintext goodbye to focused conversation。4.0.0（LANDED 2026-10-31）：两步化——圈子署名告退 + 聚焦线告别帧（只有这条线断，进程继续活着）；链授予步随暗号链移除（2026_10_31_realtime_verification_razor）；/bye = 唯一的关系告别动词（2026_10_31_exit_taxonomy）" }
     quit:  { syntax: "/quit | Ctrl-D", behavior: "circle_bye to all circles (chainable lines offer secrets), goodbye to all conversations, exit 0。4.0.0（LANDED 2026-10-31）：/quit 与 Ctrl-D 别名废除——Ctrl-C 成为唯一退出（立即/擦净/不告别/不等网络；二次连按强退；对端视角=掉线）；Ctrl-D（终端 EOF 惯例）≡ Ctrl-C；完整裁决 theory.rulings.2026_10_31_exit_taxonomy" }
   planned_commands_v3: []                     # word/bring/sit all LANDED (slice-4/5) — as-built entries live in commands above
@@ -279,8 +283,12 @@ wire_protocol:
     contrib: "0x03 + 32B contribution — v1 circles; SUPERSEDED by 0x09"
     circle_chat: "0x04 + nonce ‖ group-AEAD — v1 circles; SUPERSEDED by 0x0A"
     name: "0x05 + utf8 name"
-    file_head: "0x06 + name_len ‖ name ‖ total_bytes(u64) — >32MB declined loudly"
+    file_head: "0x06 + name_len ‖ name ‖ total_bytes(u64)——4.1.0（P22 LANDED）停止发射（新发端改发 0x17）；照识=『旧版来问』走同一道门（旧发端不等答复硬灌：块当噪音丢，/yes 后序号不合响亮作废）"
     file_chunk: "0x07 + seq(u32) ‖ data — 8–32KB randomized chunks"
+    file_verdict: "0x14 + code(u8)：0 应允/1 人拒/2 婉拒(30秒)/3 政策拒；收→发；码域外当噪音——4.1.0 P22 LANDED（rulings.2026_11_01_file_consent_gate）"
+    file_stop: "0x15 无载荷；双向；『这件文件事到此为止』——只封未来，不碰已到（覆水难收）——4.1.0 P22 LANDED"
+    file_receipt: "0x16 无载荷；收→发；received==total 恰好时回执——4.1.0 P22 LANDED"
+    file_request: "0x17 + name_len ‖ name ‖ total(u64)（布局同 0x06）——新发端 file_begin 发它，**只发一条就返回**（请求就是一句话，rulings.2026_11_01_file_request_is_a_message）——4.1.0 P22 LANDED"
     padded_chat: "0x08 + text_len ‖ text ‖ random pad — what send_chat emits; P7: bucketed padding (length-inference measurement pending, see P-11)"
     # ── circle frames, P2 as-built ──
     contrib_v2: "0x09 + circle_id(8B) ‖ size ‖ name ‖ r(32B) ‖ sig_pk(32B) — declared contribution. v3 ADDS contrib_sig(64B) over (circle_id‖name‖r‖sig_pk): the row becomes SELF-CERTIFIED (P-05 fix); without it the row is unsigned debt"
@@ -293,11 +301,6 @@ wire_protocol:
     seat_accept: "0x11 + 行（名长u8 ‖ 名字 ‖ r(32B) ‖ sig_pk(32B) ‖ contrib_sig(64B)，与 0x09 行同构）— 落座署名（slice-4 已落地）：候选人自选 r、生成嗓音钥、自签整行，经 1:1 递回引荐人。r 自选（128bit+ 碰撞概率可忽略）+ 收端唯一性响亮检查（P-12 fix）"
     seat_roster: "0x12 + circle_id(8B) ‖ seats(u8) ‖ count(u8) ‖ 全部名单行（每行同 0x09 布局，含 r）— 座次表（slice-4 已落地）：1:1 帧，ADD 应用后引荐人把全表递给新人（新人由此持全部 r 计算群钥，按本人嗓音公钥找到自己的座位）。只递已成成员。收端验每行自署 + 名字/r 唯一性"
     # 0x0D/0x0E 曾预留给见证/分叉通告——死于理论重建（同步机整体退役）；不得复活
-    # ── 4.1.0 PLANNED（P22 文件同意门槛，blueprint-locked 2026-11-01；落地时在此转 as-built）：
-    #    0x17 请求（name_len‖name‖total，布局同 0x06；新发端 file_begin 发它，0x06 停止发射）
-    #    0x14 答复（code：0 应允/1 人拒/2 婉拒(30秒)/3 政策拒；收→发；码域外当噪音）
-    #    0x15 停（无载荷；双向；这件文件事到此为止——只封未来，不碰已到〔覆水难收〕）
-    #    0x16 回执（无载荷；收→发；received==total 恰好时）——spec 全文见 pending_work.P22
   unknown_kinds: "silently skipped — forward compatibility (this is what makes the v3 additions rollout-safe for old peers)"
   hangup: "empty plaintext frame | tcp close"
   teahouse_control:                          # plaintext frames on the courier line, before the splice
@@ -318,19 +321,22 @@ wire_protocol:
 # ───────────────────────────────────────────────────────────────
 
 file_transfer:
-  status: implemented-v1
+  status: implemented-v2-consent-gate          # 4.1.0 P22 LANDED 2026-11-01（v1 直传→4.0.0 P20-F 流式→4.1.0 同意门槛）
   capability: "lossless binary handover on ANY conversation path (direct / teahouse / punched line)"
+  consent_gate: "先问后答（rulings.2026_11_01_file_consent_gate）：0x17 请求 → 收端态度裁决 → 0x14 答复四态码（0 应允/1 人拒/2 婉拒(30秒)/3 政策拒——发端区分显示，『不要』与『没应答』是两句话）。/yes /no 独立手势、无参数、只认焦点线（非焦点线请求照样显示，答前先 /talk）；no 四时机统一（拒/停收/停发/撤回+不再等回执，FileNoResult 五态），说过 no 这份就死了——no 后不可 yes，重来靠对方重新递"
+  the_one_clock: "30 秒问题挂钟=全系统唯一的文件钟（rulings.2026_11_01_one_clock_thirty_seconds）：到点自动婉拒，婉拒发出=发端请求自动取消；其余一切悬挂（对旧版本石沉大海、应了没字节、传一半停摆）由 /no 人工收场——机器不猜，人摆手。rogue 按人旋钮 rogue_set_file_ask_window 供测试（正式构建零存在）"
+  policy: "Receive::{Ask,Always,Never} 按线、只在内存、随进程死；never=请求不可见+自动回绝（防刷屏——P-16 灌盘判例的关阀）；always=直接收（用户立的常设政策，认钥不认人——堆积面见 known_limitations.file_policy_disk_face）；切换瞬间裁决挂着的问题"
+  one_per_line: "一线一次一件（不分方向）：从请求起到收尾（含等答复/等回执态）文件道占着——file_begin 出入向任何在途档都 FileBusy；聊天道永不受影响（消息从来不绑架人）"
+  receipt: "0x16 回执：收齐后收端发、发端 FileDelivered（『对方已收到』）——『成功』对两边是同一个事实；回执竞态封口=记账随帧走（最后一帧落笔同锁转等回执）+ 空文件回执与答复同批（TCP 保序）+ file_delivered 记号（Inner）分辨送达后清档"
+  exact_total: "申报即准数：多一个字节不行、少一个字节也不行——file_end 短斤缺两=响亮失败（FileIncomplete）+ 发 0x15；收方已到字节保留（覆水难收）"
+  half_file: "覆水难收（rulings.2026_11_01_file_irrevocability）：删不删半份永远是收到的人的事——事件性中止（对端停发/线断/被顶替/短斤）半份保留为 .半份+响亮带已收/总长（CLI 面）；唯一删除路径=收方自己的 /no。协议无『隔空删』原语；想收回，聊天里说一声"
   lossless: "from_utf8_lossy NEVER applies to file payloads; receiver asserts byte-equality in tests incl. invalid-UTF-8"
   chunking: "randomized 8–32KB; receiver size-agnostic; no negotiation"
-  cap: "MAX_FILE_BYTES = 32MB, enforced symmetrically"
-  in_flight: "ONE transfer per conversation per direction; stalled half-file never blocks the next"
-  robustness: "seq must match next_seq exactly; mismatch voids the transfer silently。4.0.0（LANDED 2026-10-31，P20-F）：mismatch 从静默作废改为响亮失败（loud-failure 不变量对账——静默=罪）"
-  zero_persistence: "reassembly in RAM only; the LIBRARY never touches the fs; bytes surface as Event::FileArrived (Zeroizing)"
-  memory_note: "the 32MB RAM residency is a T1 exposure — documented, accepted。4.0.0（LANDED 2026-10-31，P20-F）：双侧流式落地后 32MB 常驻降为 8-32KB 单块瞬态——T1 面收窄为本块在途窗口"
-  ffi_status: "FileArrived/FileDeclined map to tag 0 in e2ee_poll; an e2ee file API is the natural add-only extension。4.0.0（LANDED 2026-10-31，P20-F）：FFI 12→16 符号——接收侧 FileChunk/FileComplete/FileAborted 事件族（FileArrived 退役，tag 保留定义永不触发）+ 发送侧流式 API；C 头保持 add-only（新符号零冲突新增，旧 12 符号签名零变更）；Rust Event 面=4.0.0 破坏性变更（与 SecretChained 移除同批）"
-  # 4.1.0 PLANNED（P22，blueprint-locked 2026-11-01）：文件同意门槛——先问后答（ask/always/never）+
-  # /yes /no 焦点手势 + 30 秒唯一钟 + 一线一次一件 + 覆水难收（.半份）+ 申报即准数 + 回执 +
-  # 32MB 上限废除 + 旧 0x06 照识。落地后本节整体改写；spec 全文见 pending_work.P22_file_consent_gate_4_1_0。
+  cap: "REMOVED in 4.1.0（MAX_FILE_BYTES/FileTooLarge 退役，P-16 根因面之一）——多大都行；双侧流式内存有界照旧（账本只有几个数字，字节一块一块走）"
+  robustness: "seq must match next_seq exactly; mismatch voids loudly（4.0.0 起）。应允前的块=噪音丢弃（旧版/魔改硬灌——状态不被污染，期望序号恒 0）；空块（n==5）当噪音；畸形纪律：先闸长度再切片（0x17 沿 0x06 闸门）、码域外当噪音、凭空停/回执无后果、永不 panic（release panic=abort=一次远崩）"
+  events: "FileRequested{from,focused,auto}/FileAccepted/FileDeclined{reason:DeclineReason}/FileDelivered（4.1.0 新）+ FileChunk/FileComplete（4.1.0 补 from）/FileAborted（detail 承载半份数字）；from=线对端自报名，显示用不构成身份"
+  ffi_status: "16→19 符号（e2ee_file_yes / e2ee_file_no（返回 1 拒 2 停收 3 停发 4 撤回 5 不再等回执）/ e2ee_set_receive(policy 0/1/2)）；事件 tag 14-17；FILE_CHUNK/COMPLETE 载荷值语义：name=递送人、text=文件名（布局零变更）；android.yml 名单 19 同步"
+  landing: "P22 全项落地 2026-11-01：库（四帧/双状态机/三新方法/唯一钟/事件族/上限废除/覆水难收/畸形纪律）+ CLI（三命令/问题行两种/后台传输任务/Dead 账本防迟到块重建/建文件失败不崩——P-16 连带修复）+ 测试 16 条新规矩 + FFI + 文档；验证链见 pending_work.P22.landed"
 
 # ───────────────────────────────────────────────────────────────
 # GROUP — P2 as-built (诚实债务版：代码是什么就写什么)
@@ -674,7 +680,9 @@ known_limitations:
   pcs_gap: "PCS（后妥协安全）缺口：被缴设备读过的不追索（A3：物理世界不存在『让他忘掉已听见的』）；MLS 有 PCS 我们没有——无持久化+无身份的价格，正面声明"
   identity_bounded_by_direct_links: "contribution name-binding under flooding is first-seen-tentative + witness-adjudicated — secrecy is mathematical, member-identity certainty is bounded by direct connections"
   zram_writeback_residue: "android mmd zram writeback lands idle pages on /data — keys are wipe-on-drop so the residue window ends at process exit; the 32MB file buffer stays an accepted, documented residue（4.0.0 frozen P20-F：流式后此残留降为 8-32KB 单块瞬态，本条届时改写）"
-  cross_version_chat_one_way: "peers predating a frame kind silently drop it; v3 kinds 0x0F-0x12 inherit the same one-way property"
+  cross_version_chat_one_way: "peers predating a frame kind silently drop it; v3 kinds 0x0F-0x12 inherit the same one-way property。4.1.0（P22）：**文件面跨版本断代**（聊天不受影响）——旧端跳过 0x17（请求石沉大海，发端 /no 收场）；新端把 0x06 当旧版来问（硬灌块噪音丢，/yes 后序号不合作废——响亮失败而非无声消失）。两边都升级；README 双语写明"
+  file_policy_disk_face: "always 政策=用户立的常设门（认钥不认人，与 --guard 同族）：完成文件与 .半份（停发/断线留存）都会堆积在 ./received/——清理是自己的事（P22 覆水难收的既定代价；ask 下每个半份都要人点头）。never 关阀、ask 逐份点头"
+  file_half_kept: "覆水难收：事件性中止的半份保留为 .半份（已收/总长响亮告知）——对端已到字节收不回，想收回在聊天里说一声（A3 正译，rulings.2026_11_01_file_irrevocability）；发端屏幕说真话，不给人虚假的安心"
   nested_no_prior_art: "serverless nested circles have no known prior art — experimental label stays until hardened"
 
 # ───────────────────────────────────────────────────────────────
@@ -997,7 +1005,7 @@ pending_work:
     engineering_notes: "范围（owner 2026-10-31）：仅两个平台的可执行程序；库=标准通信——触发观察=进程级策略住 main.rs（harden_process 同族）；清屏=终端 I/O 住 CLI；擦除=Person::drop 既有语义（库零改动）。触发接入点（实现期定夺，剃刀不变：只收确定性物理事件）：Linux——盖子（evdev SW_LID / udev input 事件面，或 logind 抑制锁+盖子状态面）+ 锁屏（会话 D-Bus 屏保 ActiveChanged 信号面）；Windows——WM_POWERBROADCAST 会话通知与 WTS_SESSION_LOCK。竞态文档义务：OS 默认合盖=睡眠时，擦拭须在冻结前落地（inhibitor/事件窗口毫秒级）；推荐配置（手册）=OS 合盖动作设『不做事』让程序独占盖子。清屏=ANSI 全清+滚回缓冲清除（CSI 2J + CSI 3J + 光标归位序列族）——警惕模式专用（普通模式退出不清屏：回看最后几行是正当需求）；不自动关窗（rejected.auto_close_terminal）。CLI 内实现若需新增依赖（evdev/dbus crate 面）或触碰 C 头：停下报裁决——手写 FFI 或 sysfs 读取为备选"
 
   P22_file_consent_gate_4_1_0:                # 4.1.0 主工程：递文件先问一声（全套裁决 2026-11-01 owner 定稿；宪法=rulings 2026_11_01_file_consent_gate / file_irrevocability / one_clock_thirty_seconds / file_request_is_a_message 四条）
-    status: blueprint-locked-2026-11-01       # 设计对话全程闭环（含魔改客户端残面审计+畸形帧审计过堂）；实现未开工。本块=完整施工蓝图——上下文丢失时以本块+四裁决+P-16 原样重建，无遗漏
+    status: landed-2026-11-01                   # blueprint-locked（doc-only 蓝图先行，ff6f896）→ 全项落地同日；宪法=四裁决 + P-16 判例；验证链见 landed
     depends: []
     version: "4.1.0（破坏性：wire——新发端停发 0x06、新增 0x14/0x15/0x16/0x17；Rust Event——FileDeclined 改义〔发方拒绝通知，带三态理由〕、FileChunk/FileComplete 补 from、新增 FileRequested/FileAccepted/FileDelivered；C ABI——add-only 16→19；32MB 上限+FileTooLarge 退役；跨版本文件断代〔聊天不受影响〕README 写明两边都升级。4.0.0 tag 未发——并入后随 tag 策略 owner 定）"
     wire_spec:
@@ -1034,11 +1042,43 @@ pending_work:
     residual_faces:                           # 魔改客户端残面审计 2026-11-01（全部有界、无新静默失败；解析层既有防线已核：长度闸门/lossy/路径消毒/序号对缝/AEAD 每线各钥/nonce 倒退即拒）
       bounded: "带宽焚烧（线路固有，落不了盘，杀线即止）｜滚屏（聊天刷屏同类；never 下文件类零显示）｜always 磁盘（用户常设政策：完成堆积+.半份 堆积变体；ask 下每个半份都要人点头）｜悬挂（只锁自己那条线；/no 收场）｜冒名显示（0x05 自报名，含事件 from——只骗屏上文字，路由/判定读线不读名，P-15/16 战果继承）｜三态拒收码对端可辨（密文内仅对端可见，行为的诚实流露非泄漏；并码可遮但牺牲发端诚实渲染，默认不并）｜内容不可知（物理本体）｜重放自杀（nonce 倒退→线死）"
     doc_face: "README.md/README_ZH.md 文件节重写（门槛流程+三命令+跨版本说明）+命令表补 /yes /no /receive；CHANGELOG 4.1.0 置顶破坏性声明；Cargo 4.0.0→4.1.0；本档案落地时：file_transfer 节整体改写、commands.file 改写、known_limitations 增补（always 堆积/.半份 边界/跨版本断代）、P22 翻 LANDED、post_3_0_0_backlog.src_4529_allow 顺带执行（P22 触碰 src——单点 #[allow(non_snake_case)]+注释，修法已锁）"
+    landed: >-
+      全项落地 2026-11-01（沙箱 Linux，先文档后代码——owner 指令防上下文清理丢失）。
+      库（person.rs）：四新帧 + 每线文件档（OutboundFile 等答复/正在递/等回执，
+      InboundFile 问题挂着/正在收）+ file_yes/file_no(FileNoResult 五态)/
+      set_receive + 30 秒唯一钟（rogue 按人旋钮 rogue_set_file_ask_window——
+      全局静态初版会并行互染，落地时改为按人）+ 事件族（FileRequested
+      {from,focused,auto}/FileAccepted/FileDeclined{DeclineReason}/FileDelivered；
+      FileChunk/FileComplete 补 from）+ 上限废除 + 申报即准数 + 覆水难收 +
+      畸形纪律。三个实现期发现并修复的竞态：①回执竞态——收方回执可先于
+      发方 file_end 到达（空文件必然）→ 记账随帧走（最后一帧落笔同锁转等回执）
+      + 回执受理扩至「全部已发出的在递档」+ Inner.file_delivered 记号分辨
+      「送达后清档」（send_file 空文件容忍 FileNotStarted=送达）；②事件契约
+      ——喂块必须等 FileAccepted 先到（测试面补齐）；③CLI 迟到块——停收后
+      飞行中的块会重建残缺文件 → 账本记 Dead 至新递送翻篇（FileRequested
+      渲染清账）。CLI（main.rs）：/file 待发账本 + FileAccepted 起后台任务
+      （命令行全程活着）；/yes /no /receive；问题行两种；半份两句（自删/
+      .半份 带路径）；human_size；open_received_file panic→响亮失败
+      （P-16 连带修复，失败份 Dead 静默丢）。测试：16 条新规矩（人拒/30秒/
+      always/never+复位/一线一件双向占道/停收/停发〔覆水难收断言〕/撤回/
+      短斤缺两/空文件/非焦点线/传中切态度/线断/顶替/旧版硬灌/畸形帧族）
+      + 既有面改先问后答 + 33MB 跨旧上限照传；基线顺手修复：文件_序号不合
+      漏 rogue 门控（无 feature 构建在基线 ad58f74 即编译失败——金丝雀契约
+      违约同族）+ delaying_proxy 孤儿警告 + src:5292 单点 allow（src_4529_
+      allow 兑现）。FFI：19 符号 + tag 14-17 + ffi_test.c/ctypes_test.py 补
+      先问后答全程走位。验证链（沙箱 Linux，release）：rogue 全量 114 绿
+      （22 单元 + 1 pq + 87 集成 + 4 bin）；无 feature 62 绿 + canary 恰一红
+      （契约形态恢复）；三 target 零警告；nm 恰 19 符号名单一致 + FFI OK +
+      ctypes OK；双进程冒烟（真 CLI 实例×2）：问句/四态收场/政策拒静默/
+      md5 一致/400MB 中途停发留 .半份 341MB（数字带全）/停收零残留全对。
+      待 owner 侧：push 后 CI 7 job（test-linux/windows 用 rogue 全量）、
+      tag 4.1.0 策略（4.0.0 tag 未发——并入或分开发，owner 定）、四 ABI
+      产物重建（android.yml 断言名单已 19）。
 
   post_3_0_0_backlog:                       # tag 后线索板（3.0.0 发布收笔归档 2026-10-18——全部「tag 后」状态，各自独立 slice 过堂，不丢线索）
     cargo_audit_in_ci: "cargo audit 进 CI——tag 时点人工核查快照见 verify.release_v3_0_0（dalek 双件不在已知 advisory 影响面）；自动化排期 owner 裁决"
     musl_staticlib: "musl-target staticlib 立项条件：出现需要静态链 e2ee 的 musl 下游场景才开工。背景：glibc .a 已验证可行（裸链 -lm 一枚，2026-10-18 沙箱实测 FFI OK）但默认不提供——Linux 需求由 .so + musl 静态 exe 覆盖；851917b 已加 Windows staticlib 形态（crate-type 行），Linux 侧照抄一行即得、待真实需求触发"
-    src_4529_allow: "src/person.rs:4529 单测名 non_snake_case 单点 allow——修法已锁（单点 #[allow] + 注释；禁改名〔判例术语 RM〕、禁 Cargo.toml [lints]〔过宽〕，P19 裁决 2026-10-18），待未来触碰 src 的 slice 顺带处理"
+    src_4529_allow: "【已兑现 2026-11-01，P22 顺手】src/person.rs 单测名 non_snake_case 单点 allow 落地（修法按 P19 锁定：单点 #[allow] + 注释；未改名、未动 [lints]）——条目保留备查"
     ttl_fuse_4_1: "【已死 2026-11-01】终裁不做——rejected.forget_after_lease（忘是手势不是钟点；计时器合法区定格物种①②）。原挂起文本作废"
     liveness_probe_4_1: "【已死 2026-11-01】候选注销、永不再提——对端感知=推断家族死案（wire_protocol.punch.transport 终裁注记，e5d7d31）。原定性文本作废"
 
@@ -1104,8 +1144,8 @@ glossary:
 verify:
   build: "cargo build --release"
   ci: "7 job 全绿形态：test-linux / test-windows（cargo test --release --verbose --features rogue + E2EE_TEST_EVENT_BUDGET_MS=45000——双管修复裁决 rulings.2026_10_17_ci_debug_budget_mismatch；rust.yml 变更=两测试 job 的测试步骤加 --release、job 级 env 置预算，musl/android job 不动）/ musl-static-build / android×4（符号+p_align 常驻断言）。红迹起点（Actions 历史，2026-10-17 查证）：最早红 run = b535a8f（P3 slice-1/2/3 当日，2026-10-15T14:22Z，test-windows 红、test-linux 绿）；五十人/在场辩护随 093d85a（slice-5/6+P-15）入仓，此后多平台红迹持续（65 run 中 20 红）。结构性建议已裁决：owner 开 branch protection 必需检查，红 CI 阻断合流。P18 增补（2026-10-17）：test-windows 的 在场辩护/P16_镜子1 两案修复后，CI 7/7 全绿 = P18 关闭与 tag 的裁决门（rulings.2026_10_17_p18_windows_hang_convicted / key_follows_roster；本沙箱无凭据，Actions 由 owner 侧观察）。"
-  test: "cargo test --release --features rogue — slice-6 起判例注入测试需要 rogue feature（canary：缺 feature 时恰一条测试响亮失败，不静默跳过——曾因 rogue API 漏门控违约为编译失败，2026-10-17 复审连带修复）；92 tests at HEAD (70 integration + 20 unit + 1 pq + 1 dumpable[bin]), ~seconds"
-  ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so; verify: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 12)"
+  test: "cargo test --release --features rogue — slice-6 起判例注入测试需要 rogue feature（canary：缺 feature 时恰一条测试响亮失败，不静默跳过——曾因 rogue API 漏门控违约为编译失败，2026-10-17 复审连带修复；P22 顺手修复基线漏门控的 文件_序号不合，契约形态恢复）；114 tests at HEAD (87 integration + 22 unit + 1 pq + 4 bin[1 dumpable + 3 skittish]), ~seconds。无 feature：62 绿 + canary 恰一红"
+  ffi_build: "cargo build --release -p e2ee-ffi — target/release/libe2ee.so; verify: nm -D target/release/libe2ee.so | grep ' T e2ee_' (expect 19 —— 4.1.0 P22 起：+e2ee_file_yes/e2ee_file_no/e2ee_set_receive)"
   ffi_contract_test: "gcc -O2 -Wall -I include ffi/ffi_test.c -o /tmp/ffi_test -L target/release -l:libe2ee.so -Wl,-rpath,$PWD/target/release && /tmp/ffi_test — expect 'FFI OK'; then python3 ffi/ctypes_test.py"
   static_build: "cargo build --release --target x86_64-unknown-linux-musl — static-pie ~1.3MB"
   android_build: "rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android；cargo install cargo-ndk（4.x）；ANDROID_NDK_HOME=<NDK r28+> cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -P 24 -o <dir> build --release -p e2ee-ffi——四产物 <dir>/<abi>/libe2ee.so。两项直测（CI android.yml 已常驻断言，本地同款）：nm -D … | grep ' T e2ee_' 恰 12 且名单一致；llvm-readelf -lW——64 位目标（arm64-v8a/x86_64）四条 LOAD Align 全 0x4000（16KB，NDK r28 起默认）；32 位目标（armeabi-v7a/x86）ELF32 实测全 0x1000（4KB，NDK r28 对 32 位默认——无 16KB 页的 32 位设备形态，裁决 2026_10_17_p5_completion_scope 注记：如实入档，不强行加旗标）"

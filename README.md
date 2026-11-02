@@ -63,7 +63,10 @@ other end itself (they can copy, paste, screenshot).
   eight times produces eight different frame lengths. A passive observer
   cannot fingerprint message sizes.
 - **Files never touch the text lane** — binaries arrive byte-for-byte, no
-  text mangling, up to 32 MB per file.
+  text mangling, **and every handover asks first**: the peer's `/yes` starts
+  the transfer (any size — the cap is gone; only one chunk lives in memory
+  at a time), both sides get a receipt at the end. Standing policy per
+  conversation via `/receive` (always / never / ask).
 - **No one speaks in another's name at the table** — every member brings a
   one-time voice key: circle speech, farewells, introductions and testimony
   are all signed; each roster row is self-signed by its owner.
@@ -126,7 +129,10 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 | `/await <secret>`                         | Arm a one-shot secret: the next arrival must match (verified then burned — port scans can't waste it). |
 | `/meet <teahouse-addr> <room> [secret]`   | Meet a pre-agreed person through a teahouse (both pick the same room number).                          |
 | `/punch <introducer-addr> [tag] [secret]` | Attempt a *direct* line through a UDP hole punch. Omit the tag and a fresh 128-bit one is generated and shown (Crockford base32 — relay it out-of-band); a short explicit tag draws a loud warning but proceeds (a secret still compensates via PAKE). |
-| `/file <path>`                            | Hand a file (≤32 MB) to the focused conversation.                                                      |
+| `/file <path>`                            | Hand a file to the focused conversation — **asks first**; the transfer starts on the peer's `/yes` (any size). To call it off mid-flight: `/no` (bytes already delivered cannot be recalled). |
+| `/yes`                                    | Accept the file the focused peer is offering (30 s without an answer = polite decline). |
+| `/no`                                     | No thanks: decline a pending offer, or stop the file currently being sent/received (a declined file is dead — the sender must offer again). |
+| `/receive always\|never\|ask`             | Standing file policy for this conversation: auto-accept / auto-decline silently / ask every time (default). No argument = show the current policy. |
 | `/talk <id\|name>`                        | Switch attention among parallel conversations.                                                         |
 | `/list`                                   | Who's currently connected to you.                                                                      |
 | `/card`                                   | Print your name and dial address for every network interface.                                          |
