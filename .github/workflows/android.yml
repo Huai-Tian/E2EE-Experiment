@@ -46,15 +46,16 @@ jobs:
         run: cargo install cargo-ndk --locked
       - name: 构建 libe2ee.so（${{ matrix.abi }}）
         run: cargo ndk -t ${{ matrix.abi }} -P ${{ env.API_LEVEL }} -o dist build --release -p e2ee-ffi
-      - name: 断言：16 个 e2ee_* 导出符号（名单一致）
+      - name: 断言：19 个 e2ee_* 导出符号（名单一致）
         run: |
           so="dist/${{ matrix.abi }}/libe2ee.so"
           nm -D "$so" | grep ' T e2ee_' | awk '{print $3}' | LC_ALL=C sort > /tmp/got.txt
           printf '%s\n' \
             e2ee_await_secret e2ee_bye e2ee_dial e2ee_file_abort \
-            e2ee_file_begin e2ee_file_chunk e2ee_file_end e2ee_last_error \
-            e2ee_leave e2ee_local_addr e2ee_person_create e2ee_person_create_hidden \
-            e2ee_person_destroy e2ee_poll e2ee_speak e2ee_version \
+            e2ee_file_begin e2ee_file_chunk e2ee_file_end e2ee_file_no \
+            e2ee_file_yes e2ee_last_error e2ee_leave e2ee_local_addr \
+            e2ee_person_create e2ee_person_create_hidden e2ee_person_destroy \
+            e2ee_poll e2ee_set_receive e2ee_speak e2ee_version \
             | LC_ALL=C sort > /tmp/want.txt
           diff -u /tmp/want.txt /tmp/got.txt
           echo "符号断言通过：$(wc -l < /tmp/got.txt) 个 e2ee_* 导出"

@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use e2ee::person::{Event, Events, LeaveReason, Person};
+use e2ee::person::{DeclineReason, Event, Events, FileNoResult, LeaveReason, Person, Receive};
 
 /* ── 事件标签：与 e2ee.h 的 enum 一一对应（冻结） ── */
 const EVENT_UNKNOWN: c_int = 0;
@@ -30,6 +30,12 @@ const EVENT_SEAT_OFFERED: c_int = 10;
 const EVENT_FILE_CHUNK: c_int = 11; // 4.0.0 P20-F：块字节不进冻结的事件结构（C 侧收数据面待 ABI 演进）
 const EVENT_FILE_COMPLETE: c_int = 12;
 const EVENT_FILE_ABORTED: c_int = 13;
+// 4.1.0 P22 同意门槛：请求/收下了/拒绝/已收到（回执）。tag 14-17 从空
+// 区顺排；tag 7 已随暗号链退役（永不复用，见下）。
+const EVENT_FILE_REQUESTED: c_int = 14;
+const EVENT_FILE_ACCEPTED: c_int = 15;
+const EVENT_FILE_DECLINED: c_int = 16;
+const EVENT_FILE_DELIVERED: c_int = 17;
 // tag 7 已随暗号链退役（4.0.0，rulings.2026_10_31_realtime_verification_
 // razor）——墓碑只在 C 头文件挂牌（ABI 面），Rust 侧零代码零死常量；
 // 『编号永不复用』由 tests 里的事件编号纪律断言钉死，不靠 incidental。
@@ -343,9 +349,11 @@ pub extern "C" fn e2ee_leave(p: *mut FfiPerson) -> c_int {
     0
 }
 
-/// 流式递文件·开门（4.0.0 P20-F）：申报名字与总长；字节随后经
-/// e2ee_file_chunk 分批喂入，e2ee_file_end 收尾。库不读盘——字节从
-/// 调用方缓冲来。同一场对话同一时刻一份在途。
+/// 流式递文件·开门（4.0.0 P20-F + 4.1.0 P22 同意门槛）：申报名字与总长，
+/// **只发一条请求就返回**——对方答应了以 E2EE_EVENT_FILE_ACCEPTED 事件
+/// 到达（此时才可喂块；应允前喂块 = -1 响亮拒绝），拒绝了以
+/// E2EE_EVENT_FILE_DECLINED 到达。库不读盘——字节从调用方缓冲来。
+/// 同一场对话同一时刻一份在途（出入向任何在途档都占道）。
 ///
 /// # Safety
 /// p 合法句柄；name 必填合法 C 字符串。
@@ -416,7 +424,8 @@ pub extern "C" fn e2ee_file_end(p: *mut FfiPerson) -> c_int {
     }
 }
 
-/// 流式递文件·主动作废：销账即止（对端由新家门/线死触发其作废）。
+/// 流式递文件·主动作废：销账 + 发停字条（只封未来——对方的半份是
+/// 对方的，覆水难收）。
 ///
 /// # Safety
 /// p 合法句柄。
@@ -429,6 +438,88 @@ pub extern "C" fn e2ee_file_abort(p: *mut FfiPerson) -> c_int {
     let fp = unsafe { &*p };
     match fp.rt.block_on(fp.person.file_abort()) {
         Ok(_) => 0,
+        Err(e) => {
+            set_err(&e.to_string());
+            -1
+        }
+    }
+}
+
+/// 答应当前对话正递来的文件（4.1.0 P22 同意门槛）：问题消解为「正在
+/// 收」，给对方发应允。没有挂着的问题 = -1（人话在 last_error）。
+///
+/// # Safety
+/// p 合法句柄。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_file_yes(p: *mut FfiPerson) -> c_int {
+    if p.is_null() {
+        set_err("句柄为空");
+        return -1;
+    }
+    let fp = unsafe { &*p };
+    match fp.rt.block_on(fp.person.file_yes()) {
+        Ok(_) => 0,
+        Err(e) => {
+            set_err(&e.to_string());
+            -1
+        }
+    }
+}
+
+/// 统一的「不要了」手势（4.1.0 P22 四时机）：当前对话正在进行的文件
+/// 往来一件收场——拒（问题挂着）/ 停收（正在收；**收方应丢弃自己手里
+/// 的半份**——库不碰盘，外层账本自己清）/ 停发（正在发）/ 撤回（等
+/// 答复）/ 不再等回执。成功返回收场明细：1 拒、2 停收、3 停发、4 撤回、
+/// 5 不再等回执；-1 = 没有在进行的文件往来。
+///
+/// # Safety
+/// p 合法句柄。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_file_no(p: *mut FfiPerson) -> c_int {
+    if p.is_null() {
+        set_err("句柄为空");
+        return -1;
+    }
+    let fp = unsafe { &*p };
+    match fp.rt.block_on(fp.person.file_no()) {
+        Ok(r) => match r {
+            FileNoResult::Rejected { .. } => 1,
+            FileNoResult::StoppedReceiving { .. } => 2,
+            FileNoResult::StoppedSending { .. } => 3,
+            FileNoResult::Withdrawn { .. } => 4,
+            FileNoResult::ForgotReceipt { .. } => 5,
+        },
+        Err(e) => {
+            set_err(&e.to_string());
+            -1
+        }
+    }
+}
+
+/// 设当前对话（聚焦线）的收文件态度（4.1.0 P22）：policy 0 = ask 每份
+/// 都问（默认）、1 = always 都直接收、2 = never 一律婉拒且不再询问。
+/// 切换的瞬间也裁决当时挂着的问题。会话内可随时改。
+///
+/// # Safety
+/// p 合法句柄。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_set_receive(p: *mut FfiPerson, policy: c_int) -> c_int {
+    if p.is_null() {
+        set_err("句柄为空");
+        return -1;
+    }
+    let policy = match policy {
+        0 => Receive::Ask,
+        1 => Receive::Always,
+        2 => Receive::Never,
+        other => {
+            set_err(format!("policy 应为 0=ask、1=always、2=never（收到 {other}）"));
+            return -1;
+        }
+    };
+    let fp = unsafe { &*p };
+    match fp.rt.block_on(fp.person.set_receive(policy)) {
+        Ok(()) => 0,
         Err(e) => {
             set_err(&e.to_string());
             -1
@@ -545,21 +636,57 @@ fn to_c_event(ev: Event) -> E2eeEvent {
             e.id = circle_id; // P6：圈类事件 id=圈号
             copy_str(&mut e.name, &from);
         }
-        Event::FileChunk { id, name, seq, .. } => {
+        Event::FileChunk { id, from, name, seq, .. } => {
             e.tag = EVENT_FILE_CHUNK;
             e.id = id;
-            copy_str(&mut e.name, &name);
-            e.members = seq as c_int; // 块序号（32MB/8KB 至多 4096，c_int 足够）
+            copy_str(&mut e.name, &from); // 4.1.0 P22：name = 递送人（多线路由）；文件名走 text
+            copy_str(&mut e.text, &name);
+            e.members = seq as c_int; // 块序号
         }
-        Event::FileComplete { id, name, .. } => {
+        Event::FileComplete { id, from, name, .. } => {
             e.tag = EVENT_FILE_COMPLETE;
             e.id = id;
-            copy_str(&mut e.name, &name);
+            copy_str(&mut e.name, &from);
+            copy_str(&mut e.text, &name);
         }
         Event::FileAborted { id, detail } => {
             e.tag = EVENT_FILE_ABORTED;
             e.id = id;
             copy_str(&mut e.text, &detail);
+        }
+        // 4.1.0 P22 同意门槛事件族：id = 对话编号，name = 对端自报名，
+        // text = 文件名（REQUESTED 带上字节数——GUI 弹「收不收」要用），
+        // focused = REQUESTED 专属（1 = always 政策已直收，不必再答）。
+        Event::FileRequested { id, from, name, size, auto, .. } => {
+            e.tag = EVENT_FILE_REQUESTED;
+            e.id = id;
+            e.focused = c_int::from(auto);
+            copy_str(&mut e.name, &from);
+            copy_str(&mut e.text, &format!("{name}（{size} 字节）"));
+        }
+        Event::FileAccepted { id, from, name } => {
+            e.tag = EVENT_FILE_ACCEPTED;
+            e.id = id;
+            copy_str(&mut e.name, &from);
+            copy_str(&mut e.text, &name);
+        }
+        Event::FileDeclined { id, from, name, reason } => {
+            e.tag = EVENT_FILE_DECLINED;
+            e.id = id;
+            copy_str(&mut e.name, &from);
+            copy_str(&mut e.text, &name);
+            e.members = match reason {
+                DeclineReason::Human => 1,
+                DeclineReason::Timeout => 2,
+                DeclineReason::Policy => 3,
+                _ => 0,
+            };
+        }
+        Event::FileDelivered { id, from, name } => {
+            e.tag = EVENT_FILE_DELIVERED;
+            e.id = id;
+            copy_str(&mut e.name, &from);
+            copy_str(&mut e.text, &name);
         }
         Event::SeatOffered { from, table } => {
             e.tag = EVENT_SEAT_OFFERED;
@@ -583,7 +710,7 @@ mod tests {
     /// 事件编号纪律（P20-E② + 补裁 2026-10-31）：tag 7 已随暗号链退役
     /// ——墓碑只在 C 头文件挂牌，Rust 侧零代码。『编号永不复用』由本
     /// 断言钉成机器可验证的不变量，不靠任何 incidental 成立（新增事件
-    /// 请把 tag 加进这张表：从 14 起）。
+    /// 请把 tag 加进这张表：从 18 起）。
     #[test]
     fn 事件编号_退役区与唯一性() {
         let in_use = [
@@ -599,6 +726,10 @@ mod tests {
             EVENT_FILE_CHUNK,
             EVENT_FILE_COMPLETE,
             EVENT_FILE_ABORTED,
+            EVENT_FILE_REQUESTED,
+            EVENT_FILE_ACCEPTED,
+            EVENT_FILE_DECLINED,
+            EVENT_FILE_DELIVERED,
         ];
         for (i, a) in in_use.iter().enumerate() {
             assert_ne!(*a, 7, "tag 7 已退役（SECRET_CHAINED），编号永不复用——C 头文件挂牌");

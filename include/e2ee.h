@@ -41,9 +41,14 @@ enum {
     E2EE_EVENT_CIRCLE_FORMED = 8,  /* members = 圈内人数 */
     E2EE_EVENT_CIRCLE_MUMBLE = 9,  /* name = 谁说了句解不开的话 */
     E2EE_EVENT_SEAT_OFFERED = 10,  /* name = 引荐人, members = 桌上人数, text = 桌上名字（、分隔） */
-    E2EE_EVENT_FILE_CHUNK = 11,    /* id, name, members = 块序号——块字节不进本结构（4.0.0：C 侧收数据面待 ABI 演进，事件面只报进度） */
-    E2EE_EVENT_FILE_COMPLETE = 12, /* id, name */
-    E2EE_EVENT_FILE_ABORTED = 13,  /* id, text = 作废原因 */
+    E2EE_EVENT_FILE_CHUNK = 11,    /* id, members = 块序号——块字节不进本结构（4.0.0：C 侧收数据面待 ABI 演进，事件面只报进度）；4.1.0 起 name = 递送人, text = 文件名 */
+    E2EE_EVENT_FILE_COMPLETE = 12, /* id, name = 递送人, text = 文件名（4.1.0 起带 from） */
+    E2EE_EVENT_FILE_ABORTED = 13,  /* id, text = 作废原因（半份已到字节数在原因里；半份的去留由收方决定——4.1.0 覆水难收） */
+    /* ── 4.1.0（P22 同意门槛）：递文件先问一声 ── */
+    E2EE_EVENT_FILE_REQUESTED = 14, /* id, name = 递送人, text = "文件名（N 字节）", focused = 1 表示 always 政策已直收（不必再答）；0 = 等用户答（e2ee_file_yes / e2ee_file_no） */
+    E2EE_EVENT_FILE_ACCEPTED = 15,  /* id, name = 收下的人, text = 文件名——发端此时起可喂块 */
+    E2EE_EVENT_FILE_DECLINED = 16,  /* id, name = 拒绝的人, text = 文件名, members = 1 人拒 / 2 三十秒婉拒 / 3 政策拒（这条线设了不收） */
+    E2EE_EVENT_FILE_DELIVERED = 17, /* id, name = 已收到的人, text = 文件名——收讫回执，全须全尾 */
 };
 
 /* 事件（布局冻结）：超容量的字符串被截断（name 63 字节、text 511 字节） */
@@ -75,11 +80,22 @@ int            e2ee_speak(e2ee_person* p, const char* text);
 int            e2ee_bye(e2ee_person* p);
 int            e2ee_leave(e2ee_person* p);
 
-/* 文件（4.0.0 流式，P20-F）：开门 → 喂块 → 收尾；字节从调用方来，库不读盘 */
+/* 文件（4.0.0 流式 P20-F + 4.1.0 同意门槛 P22）：开门（只发请求即返，
+   答应以 E2EE_EVENT_FILE_ACCEPTED 事件到）→ 喂块 → 收尾；字节从调用方
+   来，库不读盘。同一场对话同一时刻一份在途。 */
 int            e2ee_file_begin(e2ee_person* p, const char* name, uint64_t total_bytes);
 int            e2ee_file_chunk(e2ee_person* p, const uint8_t* buf, int len);
 int            e2ee_file_end(e2ee_person* p);
 int            e2ee_file_abort(e2ee_person* p);
+
+/* 文件同意门槛（4.1.0 P22）：答应当前对话正递来的文件 / 统一的「不要
+   了」手势 / 设这条线的收文件态度。e2ee_file_no 成功返回收场明细：
+   1 拒、2 停收（收方应丢弃自己手里的半份）、3 停发、4 撤回、5 不再等
+   回执；-1 = 没有在进行的文件往来。policy：0 = ask 每份都问（默认）、
+   1 = always 都直接收、2 = never 一律婉拒且不再询问。 */
+int            e2ee_file_yes(e2ee_person* p);
+int            e2ee_file_no(e2ee_person* p);
+int            e2ee_set_receive(e2ee_person* p, int policy);
 
 /* 事件：返回 1 = 拿到，0 = 超时，-1 = 出错；不关心的事件会被丢弃 */
 int            e2ee_poll(e2ee_person* p, int timeout_ms /*<0 死等，0 非阻塞*/,

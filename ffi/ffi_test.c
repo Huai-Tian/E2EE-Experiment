@@ -63,6 +63,33 @@ int main(void) {
     CHECK(wait_for(b, E2EE_EVENT_HEARD, &ev) && strcmp(ev.text, "ting de dao") == 0,
           "B heard A");
 
+    /* 文件同意门槛（4.1.0 P22）：B 递——先问，A 答 yes，字节走，回执照到。
+       begin 只发请求即返；应允前喂块必须响亮失败（点头之前手不伸向盒子） */
+    {
+        static const unsigned char payload[10] = "0123456789";
+        CHECK(e2ee_file_begin(b, "qi-piao.jpg", sizeof payload) == 0, "file_begin B");
+        CHECK(e2ee_file_chunk(b, payload, sizeof payload) != 0,
+              "chunk before consent must fail loudly");
+        show_err("chunk before consent");
+        CHECK(wait_for(a, E2EE_EVENT_FILE_REQUESTED, &ev) && ev.id == id,
+              "A saw the request");
+        CHECK(e2ee_file_yes(a) == 0, "A file_yes");
+        CHECK(wait_for(b, E2EE_EVENT_FILE_ACCEPTED, &ev), "B saw accepted");
+        CHECK(e2ee_file_chunk(b, payload, sizeof payload) == 0, "chunk after consent");
+        CHECK(e2ee_file_end(b) == 0, "file_end B");
+        CHECK(wait_for(a, E2EE_EVENT_FILE_COMPLETE, &ev), "A got the file");
+        CHECK(wait_for(b, E2EE_EVENT_FILE_DELIVERED, &ev), "B got the receipt");
+        /* no 后不可 yes：A 的 yes 现在无处可答 */
+        CHECK(e2ee_file_yes(a) != 0, "yes without question errors");
+        show_err("yes without question");
+        /* 态度：设 never，B 再递 → 政策拒（members = 3） */
+        CHECK(e2ee_set_receive(a, 2) == 0, "set_receive never");
+        CHECK(e2ee_file_begin(b, "ju-jue.txt", 4) == 0, "file_begin B (never)");
+        CHECK(wait_for(b, E2EE_EVENT_FILE_DECLINED, &ev) && ev.members == 3,
+              "B saw policy decline (members=3)");
+        CHECK(e2ee_set_receive(a, 0) == 0, "set_receive back to ask");
+    }
+
     /* 道别：A 应看到 LEFT（暗号链已移除——rulings.2026_10_31_realtime_
        verification_razor；SECRET_CHAINED 事件编号保留在头文件里但永不触发） */
     CHECK(e2ee_bye(b) == 0, "bye B");
