@@ -1131,14 +1131,24 @@ pending_work:
       127.0.0.1:64832 / 127.0.0.1:49630）。收尾（后续 commit，4.2.0
       发布面）：linux CI 产物线（.github/workflows/linux.yml——glibc
       .so @ ubuntu-22.04 含 20 符号断言 + musl 静态 exe 含 file 真静态
-      断言，release artifacts 的产出通道）；双语 README 精炼（owner
-      裁决「边界只有一处统一声明，诚实但不防御性写作」——威胁模型留
+      断言，release artifacts 的产出通道）；双语 README 精炼（owner 裁决「边界只有一处统一声明，诚实但不防御性写作」——威胁模型留
       在工作原理（设计的契约），「已知限制」升格为「诚实的边界」作为
       唯一边界清单（物理的价/设计的价两栏），内联的「诚实边界：」
       全部删除或收编，警惕者手册压缩约三分之一（边界只说一遍+表格
       瘦身），免责声明的边界条目改为指向正文）。待 owner 侧：push 后
       CI（test/android/linux/codeql）、四 ABI 产物重建（android.yml
-      名单已 20）、tag 4.2.0。
+      名单已 20）、tag 4.2.0。追加修复（4.2.1，owner 授权 2026-11-23
+      「不需要复现，我相信你开始修复」）：/file 待发账本存 basename
+      而非 path——FileAccepted 时名字被当路径二次 open，绝对路径/子
+      目录路径形态下「点头后递不出」（os error 2）；cwd 纯文件名形态
+      名字与路径重合恰好掩盖（4.2.0 验收即此形态，论文双跳链实测以
+      绝对路径首触）。修=账本 insert 改存 path（src/main.rs 三行+账本
+      注释订正）；测试 +2（tests/cli_file.rs——CLI 双进程测试新件，
+      跨平台（无 cfg(unix)，Windows/Linux CI 双跑），子目录+绝对路径
+      双形态、字节级比对收讫、/receive 时序对齐聚焦线语义；红绿自证：
+      stash 旧实现 2/2 红（always 收下请求后传输卡死）、恢复修复 2/2
+      绿）；rogue 全量 114 绿（Windows 本地）零回归；CHANGELOG 4.2.1
+      + Cargo 4.2.0→4.2.1。
     tests: >-
       rogue 全量含 3 新集成；FFI 契约（C + ctypes）create_via 走位；
       符号名单断言（CI android.yml + 本侧 objdump 实测一致）。

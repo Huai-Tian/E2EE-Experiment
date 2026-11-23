@@ -1359,7 +1359,7 @@ async fn handle_command(cmd: &str, person: &Person) -> Result<bool, Box<dyn std:
                         send_pending()
                             .lock()
                             .expect("待发账本没被毒化")
-                            .insert(id, (name.clone(), total));
+                            .insert(id, (path.clone(), total));
                     }
                     eprintln!(
                         "已向对方请求递文件〔{}〕（{}），等答复……",
@@ -1460,7 +1460,9 @@ fn inbound_files() -> &'static std::sync::Mutex<
 }
 
 /// /file 之后、对方点头之前的待发文件（P22）：FileAccepted 事件到达时
-/// 按线号取名字与总长、起后台传输任务。内存、随进程死。
+/// 按线号取路径与总长、起后台传输任务（账本存的是完整路径——传输阶段
+/// 的二次 open 用它，不能只存文件名：绝对路径/子目录路径下名字与路径
+/// 不再重合）。内存、随进程死。
 static SEND_PENDING: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<u64, (String, u64)>>,
 > = std::sync::OnceLock::new();
