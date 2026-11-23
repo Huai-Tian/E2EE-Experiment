@@ -416,7 +416,7 @@ group_v3:
       add_fresh_r_p13: "引荐人旋转自己的 r（P-13 修复）：恶意载体存档密文 + 共谋候选人入座 → 若 ADD 不旋转任何 r，新人拿到 0x12 全表现行 r、排除自己即算出 K_old → 解密入座前历史。旋转后 K_old 缺引荐人的旧 r，无从推导。密钥边界=成员边界：RM 封未来于离开者，ADD 封过去于进入者（A3 两半合璧）。注：无共谋时旧窃听者论证仍成立（她拿不到任何现行 r）"
       add_semantics_ruling: "递话不代笔（settled 2026-10-15）：引荐人递的是新人自署的整行，伪造不了任何字段；她的签名只是引荐收据（问责：出问题时『谁带来的人』有答案）"
       exchange_algebra: "不相交变更序无关（T2：集合加减排代换天然可交换）；一切不可交换情形（同人二次变更、见证冲突、部分投递）必然退化为 mumble——响亮，交给点名。级联定时器、发起人选举、validity 规则：整体删除，不是换更好的，是不需要"
-      pure_rekey: "无纯换钥 topup——密钥保鲜=点名（谁、何时、为什么换，是全桌的事，不是一个人的事）"
+      pure_rekey: "无纯换钥 topup——密钥保鲜=点名（谁、何时、为什么换，是全桌的事，不是一个人的事）。代价（2026-11-23 入档，known_limitations 级）：长期无成员变动的圈子 K 从创世永续——载体全量存档 + 单次内存妥协可解密该圈全史直到下次变动；保鲜权全归人类手势（no-auto-suggestion 的价格），卫生习惯见 README 双语「点名卫生」（P23 文档轮），协议零改动"
     transitional_window: "RM/ADD 应用不一致期间，滞后成员仍在旧钥下发言；刚拿到名单者可解滞后发言——物理等价：你走向桌子时有人正把话说完，你听见了尾巴。入档为已知边界，不修"
 
   admission:                                 # 入席（seat flow：0x10 → 0x11 → 0x0B ADD → 0x12）
@@ -684,6 +684,7 @@ known_limitations:
   cross_version_chat_one_way: "peers predating a frame kind silently drop it; v3 kinds 0x0F-0x12 inherit the same one-way property。4.1.0（P22）：**文件面跨版本断代**（聊天不受影响）——旧端跳过 0x17（请求石沉大海，发端 /no 收场）；新端把 0x06 当旧版来问（硬灌块噪音丢，/yes 后序号不合作废——响亮失败而非无声消失）。两边都升级；README 双语写明"
   file_policy_disk_face: "always 政策=用户立的常设门（认钥不认人，与 --guard 同族）：完成文件与 .半份（停发/断线留存）都会堆积在 ./received/——清理是自己的事（P22 覆水难收的既定代价；ask 下每个半份都要人点头）。never 关阀、ask 逐份点头"
   file_half_kept: "覆水难收：事件性中止的半份保留为 .半份（已收/总长响亮告知）——对端已到字节收不回，想收回在聊天里说一声（A3 正译，rulings.2026_11_01_file_irrevocability）；发端屏幕说真话，不给人虚假的安心"
+  sybil_seats: "女巫席位（2026-11-23 入档，无身份层的结构性代价）：同一控制者可坐多个席位（不同名/不同 r/不同嗓音钥）——引荐制抬高成本（每个席位需要一次真实的引荐手势与在座者的直连）但不消灭。物理等价：雇人坐桌窃听——女巫的价格回到物理世界的水平。密钥构成操纵按 T1/T2 各自响亮（分歧必被听见）且点名重聚可修；星型发起者灌傀儡的拓扑面=carrier_metadata 同族（桌子的物理）。不修——修法是任何形式的身份连续性，公理级禁止"
   nested_no_prior_art: "serverless nested circles have no known prior art — experimental label stays until hardened"
 
 # ───────────────────────────────────────────────────────────────
@@ -1076,6 +1077,58 @@ pending_work:
       tag 4.1.0（4.0.0 已发布：tag 4.0.0 → ad58f74，2026-11-01 切——
       4.1.0 为常规跟进版，正常打 tag）、四 ABI 产物重建（android.yml
       断言名单已 19）。
+
+  P23_transport_proxy_4_2_0:                # 4.2.0 主工程：出行方式（SOCKS5 出站代理 + IPv6 双栈）——owner 立项 2026-11-22（「代理应该是底层的支持，而不是子功能」→ 传输原语化）
+    status: landed-2026-11-23             # 三 patch 落地（库层→CLI/FFI→文档）；验证链见 landed
+    depends: []
+    scope: >-
+      Outbound 枚举（Direct|Socks5）：出行方式出生时定死——born_with 新构造器
+      （born 委托 Direct，add-only 零破坏），dial 与茶馆进房共用；监听面不走
+      代理（入站天然直达）；UDP 打洞与 SOCKS 结构性不兼容（代理形态下会合
+      走茶馆）。connect_outbound 唯一连接原语（pub(crate)）：socks5h 语义——
+      目标域名串原样交给代理解析（Tor onion 可达）。bind_listener：[::] 通配
+      形态显式 set_only_v6(false)（Windows 默认 v6-only，Linux 天生双栈），
+      其余地址原路径。CLI --socks 参数 + 知情横幅 + HELP。FFI
+      e2ee_person_create_via（19→20，proxy NULL 等同 create；create/hidden
+      原符号行为零变化——ABI 冻结只加不改）；android.yml 名单同步。
+    philosophy: >-
+      聚焦原则（2026-11-22 owner 命名裁决）：自研边界=对话物理学的协议翻译；
+      标准基础设施交可靠提供方（tokio-socks 0.5.3——0.3 是 tokio 0.2 时代
+      旧版，版本谱系核对后取 0.5.x；socket2 0.6 为 tokio 既有传递依赖的
+      显式声明，零新增包）——与「不自己写密码学」同源；不为减依赖而减依赖。
+      依赖选择曾以「省三个包」倾向自写最小 SOCKS5 客户端，被 owner 否决并
+      命名此原则（永久判例）。
+    landed: >-
+      库层（patch 1/3）：Outbound/born_with/connect_outbound/bind_listener
+      + Inner.outbound 字段 + dial_inner/courier::enter 原语化。测试 +3
+      （tests/conversation.rs）：内嵌极简 SOCKS5 服务器（无鉴权 CONNECT、
+      目标解析在代理侧、目标串原样记账供断言——rogue 注入面同族的测试
+      自备件）；出站代理_socks5h_域名原样到代理_密谈照常（「localhost:port」
+      原样入代理账本=本地从未解析的直接断言）+双向密谈；出站代理_茶馆
+      进房也照经（courier::enter 路径走位）；IPv6双栈_v4来客照常进门
+      （[::]:0 监听 + 127.0.0.1 拨入 Met，Windows 实测过）。CLI+FFI
+      （patch 2/3）：--socks + 启动横幅（经代理响亮说清：对端看到的来路
+      是代理，流量形状对代理可见）；e2ee_person_create_via + include/e2ee.h
+      add-only + android.yml 断言名单 19→20；ffi_test.c/ctypes_test.py 补
+      create_via NULL-proxy 走位（ABI 形状验证；真代理行为深度由 Rust 集成
+      测试覆盖——契约测试职责是参数进返回出，不是行为深度）。received/
+      多实例复核后不修（判例）：open_received_file 已有同名 N-前缀递增
+      防覆盖 + 建文件失败响亮（P22 连带修复），残余仅「目录混入」且文件名
+      自带归属；端口子目录方案破坏 ./received/ 既有约定——按最小改动纪律
+      不为想象中的用户加防护。文档（patch 3/3）：README 双语 --socks 选项
+      行 + Tor 组合节（torsocks 场景/茶馆 onion service/打洞限制/两层
+      开放供给的封锁成本论证）+ 群聊修桌段的点名卫生（长期圈保鲜——
+      pure_rekey 裁决的社会层配套）；本档案 P23 立项 + known_limitations
+      增补 sybil_seats + pure_rekey 处补长期圈保鲜边界；CHANGELOG 4.2.0；
+      Cargo 4.1.0→4.2.0。验证（Windows GNU 工具链，沙箱自建 gcc 16.2 +
+      binutils 2.47 环境）：rogue 全量 21 单元 + 90 集成（87 基线 + 3
+      新增）+ 1 pq 零失败零警告；e2ee.dll 实测恰 20 个 e2ee_* 导出且
+      名单一致（objdump 导出表）；FFI OK（MinGW gcc 编译链接 e2ee.dll
+      实跑，含 create_via 走位）+ ctypes OK。待 owner 侧：push 后 CI 7
+      job、四 ABI 产物重建（android.yml 名单已 20）、tag 4.2.0。
+    tests: >-
+      rogue 全量含 3 新集成；FFI 契约（C + ctypes）create_via 走位；
+      符号名单断言（CI android.yml + 本侧 objdump 实测一致）。
 
   post_3_0_0_backlog:                       # tag 后线索板（3.0.0 发布收笔归档 2026-10-18——全部「tag 后」状态，各自独立 slice 过堂，不丢线索）
     cargo_audit_in_ci: "cargo audit 进 CI——tag 时点人工核查快照见 verify.release_v3_0_0（dalek 双件不在已知 advisory 影响面）；自动化排期 owner 裁决"

@@ -120,6 +120,7 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
 | `--guard`       | Stable door lock: every caller must pass the same machine key (32-byte random), never consumed — wrong-key floods can't lock the desk. The key is prompted for at startup (hidden input): it never rides the command line. |
 | `--courier`     | Open a teahouse (see [Behind NAT](#two-people-behind-nat)) — the same binary in its other job.                                                                                        |
 | `--skittish`    | Skittish mode: the instant the lid closes or the session locks, everything is wiped, the screen (scrollback included) is cleared, and the program evaporates (see [the paranoid's handbook](#a-paranoids-handbook---skittish)). |
+| `--socks <ADDR:PORT>` | Born with a way of travel: every outbound connection (`/dial`, `/meet`) goes through this SOCKS5 proxy — e.g. local Tor at `127.0.0.1:9050`. Target hostnames are resolved by the proxy, so onion addresses work; hole punching and proxies don't mix — meet via `/meet` instead (see [Traveling over Tor](#traveling-over-tor---socks)). |
 
 ### Command reference
 
@@ -176,6 +177,10 @@ E2EE-Experiment [listen-addr] [-n name] [flags]
    **roll call**. Fresh circle id, everyone re-gathers, everything settles.
    The protocol never pretends to be always-consistent; it promises:
    **disagreement is always heard, repair is always available.**
+   A hygiene habit while you're at it: **a table that meets often deserves
+   frequent roll calls** — a circle with no membership churn never rekeys
+   on its own; a fresh circle id plus fresh contributions from everyone
+   seals all past ciphertext forever.
 7. **Several tables** — one person may sit at several tables at once:
    `/circle name1 name2 …` invites only those lines and keeps every old
    table seated; the new table becomes the current seat. Each table has
@@ -208,6 +213,33 @@ who receives. Two answers, both built in:
 **Room numbers and tags are rendezvous, not secrets** — pick them unguessable
 (two pairs colliding on a room number get wired to each other), and agree on
 them out-of-band exactly like secrets.
+
+### Traveling over Tor (--socks)
+
+This program and anonymity networks (Tor) are two complementary lines of
+defense: Tor hides **who is talking to whom** (relationship anonymity); this
+program guarantees **said and forgotten** (endpoint evaporation) — Tor owns
+the wire, we own the endpoint. Combined:
+
+```bash
+# 1. Install and start Tor (local SOCKS5 defaults to 127.0.0.1:9050)
+# 2. Start this program with a way of travel
+./E2EE-Experiment --socks 127.0.0.1:9050 -n Alice
+```
+
+- Every outbound `/dial` and `/meet` connection goes through Tor — target
+  hostnames are resolved *by the proxy*, so **onion addresses work**; the
+  peer sees an exit node, not you.
+- **The teahouse itself can be an onion service** (just point a Tor hidden
+  service at the teahouse's listening port): guests arrive through Tor and
+  even the teahouse keeper never learns who they are.
+- **Hole punching (`/punch`) and proxies are structurally incompatible** —
+  a UDP punch line never walks a SOCKS; under a proxy, rendezvous goes via
+  `/meet` (through the teahouse — and the teahouse can live inside Tor).
+- Honest edge: Tor hides the wire, not the endpoint — disk residue and
+  memory forensics remain this program's job (zero persistence, skittish
+  mode); neither layer survives by hiding, both by **open abundance** —
+  anyone can run a relay or a teahouse, so the cost of blocking diverges.
 
 ### Secrets & SAS: knowing who is on the other end
 
