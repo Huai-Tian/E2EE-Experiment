@@ -5,7 +5,7 @@
 > a person. It can also pull up a table — every rule of group chat is
 > translated from the rules of a physical conversation.
 
-**E2EE-Experiment** takes a single metaphor literally: *the executable is a person.*
+**E2EE-Experiment**'s design stems from a single metaphor: *the executable is a person.*
 No server, no accounts, no database — just a program that can hold up its end of a
 private conversation, then remember nothing.
 
@@ -48,10 +48,7 @@ Three properties carry all the weight:
    server/client split and no privileged node. The optional "teahouse" used
    for NAT traversal only shuffles bytes it cannot read.
 
-**What it protects against:** anyone on the wire (ISP, Wi-Fi snooper,
-backbone tap) — they see encrypted frames and nothing else. All other
-boundaries (what is not protected, and at what cost) are stated once in
-[Honest boundaries](#honest-boundaries).
+**Defense target:** anyone on the wire (ISP, Wi-Fi snooper, backbone tap) — they see encrypted frames and nothing else.
 
 ### Key details worth knowing
 
@@ -286,10 +283,6 @@ skittish mode every exit clears the screen, including Ctrl-C. It does not
 power off, does not close the terminal window — the machine only automates
 the invisible; visible acts of defiance are timed by your own hand.
 
-The mode's boundary (the two shapes of hardware takeover, and why the
-4-second power hold is the only reliably effective human act) is stated once
-in [Honest boundaries](#honest-boundaries).
-
 | Gesture | Speed |
 |---------|-------|
 | Ctrl-C | milliseconds (full wipe chain) |
@@ -319,7 +312,7 @@ behavior (including the attack-precedent injection matrix — see
 [README_AGENT.md](README_AGENT.md)). Design invariants and red lines also
 live there — read them before touching anything.
 
-## Honest boundaries
+## Boundary limitations
 
 What the system cannot do, and at what cost — stated here once. *How it
 works* covers mechanisms (what it does); feature sections serve understanding
@@ -349,7 +342,7 @@ and do not repeat boundaries.
   own memory bytes are not necessarily zeroed — that layer is covered by the
   power button.
 
-**The price of design**
+**Costs inherent to the design**
 
 - By default, no defense against an active man-in-the-middle (the telephone
   model's stance: the wire is secret, identity is verified by humans — a
