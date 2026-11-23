@@ -79,10 +79,7 @@ other end itself (they can copy, paste, screenshot).
   is ever written to disk, keys and plaintext are wiped from memory the
   moment they're done, and every conversation's keys are ephemeral: after a
   clean exit, searching the whole machine finds nothing. There is no
-  "duress mode", because there is no history to hide. Honest edges: a hard
-  kill (`kill -9` / power cut) leaves a seconds-scale RAM residue that
-  fades on reboot, and a seized *running* device of course reads what is
-  being said — true of any live conversation; closing ends it.
+  "duress mode", because there is no history to hide.
 
 ## Getting started
 
@@ -236,10 +233,10 @@ the wire, we own the endpoint. Combined:
 - **Hole punching (`/punch`) and proxies are structurally incompatible** —
   a UDP punch line never walks a SOCKS; under a proxy, rendezvous goes via
   `/meet` (through the teahouse — and the teahouse can live inside Tor).
-- Honest edge: Tor hides the wire, not the endpoint — disk residue and
-  memory forensics remain this program's job (zero persistence, skittish
-  mode); neither layer survives by hiding, both by **open abundance** —
-  anyone can run a relay or a teahouse, so the cost of blocking diverges.
+- Division of labor: Tor owns the wire, this program owns the endpoint —
+  disk and memory are the job of zero persistence and skittish mode. Both
+  layers survive by open abundance, not hiding: anyone can run a relay or
+  a teahouse, so the cost of blocking diverges.
 
 ### Secrets & SAS: knowing who is on the other end
 
@@ -279,80 +276,47 @@ E2EE-Experiment --skittish [listen-addr] [-n name]
 
 It announces itself loudly at startup: **this machine is in a jumpy state.**
 
-**Triggers** — you turn two everyday gestures into self-destruct switches:
+**Triggers** — two everyday gestures become self-destruct switches:
+**lid close** and **session lock** (self-locked or auto-locked — locked is
+locked). The filter in one line: **only what your hand does counts; what the
+machine guesses never does.** Idle detection and the like never enter: a wrong
+guess (you went for coffee) would kill every conversation.
 
-- **Lid close** — the moment a laptop lid shuts
-- **Session lock** — the moment the screen locks (whether you locked it
-  yourself with Win+L / Super+L or the OS timer did — locked is locked)
+**On trigger** — three steps, none of which wait for the network: **wipe**
+(every key zeroed, full drop chain), **clear** (visible screen and scrollback
+buffer), **leave** (the program evaporates; the peer sees a disconnect). In
+skittish mode every exit clears the screen, including Ctrl-C. It does not
+power off, does not close the terminal window — the machine only automates
+the invisible; visible acts of defiance are timed by your own hand.
 
-The filter in one line: **only what your hand does counts; what the machine
-guesses never does.** Both gestures are facts that simply happened; "you
-haven't moved for ten minutes, you're probably gone" is a guess — and a wrong
-guess (you went for coffee) would kill every conversation. So idle detection,
-hotplug detection and the like never enter.
+**One boundary, stated once**: the moment a trigger fires, this mode assumes
+the device has already been taken over by a hardware forensics rig. Under
+read-only takeover (the forensics norm — evidence discipline forbids modifying
+the target) the response above works; under read-write takeover (can patch
+memory, can strip the wipe logic) no software is trustworthy — this program
+included. Holding the power button for 4 seconds (EC-level power cut, below
+the OS, unblockable by any software) is the **only reliably effective** human
+act under full takeover. **This program does not defend the device itself —
+by choosing this machine, you have chosen to trust it.**
 
-**What happens on trigger** — three steps, none of which wait for the network:
+| Gesture | Speed |
+|---------|-------|
+| Ctrl-C | milliseconds (full wipe chain) |
+| Lid close / lock (--skittish) | milliseconds (plus one hop of event delivery) |
+| OS shutdown / logoff | seconds (SIGTERM / the X button feed the same clean path) |
+| **Power button, held 4 s** | **immediate power cut (hardware layer; works under full takeover)** |
 
-1. **Wipe** — every key is zeroed per the existing semantics (full drop chain)
-2. **Clear** — visible screen and scrollback buffer are both wiped (when the
-   lid opens again, there is nothing on the screen)
-3. **Leave** — the program evaporates; the peer sees a disconnect
-
-In skittish mode **every exit clears the screen, including Ctrl-C**. It does
-not power off, does not close the terminal window — the machine only
-automates the invisible; visible acts of defiance (cutting power in front of
-someone) are timed by your own hand.
-
-**What it defends against, and what it does not** (the honest line):
-
-The moment a trigger fires, this mode assumes the device **has already been
-taken over by a hardware forensics rig**. Two cases:
-
-- **Read-only takeover** (the forensics norm — evidence discipline forbids
-  modifying the target): our code keeps running as-is; the response above
-  works.
-- **Read-write takeover** (can patch memory, can strip our wipe logic): the
-  end of the software layer. No software is trustworthy against such an
-  adversary — this program included. Holding the power button for 4 seconds
-  (EC-level power cut, below the OS, unblockable by any software) is the
-  **only reliably effective** human act under full takeover.
-
-**This program does not defend the device itself — by choosing this machine,
-you have chosen to trust it.**
-
-**Four speeds of evaporation** (the first three are honored by the program — you gesture, it wipes; the fourth is a pure hardware act the program takes no part in and cannot even see — that row is written for you, for the emergency):
-
-| Gesture | Speed | Boundary |
-|---------|-------|----------|
-| Ctrl-C | milliseconds (full wipe chain) | software layer: works under read-only takeover, not under read-write |
-| Lid close / lock (--skittish) | milliseconds (plus one hop of event delivery) | same; if the OS lid action is "sleep", a millisecond-scale race with the system freeze (the lid notice arrives first; we normally win) |
-| OS shutdown / logoff | seconds (SIGTERM / the X button already feed the same clean path) | same |
-| **Power button, held 4 s** | immediate power cut | **hardware layer: the only means that stays effective under full takeover** |
-
-An honest limit of screen clearing: an ANSI clear is the terminal's *logical*
-clear; the terminal process's own memory bytes are not necessarily zeroed —
-that layer is covered by the power button.
-
-**No system settings need changing** — both triggers work out of the box on
-both platforms, whatever the OS is configured to do:
-
-- **Lid close**: both platforms listen to the lid's hardware state directly
-  (Linux via the input devices, needing read access via the `input` group;
-  Windows via the lid state notification) — independent of the OS's
-  "what to do when the lid closes" setting.
-- **Session lock**: both platforms listen to the system's session-lock
-  notification.
-- When a trigger face is unreachable (headless box, pure SSH) the program
-  **says so loudly** — it never silently pretends to guard.
-
-One honest limit (a statement of fact, not a setting requirement): if the
-OS lid action is "sleep", evaporation races the system freeze on the
-millisecond scale — measured on real hardware, the lid notice arrives
-*ahead* of the OS action and the wipe completes in milliseconds; if that
-bothers you, the screen lock is a direct notification with no race. **Sleep itself is not a trigger**:
-automatic sleep comes from an idle timer (a machine guess — doesn't count),
-and someone going to sleep on purpose has faster moves — lid, lock, or
-Ctrl-C.
+Both triggers work out of the box, no system settings needed: lid close
+listens to the lid's hardware state directly (Linux via the input devices,
+needing the `input` group; Windows via the lid state notification), session
+lock listens to the system's session-lock notification; when a trigger face
+is unreachable (headless box, pure SSH) the program says so loudly — it never
+silently pretends to guard. If the OS lid action is "sleep", evaporation
+races the system freeze on the millisecond scale — measured on real hardware
+the lid notice arrives ahead and the wipe completes in milliseconds; the
+screen lock is a direct notification with no race. Sleep itself is not a
+trigger (a machine guess doesn't count), and someone going to sleep on
+purpose has faster moves — lid, lock, or Ctrl-C.
 
 ## For developers
 
@@ -364,29 +328,41 @@ behavior (including the attack-precedent injection matrix — see
 [README_AGENT.md](README_AGENT.md)). Design invariants and red lines also
 live there — read them before touching anything.
 
-## Known limitations
+## Honest boundaries
 
-- **No liveness probes.** A peer that vanishes without closing (or over a
+Boundaries are stated here once (the design contract — what is protected and
+what is not — lives in the [threat model](#how-it-works) under *How it works*).
+
+**The price of physics**
+
+- A hard kill (`kill -9` / power cut) leaves a seconds-scale RAM residue —
+  it fades on reboot.
+- A seized *running* device reads what is being said — true of any live
+  conversation; closing ends it.
+- The carrier (teahouse/network) sees the table's physics: a circle's
+  existence, traffic shape, and relay topology among members (the circle id
+  is plaintext routing information) — but not a single word of content.
+- A screen clear is the terminal's *logical* clear; the terminal process's
+  own memory bytes are not necessarily zeroed — that layer is covered by the
+  power button.
+
+**The price of design**
+
+- No liveness probes: a peer that vanishes without closing (or over a
   punched UDP line, which has no EOF) leaves the line and its `/list` entry
-  hanging until the process exits. A zombie circle member is cleared out by the
-  witness rekey of her direct neighbor.
-- **The introducer's referral is unauthenticated.** Anyone who knows the tag
-  can register as your "peer" — bring a secret if you need to know who's there.
-- **The teahouse pairs by room number alone** — pick unguessable ones.
-- **The carrier sees the table's physics.** The teahouse/network can observe a
-  circle's existence, traffic shape and relay topology among members (the
-  circle id is plaintext routing information) — it cannot read a single word.
-  "The physical table is inherited by the teahouse" — documented honestly.
-- **Group consistency is by roll call.** Disagreement never hides — an
-  undecipherable line surfaces loudly as a "mumble"; any member re-runs
+  hanging until the process exits; a zombie circle member is cleared out by
+  the witness rekey of her direct neighbor.
+- The introducer's referral is unauthenticated: anyone who knows the tag can
+  register as your "peer" — bring a secret if you need to know who's there.
+  The teahouse pairs by room number alone — pick unguessable ones.
+- Group consistency is by roll call: disagreement never hides (an
+  undecipherable line surfaces loudly as a "mumble"); any member re-runs
   `/circle` to re-gather. When the hub of a star leaves, the rest re-gather
-  by roll call. One person may sit at several tables at once — bare verbs
-  act on the current seat (see *Several tables* above).
-- **Cross-version: chat still works, circles don't.** The size-padded chat
-  frame is invisible to older builds (silently skipped, no garbage);
-  old→new still reads fine; but 3.0.0's circle frame layouts are
-  incompatible with 1.x (that's exactly why this is a breaking release).
-  Upgrading both ends is best.
+  by roll call. One person may sit at several tables — bare verbs act on
+  the current seat.
+- Cross-version: chat still works, circles don't (since 3.0.0 the circle
+  frame layouts are incompatible with 1.x — that's exactly why it was a
+  breaking release). Upgrading both ends is best.
 
 ## 🚫 Non-Commercial Statement
 
@@ -449,10 +425,9 @@ is copyright infringement.
   control laws. It is **solely the user's responsibility** to determine and
   comply with all applicable laws before using this project.
 - **Known security boundary**:
-  This system provides secrecy, not identity authentication (the telephone
-  model) — unless both sides use a shared secret or compare the SAS word, an
-  active man-in-the-middle can relay the conversation; recognizing the other
-  end is the user's own responsibility. Assess the risks before use.
+  This system provides secrecy, not identity authentication — the full
+  boundary and threat-model statement lives in the body text; assess the
+  risks before use.
 - **No warranty whatsoever**:
   This software is provided under its license terms **without any warranty,
   express or implied**, including but not limited to merchantability, fitness

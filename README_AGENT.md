@@ -1128,8 +1128,17 @@ pending_work:
       代理双进程冒烟 2/2 稳定，含 socks5h 域名原样入代理账本的直接证据
       + 200KB 文件 md5 一致；IPv6 双栈双路真实进程验收 v4-mapped +
       v6-native 各自 MET 对话）；:0 出生横幅实测显示真端口（两轮：
-      127.0.0.1:64832 / 127.0.0.1:49630）。待 owner 侧：push 后 CI 7
-      job、四 ABI 产物重建（android.yml 名单已 20）、tag 4.2.0。
+      127.0.0.1:64832 / 127.0.0.1:49630）。收尾（后续 commit，4.2.0
+      发布面）：linux CI 产物线（.github/workflows/linux.yml——glibc
+      .so @ ubuntu-22.04 含 20 符号断言 + musl 静态 exe 含 file 真静态
+      断言，release artifacts 的产出通道）；双语 README 精炼（owner
+      裁决「边界只有一处统一声明，诚实但不防御性写作」——威胁模型留
+      在工作原理（设计的契约），「已知限制」升格为「诚实的边界」作为
+      唯一边界清单（物理的价/设计的价两栏），内联的「诚实边界：」
+      全部删除或收编，警惕者手册压缩约三分之一（边界只说一遍+表格
+      瘦身），免责声明的边界条目改为指向正文）。待 owner 侧：push 后
+      CI（test/android/linux/codeql）、四 ABI 产物重建（android.yml
+      名单已 20）、tag 4.2.0。
     tests: >-
       rogue 全量含 3 新集成；FFI 契约（C + ctypes）create_via 走位；
       符号名单断言（CI android.yml + 本侧 objdump 实测一致）。

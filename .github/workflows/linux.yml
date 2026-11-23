@@ -1,0 +1,48 @@
+name: linux
+# Linux 产物线（4.2.0）：glibc .so 与 musl 静态 exe 作为 release artifacts
+# 的产出通道。符号断言与 android.yml 同款（20 个 e2ee_* 名单一致）；
+# musl 侧用 `file` 断言真静态（零动态依赖——torsocks 场景尤其干净）。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  glibc-so:
+    runs-on: ubuntu-22.04   # glibc 2.35：比 latest(24.04) 兼容面更宽
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p e2ee-ffi
+      - name: 断言：20 个 e2ee_* 导出符号（名单一致）
+        run: |
+          nm -D target/release/libe2ee.so | grep ' T e2ee_' | awk '{print $3}' | LC_ALL=C sort > got.txt
+          printf '%s\n' \
+            e2ee_await_secret e2ee_bye e2ee_dial e2ee_file_abort \
+            e2ee_file_begin e2ee_file_chunk e2ee_file_end e2ee_file_no \
+            e2ee_file_yes e2ee_last_error e2ee_leave e2ee_local_addr \
+            e2ee_person_create e2ee_person_create_hidden e2ee_person_create_via \
+            e2ee_person_destroy e2ee_poll e2ee_set_receive e2ee_speak \
+            e2ee_version \
+            | LC_ALL=C sort > want.txt
+          diff -u want.txt got.txt
+          echo "符号断言通过：$(wc -l < got.txt) 个 e2ee_* 导出"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-so
+          path: target/release/libe2ee.so
+
+  musl-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: rustup target add x86_64-unknown-linux-musl
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: 断言：真静态（不依赖任何动态库）
+        run: file target/x86_64-unknown-linux-musl/release/E2EE-Experiment | grep -q 'statically linked'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-musl
+          path: target/x86_64-unknown-linux-musl/release/E2EE-Experiment

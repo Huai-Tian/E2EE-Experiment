@@ -11,6 +11,7 @@
 - **IPv6 双栈监听**：`[::]` 通配形态出生时显式放开 v6-only（Windows 默认单栈）——v4 来客照常进门；其余地址行为不变。
 - **Rust 库 API**：`Outbound` 枚举（`Direct` | `Socks5 { proxy }`）+ `Person::born_with`（`born` 委托 `Direct`，add-only 零破坏）；`Outbound` 自 `e2ee` 根导出。
 - **FFI**：C ABI add-only——新增 `e2ee_person_create_via`（共 **20** 个 `e2ee_*`；proxy 为 NULL 等同 `create`）；`include/e2ee.h` 同步；android.yml 断言名单 19→20。
+- **Linux 产物线（CI）**：新增 linux workflow——glibc `.so`（ubuntu-22.04，20 符号断言与 android 同款）与 musl 静态 exe（`file` 断言真静态）作为 release artifacts 的产出通道，随 main 自动构建。
 - **点名卫生**（README 双语，协议零改动）：长期无成员变动的圈子不会自己换钥——常聚的桌记得常点名，新圈号加全员新贡献让一切历史密文作废（密钥保鲜权全归人类手势的配套习惯）。
 
 ### 修复
