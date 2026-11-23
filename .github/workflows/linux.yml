@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   glibc-so:
     runs-on: ubuntu-22.04   # glibc 2.35：比 latest(24.04) 兼容面更宽
