@@ -40,8 +40,18 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: rustup target add x86_64-unknown-linux-musl
       - run: cargo build --release --target x86_64-unknown-linux-musl
-      - name: 断言：真静态（不依赖任何动态库）
-        run: file target/x86_64-unknown-linux-musl/release/E2EE-Experiment | grep -q 'statically linked'
+      - name: 断言：真静态（零动态依赖）
+        run: |
+          bin=target/x86_64-unknown-linux-musl/release/E2EE-Experiment
+          file "$bin"
+          # musl 静态判据（社区标准）：ldd 报 "not a dynamic executable"
+          if ldd "$bin" 2>&1 | grep -q "not a dynamic executable"; then
+            echo "静态断言通过：零动态依赖"
+          else
+            echo "静态断言失败——产物不是真静态：" >&2
+            ldd "$bin" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64-musl
