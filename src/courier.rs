@@ -41,7 +41,13 @@ pub async fn serve(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("介绍人开不了张（UDP {port} 被占）：{e}；茶馆照常。");
         }
     }
-    eprintln!("茶馆开张 {addr} —— 只接线，不识字，不留客。掌柜兼做介绍人（同门牌 UDP）。");
+    // 开张横幅说的是实际守着的地址（入参端口填 0 时系统分配的真端口）——
+    // 取不到时回退入参（响亮不装死）。
+    let bound = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| addr.to_string());
+    eprintln!("茶馆开张 {bound} —— 只接线，不识字，不留客。掌柜兼做介绍人（同门牌 UDP）。");
 
     // 等人的房间：房号 → 想搭线的那一端。
     // 房号由客人自选（双方带外约定，与暗号同路数）——茶馆只认号接线。

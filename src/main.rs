@@ -205,7 +205,10 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
             notes.push_str("（常备门禁：每位来客都要对上暗号）");
         }
     }
-    eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（Ctrl-C 离场）");
+    // 横幅说的是实际守着的地址（:0 出生时系统分配的真端口——不是
+    // 入参；入参只是愿望，绑上的才是事实）。
+    let bound = person.listen_addr().await;
+    eprintln!("我是 {name}，在听 {bound}{notes}。等人来，或 /dial 找人（Ctrl-C 离场）");
     // 出行方式的知情横幅（P23）：经代理这件事必须响亮说清——对端
     // 看到的来路是代理，流量形状对代理可见（传输层的事归传输层）。
     if let Some(proxy) = &socks {

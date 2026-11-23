@@ -1079,7 +1079,7 @@ pending_work:
       断言名单已 19）。
 
   P23_transport_proxy_4_2_0:                # 4.2.0 主工程：出行方式（SOCKS5 出站代理 + IPv6 双栈）——owner 立项 2026-11-22（「代理应该是底层的支持，而不是子功能」→ 传输原语化）
-    status: landed-2026-11-23             # 三 patch 落地（库层→CLI/FFI→文档）；验证链见 landed
+    status: landed-2026-11-23             # 四 patch 落地（库层→CLI/FFI→文档→附带修复+文档收尾）；验证链见 landed
     depends: []
     scope: >-
       Outbound 枚举（Direct|Socks5）：出行方式出生时定死——born_with 新构造器
@@ -1115,16 +1115,20 @@ pending_work:
       多实例复核后不修（判例）：open_received_file 已有同名 N-前缀递增
       防覆盖 + 建文件失败响亮（P22 连带修复），残余仅「目录混入」且文件名
       自带归属；端口子目录方案破坏 ./received/ 既有约定——按最小改动纪律
-      不为想象中的用户加防护。文档（patch 3/3）：README 双语 --socks 选项
+      不为想象中的用户加防护。文档（patch 3/4）：README 双语 --socks 选项
       行 + Tor 组合节（torsocks 场景/茶馆 onion service/打洞限制/两层
       开放供给的封锁成本论证）+ 群聊修桌段的点名卫生（长期圈保鲜——
       pure_rekey 裁决的社会层配套）；本档案 P23 立项 + known_limitations
       增补 sybil_seats + pure_rekey 处补长期圈保鲜边界；CHANGELOG 4.2.0；
-      Cargo 4.1.0→4.2.0。验证（Windows GNU 工具链，沙箱自建 gcc 16.2 +
+      Cargo 4.1.0→4.2.0。附带修复+文档收尾（patch 4/4，owner 验收轮指令「能修复就修复」）：横幅真实性——既有瑕疵自初版即存在（CLI 出生与茶馆开张横幅打印入参而非实际绑定地址，:0 出生=盲出生，/card 不含端口无处可查）；修=main.rs 用 person.listen_addr()、courier.rs 用 listener.local_addr()（取不到回退入参，响亮不装死）；CHANGELOG 4.2.0 补「修复」小节；本 landed 链补第四 patch 记录。验证（Windows GNU 工具链，沙箱自建 gcc 16.2 +
       binutils 2.47 环境）：rogue 全量 21 单元 + 90 集成（87 基线 + 3
       新增）+ 1 pq 零失败零警告；e2ee.dll 实测恰 20 个 e2ee_* 导出且
       名单一致（objdump 导出表）；FFI OK（MinGW gcc 编译链接 e2ee.dll
-      实跑，含 create_via 走位）+ ctypes OK。待 owner 侧：push 后 CI 7
+      实跑，含 create_via 走位）+ ctypes OK；端到端验收（pproxy 第三方
+      代理双进程冒烟 2/2 稳定，含 socks5h 域名原样入代理账本的直接证据
+      + 200KB 文件 md5 一致；IPv6 双栈双路真实进程验收 v4-mapped +
+      v6-native 各自 MET 对话）；:0 出生横幅实测显示真端口（两轮：
+      127.0.0.1:64832 / 127.0.0.1:49630）。待 owner 侧：push 后 CI 7
       job、四 ABI 产物重建（android.yml 名单已 20）、tag 4.2.0。
     tests: >-
       rogue 全量含 3 新集成；FFI 契约（C + ctypes）create_via 走位；
