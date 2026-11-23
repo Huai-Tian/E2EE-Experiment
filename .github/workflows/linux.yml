@@ -34,24 +34,22 @@ jobs:
 
   musl-static:
     runs-on: ubuntu-latest
+    env:
+      # 显式强制静态链接（v3.0.0 产物形态：无 PT_INTERP，零动态依赖）。
+      # Ubuntu musl-tools 的 musl-gcc wrapper 对 -static 的传递不可靠，
+      # C 侧（pqclean 经 cc crate）与 rust 侧都要钉死。
+      RUSTFLAGS: -C target-feature=+crt-static
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
       - run: rustup target add x86_64-unknown-linux-musl
       - run: cargo build --release --target x86_64-unknown-linux-musl
-      - name: 断言：真静态（零动态依赖）
+      - name: 断言：真静态（无 PT_INTERP 段）
         run: |
           bin=target/x86_64-unknown-linux-musl/release/E2EE-Experiment
-          file "$bin"
-          # musl 静态判据（社区标准）：ldd 报 "not a dynamic executable"
-          if ldd "$bin" 2>&1 | grep -q "not a dynamic executable"; then
-            echo "静态断言通过：零动态依赖"
-          else
-            echo "静态断言失败——产物不是真静态：" >&2
-            ldd "$bin" >&2
-            exit 1
-          fi
+          file "$bin" || true
+          readelf -l "$bin" | grep -q INTERP && { echo "存在 PT_INTERP 段——不是真静态：" >&2; readelf -l "$bin" | grep -A1 INTERP >&2; exit 1; } || echo "静态断言通过：无动态链接器段（零动态依赖）"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64-musl
