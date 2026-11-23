@@ -123,6 +123,21 @@ int main(void) {
         CHECK(1, "destroy hidden");
     }
 
+    /* 带出行方式的出生（4.2.0 P23）：proxy 为 NULL 等同 create——
+       ABI 形状走位（真代理的行为深度由 Rust 集成测试覆盖） */
+    e2ee_person* via = e2ee_person_create_via("Via", "127.0.0.1:0", NULL);
+    CHECK(via != NULL, "create_via with NULL proxy (= create)");
+    if (via) {
+        char vaddr[64];
+        CHECK(e2ee_local_addr(via, vaddr, sizeof vaddr) == 0 && vaddr[0] != '\0',
+              "local_addr via");
+        CHECK(e2ee_dial(via, addr, NULL, &id) == 0 && id > 0, "via dials A by exact address");
+        CHECK(wait_for(a, E2EE_EVENT_MET, &ev) && strcmp(ev.name, "Via") == 0,
+              "A met Via");
+        e2ee_person_destroy(via);
+        CHECK(1, "destroy via");
+    }
+
     e2ee_person_destroy(a);
     e2ee_person_destroy(b);
     CHECK(1, "destroy both");

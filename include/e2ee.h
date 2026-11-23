@@ -65,6 +65,7 @@ const char*    e2ee_version(void);
 
 /* 生灭 */
 e2ee_person*   e2ee_person_create(const char* name, const char* listen_addr); /* NULL 失败 */
+e2ee_person*   e2ee_person_create_via(const char* name, const char* listen_addr, const char* proxy); /* 4.2.0：带出行方式出生，proxy 为 NULL 等同 create，非 NULL = 全部出站连接经该 SOCKS5 代理（域名由代理解析） */
 e2ee_person*   e2ee_person_create_hidden(const char* name, const char* listen_addr); /* 已废弃的别名（3.0.0 起等同 create）：喊话发现已删除，无隐身语义 */
 void           e2ee_person_destroy(e2ee_person* p);                           /* 体面道别后熄灭 */
 

@@ -113,7 +113,22 @@ pub extern "C" fn e2ee_person_create(
     name: *const c_char,
     listen_addr: *const c_char,
 ) -> *mut FfiPerson {
-    person_create_impl(name, listen_addr)
+    person_create_impl(name, listen_addr, std::ptr::null())
+}
+
+/// 出生（带出行方式，P23）：proxy 为 NULL 时与 e2ee_person_create
+/// 完全相同（直达）；非 NULL 时全部出站连接（dial/茶馆）经这枚
+/// SOCKS5 代理（socks5h：目标域名由代理解析，onion 可达）。
+///
+/// # Safety
+/// name / listen_addr / proxy（非 NULL 时）必须是合法的 NUL 结尾 UTF-8 C 字符串。
+#[unsafe(no_mangle)]
+pub extern "C" fn e2ee_person_create_via(
+    name: *const c_char,
+    listen_addr: *const c_char,
+    proxy: *const c_char,
+) -> *mut FfiPerson {
+    person_create_impl(name, listen_addr, proxy)
 }
 
 /// 出生（隐身）——**已废弃的别名**（3.0.0）：局域网喊话发现已整体删除
@@ -128,20 +143,33 @@ pub extern "C" fn e2ee_person_create_hidden(
     name: *const c_char,
     listen_addr: *const c_char,
 ) -> *mut FfiPerson {
-    person_create_impl(name, listen_addr)
+    person_create_impl(name, listen_addr, std::ptr::null())
 }
 
-/// 出生路径的共通内里。
-fn person_create_impl(name: *const c_char, listen_addr: *const c_char) -> *mut FfiPerson {
+/// 出生路径的共通内里（P23：proxy 非 NULL = 经 SOCKS5 出行）。
+fn person_create_impl(
+    name: *const c_char,
+    listen_addr: *const c_char,
+    proxy: *const c_char,
+) -> *mut FfiPerson {
     let work = || -> Result<FfiPerson, String> {
         let name = unsafe { cstr_in(name, "name") }?;
         let addr = unsafe { cstr_in(listen_addr, "listen_addr") }?;
+        // 出行方式：NULL = 直达；字符串 = SOCKS5（与 Rust 的
+        // Outbound::Socks5 一一对应——出生时定死，进程内全局生效）
+        let outbound = if proxy.is_null() {
+            e2ee::Outbound::Direct
+        } else {
+            e2ee::Outbound::Socks5 {
+                proxy: unsafe { cstr_in(proxy, "proxy") }?,
+            }
+        };
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|e| format!("起不动运转时：{e}"))?;
         let (person, events) = rt
-            .block_on(Person::born(&name, &addr))
+            .block_on(Person::born_with(&name, &addr, outbound))
             .map_err(|e| e.to_string())?;
         let la = rt.block_on(person.listen_addr());
         Ok(FfiPerson {

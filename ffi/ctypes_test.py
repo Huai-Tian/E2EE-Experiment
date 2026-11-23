@@ -8,6 +8,9 @@ lib = ctypes.CDLL("target/release/libe2ee.so")
 lib.e2ee_version.restype = ctypes.c_char_p
 lib.e2ee_person_create.restype = ctypes.c_void_p
 lib.e2ee_person_create_hidden.restype = ctypes.c_void_p
+# 4.2.0 P23：带出行方式的出生（proxy 为 NULL = 直达）
+lib.e2ee_person_create_via.restype = ctypes.c_void_p
+lib.e2ee_person_create_via.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
 lib.e2ee_person_destroy.argtypes = [ctypes.c_void_p]
 lib.e2ee_local_addr.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
 lib.e2ee_dial.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint64)]
@@ -96,6 +99,13 @@ hidden = lib.e2ee_person_create_hidden(b"Hidden", b"127.0.0.1:0")
 assert hidden
 lib.e2ee_person_destroy(hidden)
 print("hidden OK")
+
+# 带出行方式的出生（4.2.0 P23）：proxy 为 NULL 等同 create——ABI 形状
+# 走位（真代理的行为深度由 Rust 集成测试覆盖）
+via = lib.e2ee_person_create_via(b"Via", b"127.0.0.1:0", None)
+assert via
+lib.e2ee_person_destroy(via)
+print("create_via OK")
 
 lib.e2ee_person_destroy(alice)
 lib.e2ee_person_destroy(bob)

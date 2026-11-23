@@ -32,6 +32,12 @@ E2EE-Experiment —— 一个像人一样的二进制：启动即在场，能听
       开茶馆：同一个二进制的另一份工。认房号、接线、只搬看不懂的字节
       （房号由客人带外自选，茶馆只认号接线）。
       部署在任意有公网 IP 的机器上；无身份、无存储、无明文。
+  E2EE-Experiment --socks <ADDR:PORT> [监听地址] [-n 名字]
+      带出行方式出生：全部出站连接（/dial、/meet）经这枚 SOCKS5
+      代理——比如本机 Tor 的 127.0.0.1:9050。目标域名由代理解析
+      （socks5h），onion 地址因此可达；茶馆自身也可以是 onion service。
+      监听面不走代理（入站天然直达）；/punch 打洞与代理结构上不合，
+      代理形态下会合走 /meet。详见 README 的「Tor 组合」。
 
 在场指令：
   /dial <ADDR:PORT> [暗号]
@@ -97,6 +103,8 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut as_courier = false;
     let mut guard_prompt = false;
     let mut skittish = false;
+    // 出行方式（P23）：None = 直达；Some = 全部出站连接经这枚 SOCKS5。
+    let mut socks: Option<String> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -109,6 +117,19 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::SUCCESS);
             }
             "--courier" => as_courier = true,
+            // 出行方式（P23）：全部出站连接经 SOCKS5 代理（tor 组合的
+            // 入口——传输层匿名交给网络社区，端点湮灭留给我们）。
+            "--socks" => match argv.get(i + 1) {
+                Some(s) if !s.starts_with('-') => {
+                    socks = Some(s.clone());
+                    i += 1;
+                }
+                _ => {
+                    eprintln!("--socks 后面要跟代理地址（如 127.0.0.1:9050）\n");
+                    eprintln!("{HELP}");
+                    return Ok(ExitCode::from(2));
+                }
+            },
             // 警惕模式（P21，rulings.2026_10_31_skittish_spec）：合盖/锁屏
             // 即蒸发。CLI 专属消费端手势——库零改动（kept.skittish_cli_only）。
             "--skittish" => skittish = true,
@@ -163,8 +184,15 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // 出生；此后一半心思听事件，一半心思读输入。
-    let (person, mut events) = Person::born(&name, &listen_addr).await?;
+    // 出生；此后一半心思听事件，一半心思读输入。带出行方式时走
+    // born_with（P23：出行方式出生时定死——dial 与茶馆共用）。
+    let (person, mut events) = match &socks {
+        Some(proxy) => {
+            Person::born_with(&name, &listen_addr, e2ee::Outbound::Socks5 { proxy: proxy.clone() })
+                .await?
+        }
+        None => Person::born(&name, &listen_addr).await?,
+    };
     let mut notes = String::new();
     // 常备门禁（耳语式，kept.guard_whisper_input）：钥匙不进命令行
     //（/proc 公告栏与 shell 历史），启动后在这里悄悄问你要——无回显。
@@ -178,6 +206,11 @@ async fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
     }
     eprintln!("我是 {name}，在听 {listen_addr}{notes}。等人来，或 /dial 找人（Ctrl-C 离场）");
+    // 出行方式的知情横幅（P23）：经代理这件事必须响亮说清——对端
+    // 看到的来路是代理，流量形状对代理可见（传输层的事归传输层）。
+    if let Some(proxy) = &socks {
+        eprintln!("出行经代理 {proxy}：全部出站连接（/dial、/meet）走它；打洞与代理不合，会合请走 /meet。");
+    }
     // P21 警惕模式知情横幅：这不是默认行为，是用户自己选的易惊状态——
     // 姿态必须在启动时响亮说清（rulings.2026_10_31_skittish_spec）。
     if skittish {
