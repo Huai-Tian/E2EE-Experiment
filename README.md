@@ -48,13 +48,10 @@ Three properties carry all the weight:
    server/client split and no privileged node. The optional "teahouse" used
    for NAT traversal only shuffles bytes it cannot read.
 
-**Honest threat model.** *Protects against:* anyone on the wire (ISP, Wi-Fi
-snooper, backbone tap) — they see encrypted frames and nothing else.
-*Does not protect against (by default):* an active man-in-the-middle who
-relays the handshake (the telephone model's accepted cost — a shared secret
-blocks it and the SAS word exposes it, see
-[Secrets & SAS](#secrets--sas-knowing-who-is-on-the-other-end)), and the
-other end itself (they can copy, paste, screenshot).
+**What it protects against:** anyone on the wire (ISP, Wi-Fi snooper,
+backbone tap) — they see encrypted frames and nothing else. All other
+boundaries (what is not protected, and at what cost) are stated once in
+[Honest boundaries](#honest-boundaries).
 
 ### Key details worth knowing
 
@@ -194,7 +191,7 @@ who receives. Two answers, both built in:
 - **The teahouse** — run the same binary as `--courier` on any machine with a
   public IP. It is not a privileged server: no identity, no storage, no
   plaintext. Two guests who agree on a room number out-of-band get wired
-  together. It sees who, when, and how many bytes — never a word.
+  together.
   ```bash
   # on the public machine
   ./E2EE-Experiment --courier 0.0.0.0:8888
@@ -289,15 +286,9 @@ skittish mode every exit clears the screen, including Ctrl-C. It does not
 power off, does not close the terminal window — the machine only automates
 the invisible; visible acts of defiance are timed by your own hand.
 
-**One boundary, stated once**: the moment a trigger fires, this mode assumes
-the device has already been taken over by a hardware forensics rig. Under
-read-only takeover (the forensics norm — evidence discipline forbids modifying
-the target) the response above works; under read-write takeover (can patch
-memory, can strip the wipe logic) no software is trustworthy — this program
-included. Holding the power button for 4 seconds (EC-level power cut, below
-the OS, unblockable by any software) is the **only reliably effective** human
-act under full takeover. **This program does not defend the device itself —
-by choosing this machine, you have chosen to trust it.**
+The mode's boundary (the two shapes of hardware takeover, and why the
+4-second power hold is the only reliably effective human act) is stated once
+in [Honest boundaries](#honest-boundaries).
 
 | Gesture | Speed |
 |---------|-------|
@@ -330,8 +321,9 @@ live there — read them before touching anything.
 
 ## Honest boundaries
 
-Boundaries are stated here once (the design contract — what is protected and
-what is not — lives in the [threat model](#how-it-works) under *How it works*).
+What the system cannot do, and at what cost — stated here once. *How it
+works* covers mechanisms (what it does); feature sections serve understanding
+and do not repeat boundaries.
 
 **The price of physics**
 
@@ -339,15 +331,31 @@ what is not — lives in the [threat model](#how-it-works) under *How it works*)
   it fades on reboot.
 - A seized *running* device reads what is being said — true of any live
   conversation; closing ends it.
+- **The skittish-mode boundary**: the moment a trigger fires, the mode
+  assumes the device has already been taken over by a hardware forensics
+  rig. Under read-only takeover (the forensics norm — evidence discipline
+  forbids modifying the target) the wipe response works; under read-write
+  takeover (can patch memory, can strip the wipe logic) no software is
+  trustworthy — this program included. Holding the power button for 4
+  seconds (EC-level power cut, below the OS, unblockable by any software)
+  is the **only reliably effective** human act under full takeover.
+  **This program does not defend the device itself — by choosing this
+  machine, you have chosen to trust it.**
 - The carrier (teahouse/network) sees the table's physics: a circle's
   existence, traffic shape, and relay topology among members (the circle id
-  is plaintext routing information) — but not a single word of content.
+  is plaintext routing information), and who enters which room when — but
+  not a single word of content.
 - A screen clear is the terminal's *logical* clear; the terminal process's
   own memory bytes are not necessarily zeroed — that layer is covered by the
   power button.
 
 **The price of design**
 
+- By default, no defense against an active man-in-the-middle (the telephone
+  model's stance: the wire is secret, identity is verified by humans — a
+  shared secret blocks it, the SAS word exposes it, see
+  [Secrets & SAS](#secrets--sas-knowing-who-is-on-the-other-end)); nor
+  against the other end itself (they can copy, paste, screenshot).
 - No liveness probes: a peer that vanishes without closing (or over a
   punched UDP line, which has no EOF) leaves the line and its `/list` entry
   hanging until the process exits; a zombie circle member is cleared out by
