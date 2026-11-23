@@ -47,6 +47,16 @@ chacha20poly1305 = "0.11.0"
 # 用后即焚包装；snow 侧密钥由 vendored fork 覆盖
 zeroize = "1"
 ed25519-dalek = { version = "2", default-features = false, features = ["fast", "zeroize"] }
+# 4.2.0 P23：出站传输原语化——SOCKS5 出站代理（聚焦原则：代理协议
+# 交可靠提供方 tokio-socks，自研边界=对话物理学的协议翻译）。
+# 0.5.x 才支持 tokio 1.x（0.3 是 tokio 0.2 时代的旧版）。
+# Socks5Stream::connect(proxy, target) 的 target 是域名串时代理解析
+# 在代理侧（socks5h 语义）——Tor onion 地址因此可达。
+tokio-socks = "0.5"
+# 4.2.0 P23：IPv6 双栈监听——Windows 上 bind [::] 默认 v6-only，
+# socket2 显式 set_only_v6(false) 才收 v4-mapped。socket2 本就是
+# tokio 的传递依赖（Cargo.lock 已含），不增加实际包数。
+socket2 = "0.6"
 # CLI 进程级防护（RLIMIT_CORE=0）——库本体不碰进程策略
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

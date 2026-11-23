@@ -31,6 +31,83 @@ const NOISE_PARAMS_PSK: &str = "Noise_NNpsk0+hfs_25519+Kyber1024_ChaChaPoly_BLAK
 /// 找人时敲门的最长等待。
 const DIAL_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 出站传输形态（4.2.0 P23，传输原语化）。
+///
+/// 一个人的出行方式是她这一天的全局形态，不是每次会面的零散选项——
+/// 出生时一次定死（[`Person::born_with`]），进程内全部出站连接
+/// （dial 直连、茶馆进房）走同一种形态。监听面不走代理（入站天然
+/// 直达）；UDP 打洞与 SOCKS 结构性不兼容——代理形态下会合走茶馆
+/// （茶馆自身可以是 onion service，README「Tor 组合」）。
+///
+/// `Socks5` 是 socks5h 语义：目标以域名形态交给代理解析（tor 的
+/// onion 地址本地根本解析不了，解析只能发生在代理内部）。
+#[derive(Clone, Debug)]
+pub enum Outbound {
+    /// 直达（默认，一切照旧）。
+    Direct,
+    /// 所有出站连接经这枚 SOCKS5 代理（如 `127.0.0.1:9050`）。
+    Socks5 { proxy: String },
+}
+
+/// 唯一的出站连接原语：协议不绑定传输的既有不变量（握手泛型
+/// `S: AsyncRead+AsyncWrite`，TCP 与打洞线共用）在此显式化——
+/// 直连与代理形态产出同一种 `TcpStream`，上层协议零感知。
+pub(crate) async fn connect_outbound(
+    addr: &str,
+    outbound: &Outbound,
+) -> std::io::Result<TcpStream> {
+    match outbound {
+        Outbound::Direct => TcpStream::connect(addr).await,
+        Outbound::Socks5 { proxy } => tokio_socks::tcp::Socks5Stream::connect(proxy.as_str(), addr)
+            .await
+            .map(|s| s.into_inner())
+            .map_err(|e| std::io::Error::other(e.to_string())),
+    }
+}
+
+/// 唯一的监听原语：地址为 `[::]` 形态时显式关掉 v6-only（Windows
+/// 默认单栈，Linux 天生双栈），v4-mapped 来客照常进门；其余地址
+/// 一切照旧。跨平台双栈是 socket2 的本职（tokio 的既有传递依赖）。
+async fn bind_listener(listen_addr: &str) -> std::io::Result<TcpListener> {
+    // 地址为 v6 通配（[::]）形态时 = 双栈监听：Windows 默认 v6-only，
+    // 显式 set_only_v6(false) 收 v4-mapped；Linux 天生双栈。其余地址
+    // （127.0.0.1 / 显式单栈）一切照旧。
+    let dual = listen_addr
+        .parse::<SocketAddr>()
+        .ok()
+        .filter(|sa| sa.is_ipv6() && sa.ip().is_unspecified());
+    match dual {
+        Some(sa) => {
+            let sock = socket2::Socket::new(
+                socket2::Domain::IPV6,
+                socket2::Type::STREAM,
+                Some(socket2::Protocol::TCP),
+            )?;
+            // 失败不致命：Linux 本来就双栈（默认 v6only=0），Windows 上
+            // 这一步是双栈的全部意义。
+            let _ = sock.set_only_v6(false);
+            sock.bind(&sa.into())?;
+            sock.listen(1024)?;
+            sock.set_nonblocking(true)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::io::{FromRawFd, IntoRawFd};
+                let std_listener =
+                    unsafe { std::net::TcpListener::from_raw_fd(sock.into_raw_fd()) };
+                TcpListener::from_std(std_listener)
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::io::{FromRawSocket, IntoRawSocket};
+                let std_listener =
+                    unsafe { std::net::TcpListener::from_raw_socket(sock.into_raw_socket()) };
+                TcpListener::from_std(std_listener)
+            }
+        }
+        None => TcpListener::bind(listen_addr).await,
+    }
+}
+
 /// 相遇的总预算：对暗号、混成握手、互报姓名，都各不得超过这么久。
 /// 连上却不吭声的（端口扫描之类），不该一直占着门厅与切口。
 const MEET_TIMEOUT: Duration = Duration::from_secs(10);
@@ -754,6 +831,8 @@ struct Inner {
     listen_port: u16,
     /// 实际绑定上的地址（端口填 0 时这里是真端口）。
     listen_addr: String,
+    /// 出行方式（P23）：出生时定死，全部出站连接（dial/茶馆）走它。
+    outbound: Outbound,
     convos: HashMap<u64, Convo>,
     focus: Option<u64>,
     next_id: u64,
@@ -900,7 +979,20 @@ impl Person {
     /// （3.0.0：局域网喊话耳朵已退役——出生只竖 TCP 这一只耳朵，
     /// 无邀请暴露源归零，removals_3_0_0.v1_discovery_family。）
     pub async fn born(name: &str, listen_addr: &str) -> Result<(Person, Events), PersonError> {
-        let listener = TcpListener::bind(listen_addr)
+        Self::born_with(name, listen_addr, Outbound::Direct).await
+    }
+
+    /// 带出行方式的出生（4.2.0 P23）：`Outbound::Socks5` 时全部出站
+    /// 连接经代理——tor 之上跑本系统的组合形态（README「Tor 组合」：
+    /// 传输层匿名交给网络社区，端点湮灭留给我们，两层开放性相乘）。
+    /// 出行方式随进程生灭、不落盘；监听面不走代理；UDP 打洞与 SOCKS
+    /// 结构性不兼容（代理形态下会合走茶馆）。
+    pub async fn born_with(
+        name: &str,
+        listen_addr: &str,
+        outbound: Outbound,
+    ) -> Result<(Person, Events), PersonError> {
+        let listener = bind_listener(listen_addr)
             .await
             .map_err(|source| PersonError::Bind {
                 addr: listen_addr.to_string(),
@@ -920,6 +1012,7 @@ impl Person {
                 my_name: name.to_string(),
                 listen_port: port,
                 listen_addr: bound,
+                outbound,
                 convos: HashMap::new(),
                 focus: None,
                 next_id: 1,
@@ -1042,7 +1135,11 @@ impl Person {
 
     /// 找人的内层：带失败情报（切口是否被查验过），dial 与 dial_secret 共用。
     async fn dial_inner(&self, addr: &str, secret: Option<&[u8]>) -> Result<u64, GreetFailure> {
-        let stream = match tokio::time::timeout(DIAL_TIMEOUT, TcpStream::connect(addr)).await {
+        // 出行方式出生时定死（P23）：出站一律走唯一的连接原语。
+        let outbound = self.inner.lock().await.outbound.clone();
+        let stream = match tokio::time::timeout(DIAL_TIMEOUT, connect_outbound(addr, &outbound))
+            .await
+        {
             Ok(Ok(s)) => s,
             Ok(Err(source)) => {
                 return Err(GreetFailure {
@@ -1093,7 +1190,8 @@ impl Person {
         room: u32,
         secret: Option<&[u8]>,
     ) -> Result<u64, PersonError> {
-        let (mut stream, as_initiator) = crate::courier::enter(courier_addr, room)
+        let outbound = self.inner.lock().await.outbound.clone();
+        let (mut stream, as_initiator) = crate::courier::enter(courier_addr, room, &outbound)
             .await
             .map_err(|e| PersonError::Teahouse {
                 detail: e.to_string(),

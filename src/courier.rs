@@ -240,11 +240,14 @@ async fn splice(a: TcpStream, b: TcpStream) -> PairOutcome {
 /// 找茶馆：拨通、报房号、等到齐。返回接好的裸线，和这端该当的角色
 /// （后到者为发起方，先到者为应答方）。
 /// 这条线上随后跑的仍是 Noise——茶馆只是把它接了起来。
+/// 出行方式（P23）原样传入：茶馆本身可以在代理的另一头（比如 onion
+/// service），去茶馆的路跟去找任何人的路是同一种路。
 pub async fn enter(
     courier_addr: &str,
     room: u32,
+    outbound: &crate::person::Outbound,
 ) -> Result<(TcpStream, bool), Box<dyn std::error::Error>> {
-    let mut stream = TcpStream::connect(courier_addr).await?;
+    let mut stream = crate::person::connect_outbound(courier_addr, outbound).await?;
     write_frame(&mut stream, format!("JOIN {room}").as_bytes()).await?;
     // 等到齐：茶馆回「PAIRED I/R」或断开
     let deadline = tokio::time::Instant::now() + WAIT_FOR_PAIR;

@@ -4748,3 +4748,234 @@ async fn P6_共线中继_两圈经一继_连通性自愈() {
     expect(&mut carol_ev, |e| heard(e).filter(|(h, _)| h == "Bob")).await;
     ctask.abort();
 }
+
+// ═══════════════════════════════════════════════════════════════
+// P23 出站传输原语化（4.2.0）：SOCKS5 代理 + IPv6 双栈
+// ═══════════════════════════════════════════════════════════════
+
+/// 测试内嵌的极简 SOCKS5 服务器（P23 代理测试的会合基础设施，
+/// rogue 注入面同族的测试自备件）：无鉴权、只认 CONNECT；目标解析
+/// 在服务器侧完成——这正是 socks5h 的「代理解析」语义，目标串
+/// 原样记账进通道供断言（IP 与域名两种 ATYP 都收）。
+/// 返回（代理地址，目标记账通道）。
+async fn spawn_socks5() -> (String, tokio::sync::mpsc::UnboundedReceiver<String>) {
+    use tokio::io::AsyncReadExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("代理开张不应失败");
+    let addr = listener.local_addr().unwrap().to_string();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut c, _)) = listener.accept().await else { continue };
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                // 问好：VER NMETHODS METHODS…
+                let mut h = [0u8; 2];
+                if c.read_exact(&mut h).await.is_err() {
+                    return;
+                }
+                let mut methods = vec![0u8; h[1] as usize];
+                if c.read_exact(&mut methods).await.is_err() {
+                    return;
+                }
+                use tokio::io::AsyncWriteExt;
+                if c.write_all(&[5, 0]).await.is_err() {
+                    return; // 无鉴权
+                }
+                // 请求：VER CMD RSV ATYP…
+                let mut r = [0u8; 4];
+                if c.read_exact(&mut r).await.is_err() {
+                    return;
+                }
+                if r[1] != 1 {
+                    return; // 只认 CONNECT
+                }
+                let target = match r[3] {
+                    1 => {
+                        let mut a = [0u8; 4];
+                        let mut p = [0u8; 2];
+                        if c.read_exact(&mut a).await.is_err() || c.read_exact(&mut p).await.is_err() {
+                            return;
+                        }
+                        format!("{}.{}.{}.{}:{}", a[0], a[1], a[2], a[3], u16::from_be_bytes(p))
+                    }
+                    3 => {
+                        // 域名原样到达（socks5h）：本地没解析过，这里才解
+                        let mut l = [0u8; 1];
+                        if c.read_exact(&mut l).await.is_err() {
+                            return;
+                        }
+                        let mut n = vec![0u8; l[0] as usize];
+                        let mut p = [0u8; 2];
+                        if c.read_exact(&mut n).await.is_err() || c.read_exact(&mut p).await.is_err() {
+                            return;
+                        }
+                        format!("{}:{}", String::from_utf8_lossy(&n), u16::from_be_bytes(p))
+                    }
+                    4 => {
+                        let mut a = [0u8; 16];
+                        let mut p = [0u8; 2];
+                        if c.read_exact(&mut a).await.is_err() || c.read_exact(&mut p).await.is_err() {
+                            return;
+                        }
+                        format!("[{}]:{}", std::net::Ipv6Addr::from(a), u16::from_be_bytes(p))
+                    }
+                    _ => return,
+                };
+                tx.send(target.clone()).ok();
+                let up = match tokio::net::TcpStream::connect(&target).await {
+                    Ok(u) => u,
+                    Err(_) => {
+                        let _ = c.write_all(&[5, 1, 0, 1, 0, 0, 0, 0, 0, 0]).await; // 拒绝
+                        return;
+                    }
+                };
+                // 应答成功（BND 填零占位），随后纯字节对倒
+                if c.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.is_err() {
+                    return;
+                }
+                let (mut cr, mut cw) = c.into_split();
+                let (mut ur, mut uw) = up.into_split();
+                let ab = async move {
+                    let mut b = [0u8; 8192];
+                    loop {
+                        match cr.read(&mut b).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if uw.write_all(&b[..n]).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let _ = uw.shutdown().await;
+                };
+                let ba = async move {
+                    let mut b = [0u8; 8192];
+                    loop {
+                        match ur.read(&mut b).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if cw.write_all(&b[..n]).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let _ = cw.shutdown().await;
+                };
+                tokio::join!(ab, ba);
+            });
+        }
+    });
+    (addr, rx)
+}
+
+#[tokio::test]
+async fn 出站代理_socks5h_域名原样到代理_密谈照常() {
+    // P23：Alice 的全部出站连接经本地 SOCKS5。域名形态拨号时，
+    // 代理账本上记的应是「域名:端口」原样（socks5h：解析在代理侧
+    // ——tor 的 onion 地址正是靠这一语义可达），握手里外如常。
+    let (proxy, mut targets) = spawn_socks5().await;
+    let (bob, mut bob_ev, _bob_addr) = spawn_person("Bob").await;
+    let bob_port = bob
+        .listen_addr()
+        .await
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .to_string();
+    let (alice, mut alice_ev) = Person::born_with(
+        "Alice",
+        "127.0.0.1:0",
+        e2ee::Outbound::Socks5 {
+            proxy: proxy.clone(),
+        },
+    )
+    .await
+    .expect("带代理出生不应失败");
+
+    alice
+        .dial(&format!("localhost:{bob_port}"))
+        .await
+        .expect("经代理应能相逢");
+    let (name, _, _) = expect(&mut alice_ev, met).await;
+    assert_eq!(name, "Bob");
+
+    // 双向说话——这条线整段流经代理，但代理一个字也读不了
+    alice.speak("穿过代理的悄悄话").await.expect("Alice 说");
+    let (from, text) = expect(&mut bob_ev, |ev| {
+        if let Event::Heard { name, text, .. } = ev {
+            Some((name.clone(), text.clone()))
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!((from.as_str(), text.as_str()), ("Alice", "穿过代理的悄悄话"));
+    bob.speak("回来也是原路").await.expect("Bob 说");
+    let (from, text) = expect(&mut alice_ev, |ev| {
+        if let Event::Heard { name, text, .. } = ev {
+            Some((name.clone(), text.clone()))
+        } else {
+            None
+        }
+    })
+    .await;
+    assert_eq!((from.as_str(), text.as_str()), ("Bob", "回来也是原路"));
+
+    // socks5h 断言：域名应原样到达代理侧（本地从未解析过）
+    let t = targets.recv().await.expect("代理应记账目标");
+    assert_eq!(t, format!("localhost:{bob_port}"), "socks5h：解析必须发生在代理侧");
+}
+
+#[tokio::test]
+async fn 出站代理_茶馆进房也照经() {
+    // P23：去茶馆的路跟去找任何人的路是同一种路——出行方式对
+    // courier::enter 同样生效（茶馆自身可以在代理另一头）。
+    let (proxy, mut targets) = spawn_socks5().await;
+    let teahouse = spawn_teahouse().await;
+    let (alice, mut alice_ev) = Person::born_with(
+        "Alice",
+        "127.0.0.1:0",
+        e2ee::Outbound::Socks5 { proxy },
+    )
+    .await
+    .expect("带代理出生不应失败");
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+
+    let alice_waiter = alice.clone();
+    let th = teahouse.clone();
+    tokio::spawn(async move {
+        let _ = alice_waiter.meet_at_teahouse(&th, 4243).await;
+    });
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    bob.meet_at_teahouse(&teahouse, 4243).await.expect("Bob 进房");
+
+    expect(&mut alice_ev, met).await;
+    expect(&mut bob_ev, met).await;
+
+    // 代理账本应记着去茶馆的那一跳
+    let t = targets.recv().await.expect("代理应记账茶馆目标");
+    assert_eq!(t, teahouse, "经代理进房：目标=茶馆地址");
+}
+
+#[tokio::test]
+async fn IPv6双栈_v4来客照常进门() {
+    // P23：[::] 形态监听 = 双栈——Windows 默认 v6-only，bind_listener
+    // 显式 set_only_v6(false) 收 v4-mapped；Linux 天生双栈。两边平台
+    // 的 v4 来客（127.0.0.1）都应照常进门。
+    let (alice, mut alice_ev) =
+        Person::born("Alice", "[::]:0").await.expect("v6 监听出生不应失败");
+    let bound = alice.listen_addr().await;
+    let port = bound.rsplit(':').next().unwrap();
+    let (bob, mut bob_ev, _b) = spawn_person("Bob").await;
+
+    bob.dial(&format!("127.0.0.1:{port}"))
+        .await
+        .expect("v4 应能敲开双栈门");
+    expect(&mut bob_ev, met).await;
+    let (name, _, _) = expect(&mut alice_ev, met).await;
+    assert_eq!(name, "Bob");
+}
